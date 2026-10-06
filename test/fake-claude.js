@@ -18,7 +18,13 @@ async function run(msg) {
   if (msg === '/slow') { for (let i = 0; i < 300; i++) { delta('느림 '); await sleep(100); } }
   if (msg.includes('파일')) out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'Read', id: 't1' } } });
   const leak = (process.env.CLAUDECODE || process.env.ANTHROPIC_BASE_URL) ? 'LEAK' : 'clean';
-  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok`;
+  const fs = require('fs');
+  const arg = (flag) => (a.indexOf(flag) >= 0 ? a[a.indexOf(flag) + 1] : null);
+  const sysFile = arg('--append-system-prompt-file');
+  const sysOk = sysFile && fs.existsSync(sysFile) && fs.readFileSync(sysFile, 'utf8').includes('Sancho') ? 'ok' : 'none';
+  const deny = a.includes('Edit(./.system.md)') && a.includes('Write(./.system.md)') && a.includes('Bash') ? 'ok' : 'none';
+  if (msg.startsWith('기억해:')) fs.appendFileSync('memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내
+  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | ctx=${arg('--append-system-prompt')}`;
   for (let i = 0; i < reply.length; i += 4) { delta(reply.slice(i, i + 4)); await sleep(5); }
   out({ type: 'result', subtype: 'success', is_error: false, result: reply });
 }

@@ -71,6 +71,28 @@ async function run() {
   check('/md 확인용 장치는 없어짐', !textOf((await ask(chatB, '/md')).sse).includes('화면 확인용 예시'));
   check('없는 대화는 404', (await fetch(`${BASE}/api/chats/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`, { headers: H })).status === 404);
   check('빈 메시지는 400', (await fetch(`${BASE}/api/chats/${chatId}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content: '  ' }) })).status === 400);
+  // 성격 · 기억
+  const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('data/.system.md 가 만들어지고 Sancho·기억 규칙이 들어 있음', sys.includes('Sancho') && sys.includes('기억해:') && sys.includes('잊어:') && sys.includes('(기억함)') && sys.includes('memory.md'));
+  check('data/memory.md 가 만들어짐', fs.existsSync(path.join(dir, 'memory.md')));
+  const today = new Date().toLocaleDateString('sv-SE');
+  check('claude 에 .system.md 를 --append-system-prompt-file 로 넘김', t1.includes('sys=ok'));
+  check('실행할 때마다 주인 이름과 오늘 날짜를 알려 줌', t1.includes('주인 이름: 테스트') && t1.includes('오늘 날짜: ' + today));
+  check('두뇌는 .system.md 를 못 고치고 명령 도구도 못 씀', t1.includes('deny=ok'));
+  check('로그인 전 /api/memory 는 401', (await fetch(BASE + '/api/memory')).status === 401);
+  const mem0 = await (await fetch(BASE + '/api/memory', { headers: H })).json();
+  check('처음에는 기억이 비어 있음(제목 줄은 안 보임)', mem0.items.length === 0);
+  await ask(chatB, '기억해: 보고서는 표로 받는다');
+  const mem1 = (await (await fetch(BASE + '/api/memory', { headers: H })).json()).items;
+  check('"기억해:" 로 적힌 줄이 기억 목록에 보임', mem1.length === 1 && mem1[0].text === '- 2000-01-01 보고서는 표로 받는다');
+  check('다른 내용으로 지우려 하면 409(그 사이에 바뀜)', (await post('/api/memory/delete', { i: mem1[0].i, text: '- 다른 줄' }, ck)).status === 409);
+  check('제목 줄(- 로 시작 안 함)은 지울 수 없음', (await post('/api/memory/delete', { i: 0, text: '# 기억' }, ck)).status === 409);
+  check('삭제 버튼: 그 줄이 지워짐', (await post('/api/memory/delete', { i: mem1[0].i, text: mem1[0].text }, ck)).status === 200
+    && (await (await fetch(BASE + '/api/memory', { headers: H })).json()).items.length === 0);
+  check('삭제해도 파일의 제목 줄은 남음', fs.readFileSync(path.join(dir, 'memory.md'), 'utf8').startsWith('# 기억'));
+  const rawToken = ck.split('=')[1];
+  check('세션 파일에 쿠키 토큰 원문이 없음(해시만 저장)', !fs.readFileSync(path.join(dir, 'sessions.json'), 'utf8').includes(rawToken));
+
   // ■ 중지: 연결을 끊으면 claude 가 꺼지고, 바로 다음 말을 보낼 수 있어야 한다
   const stopId = (await (await fetch(BASE + '/api/chats', { method: 'POST', headers: H })).json()).id;
   const ac = new AbortController();

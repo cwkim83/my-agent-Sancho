@@ -133,17 +133,23 @@ function listChats(userId) {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function readMemory() { try { return fs.readFileSync(MEMORY_FILE, 'utf8').split(/\r?\n/); } catch { return []; } }
+
 // ---------- 두뇌: 이 PC 에 설치된 Claude Code (내 구독 로그인, API 키 없음) ----------
-const PERSONA = '너는 "나의 AI 비서 Sancho" 이다. 사용자는 코드를 모르는 업무 담당자이니 쉬운 한국어로, 결론부터 답한다. '
-  + '작업 폴더(data/)의 파일만 읽고 고친다. 파일을 지우거나, 메일을 보내거나, 회사 자료를 외부로 보내는 일은 하지 않는다.';
+const SYSTEM_FILE = path.join(DATA_DIR, '.system.md'); // 비서의 성격·기억 규칙 (templates/system.md 에서 처음 한 번 복사)
+const MEMORY_FILE = path.join(DATA_DIR, 'memory.md'); // 비서의 기억 (한 줄에 사실 하나: "- 날짜 내용")
+if (!fs.existsSync(SYSTEM_FILE)) fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), SYSTEM_FILE);
+if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '# 기억\n');
 const PRIVATE_FILES = ['users.json', 'sessions.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
+const READONLY_FILES = ['.system.md']; // 비서가 자기 지침을 스스로 고치지 못하게 막는다 (읽기만 가능)
 const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
   // 이 PC 의 전역 설정(~/.claude/settings.json)이 다른 주소·토큰으로 연결을 바꿔 버리는 것을 막는다
   '--setting-sources', 'project,local',
   '--allowedTools', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebFetch', // 명령 실행은 아직 안 준다
   '--disallowedTools', 'Bash', 'PowerShell', ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
-  '--append-system-prompt', PERSONA,
+  ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)),
+  '--append-system-prompt-file', SYSTEM_FILE,
 ];
 // 테스트에서는 진짜 claude 대신 가짜 스크립트를 쓴다
 const BRAIN_CMD = process.env.SANCHO_BRAIN_SCRIPT ? [process.execPath, process.env.SANCHO_BRAIN_SCRIPT] : ['claude'];
@@ -165,7 +171,7 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
   else child.kill();
 }
 
-function streamReply(res, chat, content) {
+function streamReply(res, chat, content, user) {
   if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
   running.add(chat.id);
   chat.messages.push({ role: 'user', content, at: nowIso() });
@@ -173,7 +179,9 @@ function streamReply(res, chat, content) {
   saveChat(chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
 
-  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS];
+  const today = new Date();
+  const ctx = `주인 이름: ${user.name}. 오늘 날짜: ${today.toLocaleDateString('sv-SE')} (${today.toLocaleDateString('ko-KR', { weekday: 'long' })}).`;
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS, '--append-system-prompt', ctx];
   const child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: brainEnv(), windowsHide: true });
   let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null;
   let finished = false, aborted = false, timedOut = false;
@@ -290,6 +298,16 @@ async function handle(req, res) {
     if (!user) return send(res, 401, { error: '로그인이 필요합니다.' });
     if (p === '/api/me' && req.method === 'GET') return send(res, 200, { name: user.name, username: user.username });
 
+    if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory().map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });
+    if (p === '/api/memory/delete' && req.method === 'POST') {
+      let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+      const raw = fs.readFileSync(MEMORY_FILE, 'utf8'), eol = raw.includes('\r\n') ? '\r\n' : '\n', lines = raw.split(/\r?\n/);
+      if (!Number.isInteger(b.i) || lines[b.i] !== b.text || !b.text.startsWith('- ')) return send(res, 409, { error: '그 사이에 기억이 바뀌었습니다. 목록을 새로 불러와 주세요.' });
+      lines.splice(b.i, 1);
+      fs.writeFileSync(MEMORY_FILE + '.tmp', lines.join(eol)); fs.renameSync(MEMORY_FILE + '.tmp', MEMORY_FILE);
+      return send(res, 200, { ok: true });
+    }
+
     const cm = p.match(/^\/api\/chats(?:\/([0-9a-f-]{36}))?(\/messages)?$/);
     if (cm) {
       const [, id, isMsg] = cm;
@@ -306,7 +324,7 @@ async function handle(req, res) {
         let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
         const content = String(b.content || '').trim();
         if (!content) return send(res, 400, { error: '내용이 비어 있습니다.' });
-        return streamReply(res, chat, content);
+        return streamReply(res, chat, content, user);
       }
     }
     return send(res, 404, { error: '없는 API 입니다.' });
