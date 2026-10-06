@@ -151,14 +151,26 @@ function loadCollection(name) { // 파일이 없으면 빈 목록, 깨져 있으
 // 파일이 바뀌면(우리가 썼든 AI 가 직접 고쳤든) 열려 있는 화면(/api/events)에 "<이름> 이 바뀜"을 알린다
 const streams = new Set();
 const pending = new Map(); // 한 번 쓸 때 이벤트가 여러 번 오므로 50ms 안의 것은 하나로 합친다
-fs.watch(DB_DIR, (_, file) => {
-  const m = /^([a-z][a-z0-9_-]*)\.json$/.exec(file || ''); // 쓰는 중인 임시 파일(.tmp)은 무시
-  if (!m || pending.has(m[1])) return;
-  pending.set(m[1], setTimeout(() => {
-    pending.delete(m[1]);
-    for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name: m[1] })}\n\n`);
-  }, 50));
-}).on('error', (e) => console.error('data/db 감시 실패:', e.message));
+function watchJson(dir, re, prefix) { // dir 안의 <이름>.json 이 바뀌면 "<prefix><이름>" 이 바뀜을 알린다
+  fs.watch(dir, (_, file) => {
+    const m = re.exec(file || ''), key = m && prefix + m[1]; // 쓰는 중인 임시 파일(.tmp)은 무시
+    if (!m || pending.has(key)) return;
+    pending.set(key, setTimeout(() => {
+      pending.delete(key);
+      for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name: key })}\n\n`);
+    }, 50));
+  }).on('error', (e) => console.error(`${dir} 감시 실패:`, e.message));
+}
+watchJson(DB_DIR, /^([a-z][a-z0-9_-]*)\.json$/, '');
+
+// ---------- WBS 공정표 (data/wbs/<프로젝트id>.json — 프로젝트마다 파일 하나, 안에는 { bac, ac, items, actualLog } 객체) ----------
+// 계산·검증은 화면이 쓰는 public/m/wbs-calc.js 와 같은 파일을 쓴다 (규칙이 두 군데 생기지 않게)
+const wbsCalc = require('./public/m/wbs-calc.js');
+const WBS_DIR = path.join(DATA_DIR, 'wbs');
+fs.mkdirSync(WBS_DIR, { recursive: true });
+const wbsFile = (pid) => path.join(WBS_DIR, `${pid}.json`);
+const etagOf = (buf) => crypto.createHash('sha1').update(buf).digest('hex'); // 파일 내용의 지문. 화면이 불러온 뒤 파일이 바뀌었는지 알아보는 데 쓴다
+watchJson(WBS_DIR, /^([A-Za-z0-9_-]{1,64})\.json$/, 'wbs-'); // 화면은 db.watch('wbs-<프로젝트id>') 로 받는다
 
 // ---------- 연습용 예시 데이터 (가상 회사 "가나다전자", 실제 회사·사람 이름은 쓰지 않는다) ----------
 // 날짜는 "지금"을 기준으로 잡아서 언제 넣어도 이번 주·다음 주로 보인다
@@ -198,6 +210,31 @@ function sampleData(now = new Date()) {
   };
 }
 
+// 예시 공정표: 열교환기 제작(demo-p1). 대단락 5개(설계·구매·제작·검사·출하)와 작업들. 지연·진행·대기·완료가 골고루 보이게 잡았다
+function sampleWbs(now = new Date()) {
+  const t = (n) => { const d = new Date(now); d.setDate(d.getDate() + n); return d.toLocaleDateString('sv-SE'); }; // 오늘 + n일
+  const par = (code, name, weight) => ({ code, name, owner: '', weight, memo: '' });
+  const task = (code, name, owner, a, b, weight, progress) => ({ code, name, owner, start: t(a), end: t(b), weight, progress, memo: '' });
+  return {
+    'demo-p1': {
+      bac: 1200000000, ac: 520000000,
+      items: [
+        par('1', '설계', 15),
+        task('1.1', '기본설계', '김가나', -60, -46, 1, 100), task('1.2', '상세설계·제작도면', '김가나', -45, -31, 2, 100), task('1.3', '고객 도면 승인', '김가나', -30, -24, 1, 100),
+        par('2', '구매', 15),
+        task('2.1', '판재·튜브 발주', '이다라', -35, -26, 1, 100), task('2.2', '자재 입고', '이다라', -25, -12, 2, 100), task('2.3', '용접재료·부속품 구매', '이다라', -20, -3, 1, 80),
+        par('3', '제작', 40),
+        task('3.1', '판재 가공·성형', '박마바', -22, -9, 2, 100), task('3.2', '튜브 삽입·확관', '박마바', -10, 8, 3, 70), task('3.3', '용접', '박마바', -2, 14, 3, 5),
+        task('3.4', '열처리', '박마바', 12, 20, 1, 0),
+        par('4', '검사', 20),
+        task('4.1', '비파괴검사', '김가나', 18, 28, 1, 0), task('4.2', '수압시험', '김가나', 29, 34, 2, 0), task('4.3', '최종 치수·외관 검사', '김가나', 35, 39, 1, 0),
+        par('5', '출하', 10),
+        task('5.1', '도장·포장', '이다라', 37, 42, 1, 0), task('5.2', '출하·운송', '이다라', 43, 45, 1, 0),
+      ],
+    },
+  };
+}
+
 function readMemory() { try { return fs.readFileSync(MEMORY_FILE, 'utf8').split(/\r?\n/); } catch { return []; } }
 
 // ---------- 두뇌: 이 PC 에 설치된 Claude Code (내 구독 로그인, API 키 없음) ----------
@@ -207,9 +244,11 @@ if (!fs.existsSync(SYSTEM_FILE)) fs.copyFileSync(path.join(__dirname, 'templates
 if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '# 기억\n');
 // 업무 데이터(data/db)의 파일 위치·필드 형식을 가르치는 스킬. 두뇌의 작업 폴더가 data/ 라서 data/.claude/skills/ 에 둔다
 const SKILL_FILE = path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md');
-if (!fs.existsSync(SKILL_FILE)) {
+const SKILL_SRC = path.join(__dirname, 'templates', 'skills', 'platform', 'SKILL.md');
+// 스킬 원본은 templates/ 쪽이다. 서버를 켤 때 내용이 다르면 새 규칙(예: WBS)이 반영되게 다시 복사한다 (비서는 이 파일을 못 고친다)
+if (!fs.existsSync(SKILL_FILE) || fs.readFileSync(SKILL_FILE, 'utf8') !== fs.readFileSync(SKILL_SRC, 'utf8')) {
   fs.mkdirSync(path.dirname(SKILL_FILE), { recursive: true });
-  fs.copyFileSync(path.join(__dirname, 'templates', 'skills', 'platform', 'SKILL.md'), SKILL_FILE);
+  fs.copyFileSync(SKILL_SRC, SKILL_FILE);
 }
 const PRIVATE_FILES = ['users.json', 'sessions.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
 const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
@@ -408,6 +447,27 @@ async function handle(req, res) {
       }
     }
 
+    const wm = p.match(/^\/api\/wbs\/([A-Za-z0-9_-]{1,64})$/);
+    if (wm && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(wm[1]) && (req.method === 'GET' || req.method === 'PUT')) {
+      const pid = wm[1];
+      if (req.method === 'GET') {
+        let raw; try { raw = fs.readFileSync(wbsFile(pid)); } catch (e) { if (e.code === 'ENOENT') return send(res, 200, { doc: wbsCalc.emptyDoc(), etag: 'none' }); throw e; }
+        try { return send(res, 200, { doc: JSON.parse(raw.toString('utf8').replace(/^﻿/, '')), etag: etagOf(raw) }); }
+        catch { return send(res, 500, { error: `data/wbs/${pid}.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
+      }
+      // 저장: 본문을 먼저 다 받고, 그 다음 비교→쓰기를 await 없이 한 번에 한다 (db 저장과 같은 이유).
+      // 화면이 불러온 뒤 다른 곳(다른 탭, 비서가 파일을 직접 고침)이 바꿨으면 etag 가 달라서 409 로 막는다 — 남의 수정을 조용히 덮어쓰지 않는다
+      let b; try { b = await readBody(req, 1_000_000); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+      if (!b || typeof b.etag !== 'string') return send(res, 400, { error: '요청이 올바르지 않습니다. (etag 가 필요해요)' });
+      const bad = wbsCalc.validate(b.doc);
+      if (bad) return send(res, 400, { error: bad });
+      let cur = null; try { cur = fs.readFileSync(wbsFile(pid)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (b.etag !== (cur ? etagOf(cur) : 'none')) return send(res, 409, { error: '그 사이 다른 곳에서 먼저 바뀌어서 저장하지 않았어요. 최신 내용을 새로 불러옵니다.' });
+      const doc = wbsCalc.normalize(b.doc, wbsCalc.today());
+      writeJson(wbsFile(pid), doc);
+      return send(res, 200, { doc, etag: etagOf(fs.readFileSync(wbsFile(pid))) });
+    }
+
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
       const sample = sampleData(), names = Object.keys(sample), cur = {};
@@ -422,6 +482,8 @@ async function handle(req, res) {
         }
         writeJson(dbFile(n), cur[n]);
       }
+      for (const [pid, doc] of Object.entries(sampleWbs())) // WBS 예시는 그 프로젝트의 파일이 아직 없을 때만 만든다 (내가 고친 공정표를 덮어쓰지 않는다)
+        if (!fs.existsSync(wbsFile(pid))) writeJson(wbsFile(pid), wbsCalc.normalize(doc, wbsCalc.today()));
       return send(res, 200, { ok: true, added: Object.fromEntries(names.map((n) => [n, sample[n].length])) });
     }
 

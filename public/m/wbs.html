@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WBS 공정표</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+    font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button, input, select { font: inherit; }
+  button { cursor: pointer; }
+
+  /* 위쪽 줄 */
+  .bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+  .bar h2 { margin: 0 4px 0 4px; font-size: 18px; }
+  .sp { flex: 1; }
+  .sub { color: var(--sub); font-size: 13px; }
+  select { padding: 6px 9px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: var(--text); max-width: 260px; }
+  .btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #344054; }
+  .btn:hover { background: #f2f4f7; }
+  .seg { display: flex; }
+  .seg button { padding: 6px 12px; border: 1px solid var(--line); background: #fff; color: #344054; }
+  .seg button:first-child { border-radius: 8px 0 0 8px; } .seg button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+  .seg button.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+  #warn { flex: none; padding: 0 16px; color: var(--red); font-size: 13px; white-space: pre-line; }
+  #warn:not(:empty) { padding-top: 8px; }
+
+  /* EVMS 카드: BAC·PV·EV·SV·SPI·CPI + 지연 작업 */
+  .cards { flex: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 16px; }
+  .ecard { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--text); text-align: left; }
+  .ecard .k { color: var(--sub); font-size: 12px; }
+  .ecard b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .ecard small { color: var(--sub); font-size: 11px; }
+  .ecard[data-edit] { cursor: pointer; } .ecard[data-edit]:hover { border-color: var(--blue); background: #fbfcfe; }
+  .ecard.neg b { color: var(--red); }
+  .ecard input { width: 100%; height: 26px; padding: 0 6px; border: 1px solid var(--blue); border-radius: 6px; font-size: 14px; }
+
+  /* 표 + 간트: 한 줄이 한 항목이라 왼쪽 표와 오른쪽 막대가 항상 같은 줄에 있다 */
+  #scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; margin: 0 16px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .wbs { position: relative; }
+  .row { display: flex; height: 32px; border-top: 1px solid #eef0f3; background: #fff; }
+  .row.par { background: #f9fafb; font-weight: 600; }
+  .row.head { position: sticky; top: 0; z-index: 5; height: 30px; border-top: 0; background: #f9fafb; color: var(--sub); font-size: 12px; font-weight: 400; }
+  .c { flex: none; display: flex; align-items: center; padding: 0 6px; overflow: hidden; border-right: 1px solid #f1f3f5; font-size: 13px; white-space: nowrap; }
+  .c-code, .c-name { position: sticky; z-index: 3; background: inherit; }
+  .c-code { left: 0; } .c-name { left: 40px; border-right: 1px solid var(--line); }
+  .head .c-code, .head .c-name { z-index: 6; }
+  .c-num { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+  .ed { cursor: text; } .ed:hover { background: #f2f6ff; }
+  .auto { color: #98a2b3; font-style: italic; font-weight: 400; }
+  .c input { width: 100%; height: 24px; padding: 0 4px; border: 1px solid var(--blue); border-radius: 4px; background: #fff; color: var(--text); font-size: 13px; }
+  .nm { overflow: hidden; text-overflow: ellipsis; }
+  .tg { flex: none; width: 18px; height: 18px; margin-right: 2px; padding: 0; border: 0; background: none; color: var(--sub); font-size: 10px; }
+  button.tg:hover { color: var(--blue); }
+  .c-act { gap: 1px; padding: 0 3px; }
+  .ib { width: 19px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: #667085; font-size: 12px; }
+  .ib:hover { background: var(--blue-bg); color: var(--blue); } .ib.x:hover { background: #fee4e2; color: var(--red); }
+  .empty { position: sticky; left: 0; width: 460px; max-width: 100%; padding: 28px 16px; color: #98a2b3; }
+
+  /* 상태 색: 완료 초록 · 진행 파랑 · 지연 빨강 · 대기 회색 */
+  .s-done { --c: #12a150; --cf: #62c68a; --cbg: #d8f1e3; --ct: #0b4a26; }
+  .s-go { --c: #2f6fed; --cf: #6c9bf3; --cbg: #dbe7ff; --ct: #12326b; }
+  .s-late { --c: #d92d20; --cf: #f07a70; --cbg: #fde2df; --ct: #7a1b13; }
+  .s-wait { --c: #98a2b3; --cf: #c5cbd5; --cbg: #eceef2; --ct: #344054; }
+  .pill { padding: 0 8px; border-radius: 999px; background: var(--cbg); color: var(--ct); font-size: 12px; font-weight: 600; }
+
+  /* 간트 */
+  .gc { flex: none; position: relative; display: flex; }
+  .mh { flex: none; overflow: hidden; padding-left: 4px; border-left: 1px solid #e9ecf0; line-height: 30px; white-space: nowrap; }
+  .gbar { position: absolute; top: 6px; height: 20px; z-index: 1; overflow: hidden; border-radius: 5px; background: var(--cbg); box-shadow: inset 0 0 0 1px var(--c); cursor: grab; touch-action: none; user-select: none; }
+  .gbar.sum { top: 11px; height: 10px; border-radius: 2px; cursor: default; }
+  .gbar.dragging { cursor: grabbing; box-shadow: inset 0 0 0 2px var(--c), 0 2px 8px rgba(0, 0, 0, .25); }
+  .gbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cf); pointer-events: none; }
+  .gbar b { position: relative; padding: 0 5px; color: var(--ct); font-size: 11px; line-height: 20px; white-space: nowrap; pointer-events: none; }
+  .gbar u { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
+  .ov { position: absolute; top: 30px; bottom: 0; z-index: 2; pointer-events: none; }
+  .ov i { position: absolute; top: 0; bottom: 0; width: 1px; background: #eef0f3; }
+  .ov u { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #d92d20; }
+  #tip { position: fixed; z-index: 30; display: none; padding: 3px 8px; border-radius: 6px; background: #1b1f24; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }
+  #toast { position: fixed; left: 50%; bottom: 18px; z-index: 30; display: none; max-width: 90%; padding: 8px 14px; transform: translateX(-50%); border-radius: 8px; background: #1b1f24; color: #fff; font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <h2>WBS</h2>
+    <select id="proj" aria-label="프로젝트 선택"></select>
+    <span class="sub" id="overall"></span>
+    <span class="sp"></span>
+    <button class="btn" id="addRoot">＋ 대단락</button>
+    <div class="seg" id="zoom" title="간트 확대"><button data-z="fit">맞춤</button><button data-z="6">보통</button><button data-z="12">넓게</button></div>
+  </div>
+  <div id="warn"></div>
+  <div class="cards" id="cards"></div>
+  <div id="scroll"></div>
+  <div id="tip"></div>
+  <div id="toast"></div>
+
+<script src="/m/db.js"></script>
+<script src="/m/wbs-calc.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const SC = { '완료': 'done', '진행': 'go', '지연': 'late', '대기': 'wait' };
+  const W = { code: 40, name: 176, owner: 56, start: 70, end: 70, weight: 48, progress: 50, status: 50, act: 104 };
+  const TABLE_W = Object.values(W).reduce((a, b) => a + b);
+  const JSON_HEAD = { 'Content-Type': 'application/json' };
+
+  let projects = [], pid = '', doc = wbs.emptyDoc(), etag = 'none', calc = wbs.compute(doc, wbs.today()), loadErr = '';
+  let collapsed = new Set(), zoom = 'fit', dayW = 6, editing = null, drag = null, later = false, seq = 0, firstScroll = true, unwatch = null;
+
+  const fmtWon = (n) => (n === null ? '—' : Math.round(n).toLocaleString('ko-KR') + '원');
+  const fmtN = (n) => (n === null ? '—' : n.toFixed(2));
+  const fmtP = (n) => `${Math.round(n * 10) / 10}%`;
+  let toastTimer;
+  function flash(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.style.display = 'none'), 4500); }
+
+  // ---------- 자료: 파일이 바뀌면(다른 탭·AI 가 직접 고쳐도) 바로 다시 불러온다 ----------
+  async function load() {
+    if (!pid) return;
+    const my = ++seq;
+    let j;
+    try {
+      const r = await fetch(`/api/wbs/${encodeURIComponent(pid)}`);
+      j = await r.json();
+      if (!r.ok) throw new Error(j.error || `불러오지 못했어요 (${r.status})`);
+    } catch (e) { if (my === seq) { loadErr = e.message; render(); } return; }
+    if (my !== seq) return; // 더 새 요청이 있다
+    const hadErr = loadErr; loadErr = '';
+    if (j.etag === etag) return hadErr ? render() : undefined; // 내가 방금 저장해서 생긴 알림이면 그대로 둔다 (입력 중인 칸이 사라지지 않게)
+    if (editing || drag) { later = true; return; } // 고치는 도중에는 화면을 갈아엎지 않는다. 끝나면 다시 불러온다
+    doc = j.doc; etag = j.etag;
+    render();
+  }
+
+  // 저장은 한 줄로 세워서 하나씩 한다 (etag 가 꼬이지 않게). mut(현재 문서) 가 새 문서를 돌려주고, null 이면 저장 안 함
+  let chain = Promise.resolve();
+  const save = (mut, after) => (chain = chain.then(async () => {
+    const next = mut(doc);
+    if (!next) return render();
+    try {
+      const r = await fetch(`/api/wbs/${encodeURIComponent(pid)}`, { method: 'PUT', headers: JSON_HEAD, body: JSON.stringify({ etag, doc: next }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        flash(j.error || `저장하지 못했어요 (${r.status})`);
+        if (r.status === 409) { etag = ''; await load(); } else render();
+        return;
+      }
+      doc = j.doc; etag = j.etag;
+      if (after) after();
+      render();
+    } catch { flash('저장하지 못했어요. 서버가 켜져 있는지 확인해 주세요.'); render(); }
+  }));
+
+  // ---------- 그리기 ----------
+  function render() {
+    calc = wbs.compute(doc, wbs.today());
+    $('proj').innerHTML = projects.length ? projects.map((p) => `<option value="${esc(p.id)}"${p.id === pid ? ' selected' : ''}>${esc(p.name) || '(이름 없음)'}</option>`).join('') : '<option>프로젝트 없음</option>';
+    $('proj').disabled = !projects.length;
+    $('addRoot').disabled = !pid;
+    document.querySelectorAll('#zoom button').forEach((b) => b.classList.toggle('on', b.dataset.z === String(zoom)));
+    $('overall').textContent = pid ? `전체 진도 실제 ${fmtP(calc.overall.actual)} / 계획 ${fmtP(calc.overall.plan)}` : '';
+    $('warn').textContent = [loadErr ? `⚠ ${loadErr}` : '', calc.problems.length ? `⚠ 형식이 맞지 않는 항목 ${calc.problems.length}개 (data/wbs/${pid}.json 을 확인해 주세요): ${calc.problems.slice(0, 3).join(' · ')}${calc.problems.length > 3 ? ' …' : ''}` : ''].filter(Boolean).join('\n');
+    $('warn').title = calc.problems.join('\n');
+    renderCards();
+    renderGrid();
+  }
+
+  function renderCards() {
+    const e = calc.evms;
+    const card = (k, val, sub, o = {}) => `<div class="ecard${o.neg ? ' neg' : ''}"${o.edit ? ` data-edit="${o.edit}" title="눌러서 입력"` : ''}><span class="k">${k}</span><b>${val}</b><small>${sub}</small></div>`;
+    $('cards').innerHTML = [
+      card('BAC · 계약금액', fmtWon(e.bac), '눌러서 입력', { edit: 'bac' }),
+      card('PV · 계획 가치', fmtWon(e.pv), `계획 진도 ${fmtP(calc.overall.plan)}`),
+      card('EV · 실행 가치', fmtWon(e.ev), `실제 진도 ${fmtP(calc.overall.actual)}`),
+      card('SV · 일정 차이', e.sv === null ? '—' : (e.sv > 0 ? '+' : '') + fmtWon(e.sv), 'EV − PV', { neg: e.sv < 0 }),
+      card('SPI · 일정 성과', fmtN(e.spi), 'EV ÷ PV (1 보다 작으면 늦음)', { neg: e.spi !== null && e.spi < 1 }),
+      card('CPI · 비용 성과', fmtN(e.cpi), `AC ${e.ac === null ? '입력 안 됨' : fmtWon(e.ac)} · 눌러서 입력`, { edit: 'ac', neg: e.cpi !== null && e.cpi < 1 }),
+      card('지연 작업', `${e.late}개`, '계획보다 10%p 넘게 뒤처짐', { neg: e.late > 0 }),
+    ].join('');
+  }
+
+  function rowHtml(r, sp) {
+    const par = !r.leaf, s = SC[r.status];
+    const cell = (cls, w, inner) => `<div class="c ${cls}" style="width:${w}px">${inner}</div>`;
+    const ed = (f, inner, cls = '', tip = '') => `<div class="c ${cls} ed" style="width:${W[f]}px" data-f="${f}" title="${tip}두 번 누르면 고칠 수 있어요">${inner}</div>`;
+    const sd = (d) => (d ? d.slice(2).replace(/-/g, '.') : '—'); // 2026-10-07 → 26.10.07 (칸이 좁아서. 전체 날짜는 위에 두면 보임)
+    const auto = (f, inner, full = '') => `<div class="c c-num auto" style="width:${W[f]}px" title="${full ? esc(full) + ' · ' : ''}하위 항목에서 자동으로 계산돼요">${inner}</div>`;
+    const tg = par ? `<button class="tg" data-tg="${r.code}" title="접기/펼치기">${collapsed.has(r.code) ? '▶' : '▼'}</button>` : '<span class="tg"></span>';
+    const bar = !r.start ? '' : par
+      ? `<div class="gbar sum s-${s}" style="left:${wbs.x(r.start, sp.from, dayW)}px;width:${wbs.px(r.start, r.end, sp.from, dayW).width}px" title="${r.start} ~ ${r.end} · ${fmtP(r.actual)}"><i style="width:${r.actual}%"></i></div>`
+      : `<div class="gbar s-${s}" data-bar="${r.code}" style="left:${wbs.x(r.start, sp.from, dayW)}px;width:${wbs.px(r.start, r.end, sp.from, dayW).width}px" title="${r.start} ~ ${r.end} · ${fmtP(r.actual)} (끌어서 이동, 오른쪽 끝을 끌면 기간 변경)"><i style="width:${r.actual}%"></i><b>${fmtP(r.actual)}</b><u class="hd"></u></div>`;
+    const dv = (v) => (v ? esc(v) : '—');
+    return `<div class="row${par ? ' par' : ''}" data-code="${r.code}">
+      ${cell('c-code', W.code, r.code)}
+      ${ed('name', `<span style="flex:none;width:${r.depth * 16}px"></span>${tg}<span class="nm">${esc(r.name)}</span>`, 'c-name')}
+      ${ed('owner', esc(r.owner))}
+      ${par ? auto('start', sd(r.start), r.start) : ed('start', sd(r.it.start ?? r.start), 'c-num', `${esc(r.it.start)} · `)}
+      ${par ? auto('end', sd(r.end), r.end) : ed('end', sd(r.it.end ?? r.end), 'c-num', `${esc(r.it.end)} · `)}
+      ${ed('weight', `<span title="같은 단계 안에서의 비중 ${Math.round(r.share * 100)}%">${esc(r.weight)}</span>`, 'c-num')}
+      ${par ? auto('progress', fmtP(r.actual)) : ed('progress', fmtP(r.actual), 'c-num')}
+      ${cell('', W.status, `<span class="pill s-${s}">${r.status}</span>`)}
+      ${cell('c-act', W.act, `<button class="ib" data-act="below" title="아래에 행 추가">＋</button><button class="ib" data-act="child" title="하위로 행 추가">↳</button><button class="ib" data-act="up" title="위로 이동">▲</button><button class="ib" data-act="down" title="아래로 이동">▼</button><button class="ib x" data-act="del" title="삭제">✕</button>`)}
+      <div class="gc" style="width:${sp.px}px">${bar}</div></div>`;
+  }
+
+  function renderGrid() {
+    const today = wbs.today(), box = $('scroll');
+    if (!pid) { box.innerHTML = '<div class="empty">프로젝트가 없어요. 왼쪽 "프로젝트" 메뉴에서 먼저 만들어 주세요.</div>'; return; }
+    const sp = wbs.span(calc.range, today), mons = wbs.months(sp.from, sp.to), days = mons.reduce((a, m) => a + m.days, 0);
+    // 맞춤: 표 오른쪽에 남은 너비에 전체 기간이 딱 들어오게 (너무 좁아지면 1.5px 까지만). 보통·넓게는 하루 6px·12px 로 고정
+    dayW = zoom === 'fit' ? Math.max(1.5, Math.min(12, ((box.clientWidth || 1000) - TABLE_W - 2) / days)) : zoom;
+    sp.px = days * dayW;
+    const rows = wbs.visible(calc.rows, collapsed);
+    let acc = 0; const lines = mons.map((m) => { const l = acc * dayW; acc += m.days; return `<i style="left:${l}px"></i>`; }).join('');
+    const todayX = wbs.x(today, sp.from, dayW) + dayW; // 오늘이 끝난 지점(계획 진도는 오늘 하루를 다 지난 것으로 센다)
+    const H = [['code', '코드'], ['name', '작업명'], ['owner', '담당'], ['start', '시작'], ['end', '완료'], ['weight', '가중치'], ['progress', '진도율'], ['status', '상태'], ['act', '']]
+      .map(([k, t]) => `<div class="c${k === 'code' || k === 'name' ? ' c-' + k : ''}${['start', 'end', 'weight', 'progress'].includes(k) ? ' c-num' : ''}" style="width:${W[k]}px">${t}</div>`).join('');
+    box.innerHTML = `<div class="wbs" style="width:${TABLE_W + sp.px}px">
+      <div class="row head">${H}<div class="gc" style="width:${sp.px}px">${mons.map((m) => `<span class="mh" style="width:${m.days * dayW}px">${m.label}</span>`).join('')}</div></div>
+      ${rows.map((r) => rowHtml(r, sp)).join('')}
+      ${calc.rows.length ? '' : '<div class="empty">아직 항목이 없어요. 위의 "＋ 대단락"을 눌러 시작하세요.</div>'}
+      <div class="ov" style="left:${TABLE_W}px;width:${sp.px}px">${lines}<u style="left:${todayX}px" title="오늘 ${today}"></u></div></div>`;
+    if (firstScroll && calc.rows.length) { // 보통·넓게로 바꾼 직후에는 오늘이 간트 가운데쯤 오게 (맞춤은 맨 왼쪽)
+      firstScroll = false;
+      box.scrollLeft = zoom === 'fit' ? 0 : Math.max(0, TABLE_W + todayX - (W.code + W.name) - (box.clientWidth - W.code - W.name) / 2);
+    }
+  }
+
+  // ---------- 누르기 ----------
+  $('scroll').onclick = (e) => {
+    const tg = e.target.closest('[data-tg]');
+    if (tg) { const c = tg.closest('.row').dataset.code; collapsed.has(c) ? collapsed.delete(c) : collapsed.add(c); return render(); }
+    const ib = e.target.closest('[data-act]');
+    if (ib && !editing) act(ib.dataset.act, ib.closest('.row').dataset.code);
+  };
+  $('scroll').ondblclick = (e) => {
+    const c = e.target.closest('.ed[data-f]');
+    if (c && !editing && !drag && !e.target.closest('[data-tg]')) startEdit(c.closest('.row').dataset.code, c.dataset.f);
+  };
+  $('addRoot').onclick = () => act('root', '');
+  document.querySelectorAll('#zoom button').forEach((b) => (b.onclick = () => { zoom = b.dataset.z === 'fit' ? 'fit' : Number(b.dataset.z); firstScroll = true; render(); }));
+  window.onresize = () => { if (zoom === 'fit' && !editing && !drag) render(); }; // 맞춤일 때는 창 크기에 맞게 다시 그린다
+  $('proj').onchange = () => { // 프로젝트를 바꾸면 메인 화면 주소도 바꿔서(#WBS/<id>) 이 화면이 그 프로젝트로 다시 열린다
+    if (parent !== window) parent.location.hash = '#WBS/' + encodeURIComponent($('proj').value); else location.search = '?p=' + encodeURIComponent($('proj').value);
+  };
+
+  // 행 추가(아래에·하위로)·삭제·위/아래 이동. 코드는 순서대로 다시 매겨지니, 접어 둔 줄도 새 코드로 옮겨 둔다
+  function act(kind, code) {
+    const today = wbs.today();
+    if (kind === 'del') {
+      const n = wbs.countSubtree(doc.items, code), row = calc.rows.find((r) => r.code === code);
+      if (!confirm(`"${row ? row.name : code}" 항목을 지울까요?${n > 1 ? `\n(하위 ${n - 1}개도 함께 지워집니다)` : ''}`)) return;
+    }
+    let focus = null, map = {};
+    save((d) => {
+      const r = kind === 'root' ? wbs.addRoot(d.items, today) : kind === 'below' ? wbs.addBelow(d.items, code, today) : kind === 'child' ? wbs.addChild(d.items, code, today)
+        : kind === 'del' ? wbs.remove(d.items, code) : wbs.move(d.items, code, kind === 'up' ? -1 : 1);
+      if (r.error) { flash(r.error); return null; }
+      if (r.noop) return null;
+      map = r.map; focus = (kind === 'below' || kind === 'child' || kind === 'root') ? r.focus : null;
+      return { ...d, items: r.items };
+    }, () => {
+      collapsed = new Set([...collapsed].map((c) => map[c]).filter(Boolean));
+      if (kind === 'child') collapsed.delete(map[code]);
+    }).then(() => { if (focus) { const row = $('scroll').querySelector(`.row[data-code="${focus}"]`); if (row) { row.scrollIntoView({ block: 'nearest' }); startEdit(focus, 'name'); } } });
+  }
+
+  // ---------- 칸 두 번 누르기: 바로 고치기 (Enter 저장, Esc 취소, 다른 곳을 누르면 저장) ----------
+  function startEdit(code, f) {
+    const r = calc.rows.find((x) => x.code === code), cell = $('scroll').querySelector(`.row[data-code="${code}"] [data-f="${f}"]`);
+    if (!r || !cell || editing) return;
+    const orig = f === 'weight' ? (r.it.weight ?? 1) : f === 'progress' ? (r.it.progress ?? 0) : (r.it[f] ?? '');
+    const input = document.createElement('input');
+    input.type = f === 'start' || f === 'end' ? 'date' : f === 'weight' || f === 'progress' ? 'number' : 'text';
+    if (input.type === 'number') { input.step = 'any'; input.min = 0; if (f === 'progress') input.max = 100; } else if (input.type === 'text') input.maxLength = 200;
+    input.value = orig;
+    cell.replaceChildren(input);
+    input.focus(); if (input.type !== 'date') input.select();
+    editing = { code, f };
+    let done = false;
+    const finish = (commit) => {
+      if (done) return; done = true; editing = null;
+      if (commit && String(input.value).trim() !== String(orig)) {
+        save((d) => { const res = wbs.setField(d.items, code, f, input.value); if (res.error) { flash(res.error); return null; } return { ...d, items: res.items }; });
+      } else render();
+      if (later) { later = false; load(); }
+    };
+    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') finish(false); };
+    input.onblur = () => finish(true);
+  }
+
+  // ---------- BAC·AC 카드 눌러 입력 ----------
+  $('cards').onclick = (e) => {
+    const card = e.target.closest('[data-edit]');
+    if (!card || editing) return;
+    const key = card.dataset.edit, b = card.querySelector('b'), input = document.createElement('input');
+    input.value = calc.evms[key] ?? ''; input.inputMode = 'numeric'; input.placeholder = '예: 1200000000 · 12억 · 3000만';
+    b.replaceChildren(input); input.focus(); input.select();
+    editing = { money: key };
+    let done = false;
+    const finish = (commit) => {
+      if (done) return; done = true; editing = null;
+      const r = commit ? wbs.parseMoney(input.value) : null;
+      if (r && r.error) { flash(r.error); render(); }
+      else if (r && r.value !== (calc.evms[key] ?? null)) save((d) => ({ ...d, [key]: r.value }));
+      else render();
+      if (later) { later = false; load(); }
+    };
+    input.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); finish(true); } else if (ev.key === 'Escape') finish(false); };
+    input.onblur = () => finish(true);
+  };
+
+  // ---------- 막대 끌기: 몸통 = 기간 통째 이동, 오른쪽 끝 = 완료일 늘리기/줄이기 (하루 단위, 손을 떼면 저장, Esc 취소) ----------
+  const tip = (e, text) => { const t = $('tip'); t.textContent = text; t.style.display = 'block'; t.style.left = e.clientX + 12 + 'px'; t.style.top = e.clientY - 30 + 'px'; };
+  $('scroll').onpointerdown = (e) => {
+    const bar = e.target.closest('[data-bar]');
+    if (!bar || editing || e.button !== 0) return;
+    const r = calc.rows.find((x) => x.code === bar.dataset.bar);
+    if (!r || !r.leaf) return;
+    drag = { r, bar, mode: e.target.classList.contains('hd') ? 'size' : 'move', x0: e.clientX, d: 0, left0: parseFloat(bar.style.left), w0: parseFloat(bar.style.width) };
+    bar.setPointerCapture(e.pointerId); bar.classList.add('dragging'); e.preventDefault();
+  };
+  $('scroll').onpointermove = (e) => {
+    if (!drag) return;
+    const { r, bar, mode } = drag, len = wbs.num(r.end) - wbs.num(r.start) + 1;
+    let d = Math.round((e.clientX - drag.x0) / dayW);
+    if (mode === 'size') d = Math.max(d, 1 - len); // 완료일이 시작일 앞으로는 못 간다
+    drag.d = d;
+    if (mode === 'move') { bar.style.left = drag.left0 + d * dayW + 'px'; tip(e, `${wbs.addDays(r.start, d)} ~ ${wbs.addDays(r.end, d)}`); }
+    else { bar.style.width = drag.w0 + d * dayW + 'px'; tip(e, `${r.start} ~ ${wbs.addDays(r.end, d)} (${len + d}일)`); }
+  };
+  function endDrag(commit) {
+    if (!drag) return;
+    const { r, bar, mode, d } = drag; drag = null;
+    $('tip').style.display = 'none'; bar.classList.remove('dragging');
+    if (commit && d) save((doc0) => { const res = wbs.shiftTask(doc0.items, r.code, mode === 'move' ? d : 0, d); if (res.error) { flash(res.error); return null; } return { ...doc0, items: res.items }; });
+    else if (d) render(); // 취소하면 막대를 원래 자리로 (제자리에서 놓았으면 그대로)
+    if (later) { later = false; load(); }
+  }
+  $('scroll').onpointerup = () => endDrag(true);
+  $('scroll').onpointercancel = () => endDrag(false);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drag) endDrag(false); });
+
+  // ---------- 시작 ----------
+  async function init() {
+    const loadProjects = async () => {
+      let list = []; try { list = await db.list('projects'); } catch { /* 프로젝트 목록을 못 읽어도 화면은 연다 */ }
+      projects = list.filter((p) => p && typeof p.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(p.id));
+    };
+    await loadProjects();
+    const want = new URLSearchParams(location.search).get('p');
+    pid = projects.some((p) => p.id === want) ? want : projects.length ? (projects.find((p) => p.status === '진행중') || projects[0]).id : '';
+    render();
+    if (pid) { db.watch('wbs-' + pid, load); await load(); }
+    db.watch('projects', async () => { await loadProjects(); if (!editing) render(); });
+  }
+  init();
+</script>
+</body>
+</html>

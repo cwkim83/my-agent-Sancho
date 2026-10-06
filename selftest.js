@@ -87,7 +87,8 @@ async function run() {
   // 로그인 없이는 어떤 API 도 안 열려야 한다 (진짜 있는 대화 번호로도)
   const guarded = [['GET', '/api/me'], ['GET', '/api/chats'], ['POST', '/api/chats'], ['GET', `/api/chats/${chatId}`],
     ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete'],
-    ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events'], ['POST', '/api/seed']];
+    ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events'], ['POST', '/api/seed'],
+    ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -146,6 +147,7 @@ async function run() {
   await runDash(ck);
   await runCal(ck);
   await runProjects(ck);
+  await runWbs(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -296,6 +298,20 @@ async function runSeed(ck) {
   for (const [n, rows] of Object.entries({ events, projects, tasks, notices }))
     for (const k of new Set(rows.flatMap(Object.keys))) if (!skillText.includes('`' + k + '`')) undocumented.push(n + '.' + k);
   check('스킬 문서에 화면이 쓰는 모든 필드가 적혀 있음(문서와 화면이 어긋나지 않음)' + (undocumented.length ? ' — 빠진 것: ' + undocumented.join() : ''), !undocumented.length);
+  check('서버를 켜면 data 의 옛 스킬 문서가 templates 의 새 내용으로 바뀜(새 규칙이 기존 설치에도 반영)',
+    skillText === fs.readFileSync(path.join(__dirname, 'templates', 'skills', 'platform', 'SKILL.md'), 'utf8'));
+
+  // 예시 공정표: 열교환기 제작(demo-p1)
+  const wbsCalc = require('./public/m/wbs-calc.js');
+  const wdoc = JSON.parse(fs.readFileSync(path.join(dir, 'wbs', 'demo-p1.json'), 'utf8'));
+  const wc = wbsCalc.compute(wdoc, wbsCalc.today());
+  check('예시 공정표(data/wbs/demo-p1.json): 대단락 5개(설계·구매·제작·검사·출하)와 작업 15개, 형식 오류 없음',
+    wbsCalc.validate(wdoc) === '' && wc.problems.length === 0 && wc.rows.filter((r) => !r.leaf).map((r) => r.name).join() === '설계,구매,제작,검사,출하' && wc.rows.filter((r) => r.leaf).length === 15);
+  check('예시 공정표: 완료·진행·지연·대기가 모두 보이고, 지연 작업은 2개이고, 계약금액이 들어 있음',
+    ['완료', '진행', '지연', '대기'].every((s) => wc.rows.some((r) => r.status === s)) && wc.evms.late === 2 && wdoc.bac === 1200000000 && typeof wdoc.actualLog[wbsCalc.today()] === 'number');
+  check('예시 공정표가 가리키는 프로젝트(demo-p1)가 실제로 있음', ids.has('demo-p1'));
+  const wkeys = new Set([...Object.keys(wdoc), ...wdoc.items.flatMap(Object.keys)]);
+  check('스킬 문서에 공정표 파일의 모든 필드가 적혀 있음', [...wkeys].every((k) => skillText.includes('`' + k + '`')) && skillText.includes('data/wbs/<프로젝트 id>.json'));
 
   const before = snapshot();
   const r2 = await seed(), j2 = await r2.json();
@@ -307,6 +323,10 @@ async function runSeed(ck) {
   const tasks3 = await get('tasks');
   check('확인(add:true)하면 예시만 더해지고, 내 자료는 그대로이며 예시가 겹쳐 쌓이지 않음',
     r3.status === 200 && tasks3.length === 7 && tasks3.some((t) => t.id === 'mine') && (await get('events')).length === 8);
+  const wg = await (await fetch(BASE + '/api/wbs/demo-p1', { headers: H })).json();
+  await fetch(BASE + '/api/wbs/demo-p1', { method: 'PUT', headers: H, body: JSON.stringify({ etag: wg.etag, doc: { ...wg.doc, bac: 777 } }) });
+  await seed({ add: true });
+  check('예시를 다시 넣어도 이미 있는 공정표는 덮어쓰지 않음(내가 고친 계약금액이 그대로)', (await (await fetch(BASE + '/api/wbs/demo-p1', { headers: H })).json()).doc.bac === 777);
   fs.writeFileSync(path.join(dbDir, 'events.json'), '{ 깨진 파일');
   const tasksFile = fs.readFileSync(path.join(dbDir, 'tasks.json'), 'utf8');
   check('자료 파일이 깨져 있으면 500 으로 알리고 아무것도 쓰지 않음',
@@ -423,7 +443,7 @@ async function runProjects(ck) {
   const get = (u) => fetch(BASE + u, { headers: { Cookie: ck } });
   check('로그인 전에는 /m/projects.html·/m/proj.js 가 401', (await fetch(BASE + '/m/projects.html')).status === 401 && (await fetch(BASE + '/m/proj.js')).status === 401);
   const main = await (await get('/')).text();
-  check('메인 화면: 프로젝트 메뉴에 /m/projects.html 을 띄우고, "#WBS/<id>" 처럼 메뉴 뒤에 붙은 /… 는 메뉴 이름으로 보지 않음', main.includes('/m/projects.html') && main.includes(".split('/')[0]"));
+  check('메인 화면: 프로젝트 메뉴에 /m/projects.html 을 띄우고, "#WBS/<id>" 처럼 메뉴 뒤에 붙은 /… 는 메뉴 이름으로 보지 않음', main.includes('/m/projects.html') && main.includes(".split('/'); // \"#WBS/"));
   const html = await (await get('/m/projects.html')).text();
   check('프로젝트 화면: db.js·cal.js·proj.js 를 쓰고, "+ 새 프로젝트"·연간 통합 간트가 있고, 카드·막대를 누르면 #WBS/<id> 로 가고, 파일이 바뀌면 다시 그림',
     ['src="/m/db.js"', 'src="/m/cal.js"', 'src="/m/proj.js"', '+ 새 프로젝트', '연간 통합 간트', "'#WBS/'", "db.watch('projects'"].every((x) => html.includes(x)));
@@ -477,6 +497,176 @@ async function runProjects(ck) {
     && ['"기간이 이상": 기간', '"끝이 빠름": 기간', '"진도 이상": 진도율', '"상태 이상": 상태', '"이상한 id": id'].every((w) => probs.some((x) => x.includes(w))));
 }
 
+// WBS 공정표: 계산(public/m/wbs-calc.js)을 숫자로 검사 + 저장 API(data/wbs/<프로젝트id>.json) + 화면 파일(public/m/wbs.html)
+async function runWbs(ck) {
+  const H = { 'Content-Type': 'application/json', Cookie: ck };
+  const get = (u) => fetch(BASE + u, { headers: { Cookie: ck } });
+  const api = (method, url, body) => fetch(BASE + url, { method, headers: H, body: body === undefined ? undefined : JSON.stringify(body) });
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  check('로그인 전에는 /m/wbs.html·/m/wbs-calc.js 가 401', (await fetch(BASE + '/m/wbs.html')).status === 401 && (await fetch(BASE + '/m/wbs-calc.js')).status === 401);
+  const main = await (await get('/')).text();
+  check('메인 화면: WBS 메뉴에 /m/wbs.html 을 띄우고 "#WBS/<프로젝트id>" 의 id 를 넘김', main.includes('/m/wbs.html') && main.includes('showWbs(arg)') && main.includes("'?p=' + encodeURIComponent(pid)"));
+  const html = await (await get('/m/wbs.html')).text();
+  check('WBS 화면: db.js·wbs-calc.js 를 쓰고, 파일이 바뀌면(db.watch wbs-<id>) 다시 불러오고, 칸 두 번 누르기·Enter·막대 끌기가 있음',
+    ['src="/m/db.js"', 'src="/m/wbs-calc.js"', "db.watch('wbs-' + pid", 'ondblclick', "e.key === 'Enter'", 'onpointerdown', 'data-bar', 'data-tg'].every((x) => html.includes(x)));
+  check('WBS 화면: EVMS 카드 6장(BAC·PV·EV·SV·SPI·CPI)과 지연 작업, 위·아래·삭제·하위 추가 단추',
+    ['BAC · 계약금액', 'PV · 계획 가치', 'EV · 실행 가치', 'SV · 일정 차이', 'SPI · 일정 성과', 'CPI · 비용 성과', '지연 작업', 'data-act="below"', 'data-act="child"', 'data-act="up"', 'data-act="down"', 'data-act="del"'].every((x) => html.includes(x)));
+
+  const box = { window: {} }; vm.createContext(box);
+  vm.runInContext(await (await get('/m/wbs-calc.js')).text(), box);
+  const w = box.window.wbs, near = (a, b) => Math.abs(a - b) < 1e-9;
+  const T = '2026-10-07';
+  const leaf = (code, a, b, p, wt) => ({ code, name: code, start: a, end: b, progress: p, ...(wt === undefined ? {} : { weight: wt }) });
+  const one = (p, asOf = T, s = '2026-10-01', e = '2026-10-10') => w.compute({ items: [leaf('1', s, e, p)] }, asOf).rows[0];
+
+  // ---- 가중 평균 ----
+  const c1 = w.compute({ items: [{ code: '1', name: '설계' }, leaf('1.1', '2026-10-01', '2026-10-10', 80, 3), leaf('1.2', '2026-10-01', '2026-10-10', 40, 1)] }, T);
+  check('가중 평균: 1.1(가중치 3, 80%)·1.2(가중치 1, 40%) → 상위 1 은 (240+40)÷4 = 70%', near(c1.rows[0].actual, 70) && near(c1.overall.actual, 70) && !c1.rows[0].leaf && c1.problems.length === 0);
+  check('가중치 합이 0 이면 단순 평균 (80%·40% → 60%)',
+    near(w.compute({ items: [{ code: '1', name: 'a' }, leaf('1.1', '2026-10-01', '2026-10-10', 80, 0), leaf('1.2', '2026-10-01', '2026-10-10', 40, 0)] }, T).rows[0].actual, 60));
+  const c3 = w.compute({ items: [{ code: '1', name: 'a' }, { code: '1.1', name: 'b' }, leaf('1.1.1', '2026-10-01', '2026-10-02', 100), leaf('1.1.2', '2026-10-01', '2026-10-02', 0), leaf('1.2', '2026-10-01', '2026-10-02', 100)] }, T);
+  const by = Object.fromEntries(c3.rows.map((r) => [r.code, r]));
+  check('3단계 롤업: 1.1 = (100+0)÷2 = 50%, 1 = (50+100)÷2 = 75%', near(by['1.1'].actual, 50) && near(by['1'].actual, 75) && near(c3.overall.actual, 75));
+  check('전체에서 차지하는 비중(eff): 1.1.1 = 1/2 × 1/2 = 25%, 1.1.2 = 25%, 1.2 = 50%, 합 100%', near(by['1.1.1'].eff, 0.25) && near(by['1.1.2'].eff, 0.25) && near(by['1.2'].eff, 0.5));
+
+  // ---- 계획 진도(PV 의 바탕) ----
+  check('계획 진도: 10/1~10/10 에서 10/7 은 70%, 시작 전 0%, 시작 당일 10%, 완료일·그 뒤 100%, 하루짜리는 그날 100%',
+    near(w.planPct('2026-10-01', '2026-10-10', T), 70) && w.planPct('2026-10-01', '2026-10-10', '2026-09-30') === 0 && near(w.planPct('2026-10-01', '2026-10-10', '2026-10-01'), 10)
+    && w.planPct('2026-10-01', '2026-10-10', '2026-10-10') === 100 && w.planPct('2026-10-01', '2026-10-10', '2026-10-11') === 100 && w.planPct('2026-10-07', '2026-10-07', T) === 100);
+  check('상위 항목의 계획 진도도 하위 계획 진도의 가중 평균 (둘 다 70% → 70%)', near(c1.rows[0].plan, 70) && near(c1.overall.plan, 70));
+
+  // ---- 상태 ----
+  const st = (...a) => one(...a).status;
+  check('상태: 100% 는 완료', st(100) === '완료');
+  check('상태: 계획 70% 인데 실제 55% (15%p 뒤처짐) → 지연', st(55) === '지연');
+  check('상태: 격차가 딱 10%p (70% 대 60%) 면 지연이 아니고, 10.1%p (59.9%) 부터 지연', st(60) === '진행' && st(59.9) === '지연');
+  check('상태: 시작 전 0% 는 대기, 시작 전인데 진도가 있으면 진행', st(0, '2026-09-20') === '대기' && st(5, '2026-09-20') === '진행');
+  check('상태: 오늘이 기간 안이고 격차가 10%p 이하면 0% 라도 진행', st(0, '2026-10-01') === '진행');
+  check('상태: 기간이 끝난 뒤 95%·90% 는 진행, 85%·0% 는 지연', st(95, '2026-10-20') === '진행' && st(90, '2026-10-20') === '진행' && st(85, '2026-10-20') === '지연' && st(0, '2026-10-20') === '지연');
+
+  // ---- EVMS ----
+  const ev1 = w.compute({ bac: 1e8, ac: 5e7, items: [leaf('1', '2026-10-01', '2026-10-10', 40)] }, '2026-10-05').evms;
+  check('EVMS: BAC 1억, 계획 50%·실제 40% → PV 5천만 · EV 4천만 · SV −1천만 · SPI 0.8', ev1.pv === 5e7 && ev1.ev === 4e7 && ev1.sv === -1e7 && near(ev1.spi, 0.8));
+  check('CPI = EV ÷ AC (4천만 ÷ 5천만 = 0.8)', near(ev1.cpi, 0.8));
+  const ev2 = w.compute({ bac: 1e8, ac: 2e7, items: [leaf('1', '2026-10-01', '2026-10-10', 50)] }, '2026-10-05').evms;
+  check('EVMS: 계획 50%·실제 50%·AC 2천만 → SV 0 · SPI 1 · CPI 2.5', ev2.sv === 0 && near(ev2.spi, 1) && near(ev2.cpi, 2.5));
+  const ev0 = w.compute({ bac: 1e8, ac: 0, items: [leaf('1', '2026-10-01', '2026-10-10', 0)] }, '2026-09-20').evms;
+  check('시작 전(PV 가 0)이면 SPI 는 "—"(null), AC 가 0 이면 CPI 도 null (0 으로 나누지 않음)', ev0.pv === 0 && ev0.spi === null && ev0.cpi === null);
+  const evN = w.compute({ items: [leaf('1', '2026-10-01', '2026-10-10', 40)] }, '2026-10-05').evms;
+  check('BAC 를 안 넣으면 금액(PV·EV·SV)·CPI 는 null 이고 SPI 는 진도 비율로 계산 (0.8)', evN.bac === null && evN.pv === null && evN.ev === null && evN.sv === null && evN.cpi === null && near(evN.spi, 0.8));
+  const lc = w.compute({ items: [{ code: '1', name: 'a' }, leaf('1.1', '2026-10-01', '2026-10-10', 10), leaf('1.2', '2026-10-01', '2026-10-10', 10), leaf('1.3', '2026-10-01', '2026-10-10', 100)] }, T);
+  check('지연 작업 수는 맨 아래 작업만 센다 (작업 2개 지연, 상위 항목도 지연이지만 안 셈)', lc.evms.late === 2 && lc.rows.filter((r) => r.status === '지연').length === 3);
+
+  // ---- 정렬·상위 기간·접기·형식 오류 ----
+  const c5 = w.compute({ items: [leaf('1.10', '2026-11-01', '2026-11-05', 0), leaf('1.9', '2026-10-03', '2026-10-04', 0), { code: '1', name: 'a' }, leaf('2', '2026-12-01', '2026-12-02', 0), leaf('1.2', '2026-10-10', '2026-10-12', 0)] }, T);
+  check('코드 정렬: 1, 1.2, 1.9, 1.10, 2 (1.10 이 1.9 뒤)', c5.rows.map((r) => r.code).join() === '1,1.2,1.9,1.10,2');
+  check('대단락의 시작·완료는 하위 중 가장 이른 시작·가장 늦은 완료(자동)', c5.rows[0].start === '2026-10-03' && c5.rows[0].end === '2026-11-05' && c5.range.start === '2026-10-03' && c5.range.end === '2026-12-02');
+  check('접은 대단락 밑의 줄은 화면에서 빠짐', w.visible(c5.rows, new Set(['1'])).map((r) => r.code).join() === '1,2');
+  let bad;
+  try { bad = w.compute({ items: [null, 'x', { code: 'a', name: '코드 이상' }, { code: '1', name: '정상' }, leaf('1.1', '2026-10-01', '2026-10-10', 50), { code: '1.1', name: '겹침' }, leaf('3.1.1', '2026-10-01', '2026-10-02', 0),
+    { code: '1.2', name: '날짜 이상', start: '2026/10/01', end: '2026-10-02', progress: 0 }, { code: '1.3', name: '진도 이상', start: '2026-10-01', end: '2026-10-02', progress: 120 }] }, T); } catch (e) { bad = e.message; }
+  check('형식이 틀린 항목(모양·코드·겹침·윗 항목 없음·날짜·진도)이 섞여도 멈추지 않고, 이유 7개를 모아 알려 줌', typeof bad === 'object' && bad.problems.length === 7 && bad.rows.map((r) => r.code).join() === '1,1.1,1.2,1.3');
+
+  // ---- 행 추가·삭제·이동 (코드는 항상 1 부터 빈틈없이 다시 매김) ----
+  const base = [{ code: '1', name: '설계' }, leaf('1.1', '2026-10-01', '2026-10-05', 100), leaf('1.2', '2026-10-06', '2026-10-10', 0), { code: '2', name: '제작' }, leaf('2.1', '2026-10-11', '2026-10-15', 0)];
+  const nm = (r) => r.items.map((i) => `${i.code}:${i.name}`).join(' ');
+  const ab = w.addBelow(base, '1.1', T);
+  check('아래에 추가: 1.1 바로 아래에 새 행(1.2), 뒤의 것은 번호가 밀림(옛 1.2 → 1.3)', nm(ab) === '1:설계 1.1:1.1 1.2:새 작업 1.3:1.2 2:제작 2.1:2.1' && ab.focus === '1.2' && ab.map['1.2'] === '1.3');
+  const ach = w.addChild(base, '1.1', T), kid = ach.items.find((i) => i.code === '1.1.1');
+  check('하위로 추가: 작업(1.1)에 하위를 달면 그 작업의 기간·진도(10/1~10/5, 100%)는 새 하위(1.1.1)가 이어받음', kid.start === '2026-10-01' && kid.end === '2026-10-05' && kid.progress === 100 && ach.focus === '1.1.1' && w.validate({ items: ach.items }) === '');
+  check('하위로 추가: 대단락(1)에는 맨 끝(1.3)에 새 행', nm(w.addChild(base, '1', T)).includes('1.3:새 작업') && w.addChild(base, '1', T).focus === '1.3');
+  check('대단락 추가: 맨 끝(3)', w.addRoot(base, T).focus === '3');
+  const rm = w.remove(base, '1');
+  check('삭제: 1 을 지우면 하위(1.1·1.2)도 함께 지워지고 2·2.1 이 1·1.1 로 올라옴', nm(rm) === '1:제작 1.1:2.1' && rm.map['2'] === '1' && rm.map['2.1'] === '1.1' && w.countSubtree(base, '1') === 3);
+  const up = w.move(base, '1.2', -1);
+  check('위로 이동: 1.2 를 위로 올리면 1.1 과 자리가 바뀜(코드는 다시 매김)', nm(up) === '1:설계 1.1:1.2 1.2:1.1 2:제작 2.1:2.1' && up.map['1.2'] === '1.1' && up.focus === '1.1');
+  check('맨 위(1.1)를 위로·맨 아래(2)를 아래로 옮기면 아무 일도 안 함', w.move(base, '1.1', -1).noop === true && w.move(base, '2', 1).noop === true);
+  check('아래로 이동: 대단락 1 을 아래로 내리면 하위까지 통째로 2 가 됨', nm(w.move(base, '1', 1)) === '1:제작 1.1:2.1 2:설계 2.1:1.1 2.2:1.2');
+  check('원래 목록은 안 바뀜(새 목록을 돌려줌)', base.length === 5 && base[2].code === '1.2' && base[2].name === '1.2');
+  check('형식 오류가 있는 목록은 행 추가·이동을 거절(몰래 고치지 않음)', (w.addBelow([{ code: '1.1', name: 'x' }], '1.1', T).error || '').startsWith('먼저 형식 오류를 고쳐 주세요'));
+
+  // ---- 칸 고치기·막대 끌기·금액 입력 ----
+  const e = (code, f, v) => w.setField(base, code, f, v);
+  check('칸 고치기: 가중치 음수·글자, 진도율 101, 이름 빈칸, 없는 날짜, 완료일이 시작일보다 빠름은 거절',
+    ['weight|-1', 'weight|abc', 'progress|101', 'name|', 'start|2026-02-31', 'end|2026-09-30'].every((s) => { const [f, v] = s.split('|'); return e('1.1', f, v).error; }));
+  check('칸 고치기: 대단락의 진도율·시작·완료는 못 고침(자동 계산)', e('1', 'progress', '50').error.includes('자동') && e('1', 'start', '2026-10-01').error.includes('자동'));
+  const ok = e('1.2', 'progress', ' 55 ');
+  check('칸 고치기: 진도율 55 저장, 다른 항목은 그대로, 원래 목록은 안 바뀜', ok.items[2].progress === 55 && ok.items[0] === base[0] && base[2].progress === 0);
+  check('칸 고치기: 가중치·담당·작업명·날짜', e('1.2', 'weight', '2.5').items[2].weight === 2.5 && e('1.2', 'owner', ' 김가나 ').items[2].owner === '김가나'
+    && e('1.2', 'name', ' 용접 ').items[2].name === '용접' && e('1.2', 'end', '2026-10-20').items[2].end === '2026-10-20');
+  const mv = w.shiftTask(base, '1.2', 3, 3), rs = w.shiftTask(base, '1.2', 0, -2);
+  check('막대 끌기: 이동은 시작·완료를 같이 +3일, 오른쪽 끝 끌기는 완료일만 −2일', mv.items[2].start === '2026-10-09' && mv.items[2].end === '2026-10-13' && rs.items[2].start === '2026-10-06' && rs.items[2].end === '2026-10-08');
+  check('막대 끌기: 완료일이 시작일보다 앞으로 가면 거절, 대단락은 못 끎', w.shiftTask(base, '1.2', 0, -6).error && w.shiftTask(base, '1', 1, 1).error);
+  const money = ['1200000000', '1,200,000,000원', '12억', '1.5억', '3000만', '12억 3000만', '12억3000만'].map((s) => w.parseMoney(s).value);
+  check('금액 입력: 1200000000 · 1,200,000,000원 · 12억 · 1.5억 · 3000만 · 12억 3000만', money.join() === [1.2e9, 1.2e9, 1.2e9, 1.5e8, 3e7, 1.23e9, 1.23e9].join() && w.parseMoney('').value === null
+    && ['abc', '-5', '1.5'].every((s) => w.parseMoney(s).error));
+
+  // ---- 검증·정리·간트 가로축 ----
+  check('검증: 정상은 통과', w.validate({ bac: null, ac: 0, items: base }) === '' && w.validate({ items: [] }) === '');
+  const cases = [[{ items: [{ code: 'a', name: 'x' }] }, '코드'], [{ items: [{ code: '1', name: 'x', start: T, end: T }, { code: '1', name: 'y', start: T, end: T }] }, '겹쳐'],
+    [{ items: [{ code: '1.1', name: 'x', start: T, end: T }] }, '위 항목'], [{ items: [{ code: '1', name: 'x' }] }, '시작일'], [{ items: [leaf('1', '2026-10-10', '2026-10-01', 0)] }, '완료일이 시작일보다'],
+    [{ items: [leaf('1', T, T, 101)] }, '진도율'], [{ items: [leaf('1', T, T, 0, -1)] }, '가중치'], [{ items: [{ ...leaf('1', T, T, 0), name: '  ' }] }, '작업명'],
+    [{ bac: -1, items: [] }, 'BAC'], [{ items: 'x' }, 'items'], [{ items: [], actualLog: { '2026-02-31': 5 } }, 'actualLog'],
+    [{ items: Array.from({ length: 1001 }, (_, i) => leaf(String(i + 1), T, T, 0)) }, '1000개']];
+  check('검증: 코드 모양·겹침·윗 항목 없음·날짜 없음·완료<시작·진도 101·가중치 음수·작업명 빈칸·BAC 음수·items 아님·actualLog 이상·1001개를 모두 거절', cases.every(([d, word]) => w.validate(d).includes(word)));
+  const nz = w.normalize({ items: [leaf('2.1', '2026-10-11', '2026-10-15', 50), { code: '1', name: ' 설계 ', start: '2026-10-01', end: '2026-10-02', progress: 99 }, leaf('1.1', '2026-10-01', '2026-10-05', 100), { code: '2', name: '제작' }] }, T);
+  check('정리(저장 모양): 코드 순서·자식 있으면 대단락(상위의 시작·완료·진도율은 지움)·없으면 작업·이름 공백 제거·오늘 실제 진도(75%) 기록',
+    nz.items.map((i) => i.code).join() === '1,1.1,2,2.1' && nz.items[0].type === '대단락' && !('start' in nz.items[0]) && !('progress' in nz.items[0]) && nz.items[0].name === '설계'
+    && nz.items[1].type === '작업' && nz.items[1].weight === 1 && nz.bac === null && nz.actualLog[T] === 75);
+  const sp = w.span({ start: '2026-08-08', end: '2026-11-21' }, T), mo = w.months(sp.from, sp.to);
+  check('간트 가로축: 8/8~11/21 → 8/1 ~ 12/31, 달 칸 2026.08·9월·10월·11월·12월 (31·30·31·30·31일)', sp.from === '2026-08-01' && sp.to === '2026-12-31' && mo.map((m) => m.label).join() === '2026.08,9월,10월,11월,12월' && mo.map((m) => m.days).join() === '31,30,31,30,31');
+  const sp2 = w.span({ start: '2026-12-20', end: '2027-01-10' }, T);
+  check('간트 가로축: 해를 넘기면 2026.12 · 2027.01 로 연도 표시, 오늘이 범위 밖이어도 덮음', w.months('2026-12-01', '2027-01-31').map((m) => m.label).join() === '2026.12,2027.01' && sp2.from === '2026-10-01' && sp2.to === '2027-01-31');
+  check('막대 자리(px): 10/1~10/10 은 8/1 에서 61일 뒤, 하루 6px → 왼쪽 366px · 폭 60px', w.px('2026-10-01', '2026-10-10', '2026-08-01', 6).left === 366 && w.px('2026-10-01', '2026-10-10', '2026-08-01', 6).width === 60);
+
+  // ---- 저장 API: data/wbs/<프로젝트id>.json ----
+  const wbsDir = path.join(dir, 'wbs'), today = new Date().toLocaleDateString('sv-SE');
+  const ac = new AbortController();
+  const stream = await fetch(BASE + '/api/events', { headers: { Cookie: ck }, signal: ac.signal });
+  let heard = ''; const dec = new TextDecoder(); const rd = stream.body.getReader();
+  (async () => { for (;;) { const r = await rd.read().catch(() => ({ done: true })); if (r.done) return; heard += dec.decode(r.value); } })();
+  const changed = async (name) => { const re = new RegExp(`^event: db\\ndata: \\{"name":"${name}"\\}$`, 'm'); for (let i = 0; i < 100 && !re.test(heard); i++) await sleep(30); const okk = re.test(heard); heard = ''; return okk; };
+  const g0 = await (await api('GET', '/api/wbs/p1')).json();
+  check('처음에는 빈 공정표(etag "none"), 파일은 아직 없음', g0.etag === 'none' && g0.doc.items.length === 0 && !fs.existsSync(path.join(wbsDir, 'p1.json')));
+  const docA = { bac: 1e9, ac: null, items: [{ code: '1', name: '설계' }, leaf('1.1', '2026-10-01', '2026-10-05', 100), leaf('1.2', '2026-10-06', '2026-10-10', 0), { code: '2', name: '제작' }, leaf('2.1', '2026-10-11', '2026-10-15', 0)] };
+  const r1 = await api('PUT', '/api/wbs/p1', { etag: 'none', doc: docA }), j1 = await r1.json();
+  check('저장(PUT): 200, 단계가 자동으로 붙고, 오늘의 실제 진도가 actualLog 에 기록되고, data/wbs/p1.json 이 생김',
+    r1.status === 200 && j1.doc.items[0].type === '대단락' && j1.doc.items[1].type === '작업' && typeof j1.doc.actualLog[today] === 'number' && fs.existsSync(path.join(wbsDir, 'p1.json')));
+  check('저장하면 알림: wbs-p1 이 바뀜', await changed('wbs-p1'));
+  const g1 = await (await api('GET', '/api/wbs/p1')).json();
+  check('GET 은 저장한 내용과 같은 etag 를 돌려줌', g1.etag === j1.etag && g1.doc.bac === 1e9 && g1.doc.items.length === 5);
+  const stale = await api('PUT', '/api/wbs/p1', { etag: 'none', doc: docA });
+  check('옛 etag 로 저장하면 409 이고 파일은 그대로', stale.status === 409 && (await (await api('GET', '/api/wbs/p1')).json()).etag === j1.etag);
+  const badPut = await api('PUT', '/api/wbs/p1', { etag: j1.etag, doc: { items: [{ code: 'x', name: 'a' }] } });
+  check('형식이 틀린 내용은 400 + 이유, 파일은 그대로', badPut.status === 400 && (await badPut.json()).error.includes('코드') && (await (await api('GET', '/api/wbs/p1')).json()).etag === j1.etag);
+  check('etag 가 없거나 내용이 객체가 아니면 400', (await api('PUT', '/api/wbs/p1', { doc: docA })).status === 400 && (await api('PUT', '/api/wbs/p1', [1])).status === 400
+    && (await fetch(BASE + '/api/wbs/p1', { method: 'PUT', headers: H, body: '{깨짐' })).status === 400);
+  const cur = await (await api('GET', '/api/wbs/p1')).json();
+  const race = await Promise.all(Array.from({ length: 10 }, (_, i) => api('PUT', '/api/wbs/p1', { etag: cur.etag, doc: { ...cur.doc, bac: 1000 + i } })));
+  const sts = race.map((r) => r.status);
+  check('같은 etag 로 동시에 10번 저장해도 하나만 성공하고 나머지는 409 (조용히 덮어쓰지 않음)', sts.filter((s) => s === 200).length === 1 && sts.filter((s) => s === 409).length === 9);
+  check('저장 뒤 임시 파일(.tmp)이 안 남음', !fs.readdirSync(wbsDir).some((f) => f.endsWith('.tmp')));
+
+  // 비서(AI)가 파일을 직접 고친 경우: 화면이 알림을 받고, 옛 화면이 저장하려 하면 막혀서 비서의 수정을 덮어쓰지 않는다
+  const cur2 = await (await api('GET', '/api/wbs/p1')).json();
+  await sleep(200); heard = '';
+  const direct = { ...cur2.doc, items: cur2.doc.items.map((i) => (i.code === '1.2' ? { ...i, progress: 77 } : i)) };
+  fs.writeFileSync(path.join(wbsDir, 'p1.json'), JSON.stringify(direct, null, 2));
+  check('비서가 파일을 직접 고쳐도 알림: wbs-p1 이 바뀜', await changed('wbs-p1'));
+  const stale2 = await api('PUT', '/api/wbs/p1', { etag: cur2.etag, doc: cur2.doc });
+  check('옛 화면이 저장하려 하면 409 — 비서가 고친 진도율(77)이 그대로 남음', stale2.status === 409 && (await (await api('GET', '/api/wbs/p1')).json()).doc.items.find((i) => i.code === '1.2').progress === 77);
+  ac.abort();
+
+  fs.writeFileSync(path.join(wbsDir, 'broken.json'), '{ 깨진 파일');
+  check('깨진 파일은 GET 500 으로 알리고, 저장해도 덮어쓰지 않음', (await api('GET', '/api/wbs/broken')).status === 500
+    && (await api('PUT', '/api/wbs/broken', { etag: 'none', doc: docA })).status === 409 && fs.readFileSync(path.join(wbsDir, 'broken.json'), 'utf8') === '{ 깨진 파일');
+  fs.writeFileSync(path.join(wbsDir, 'bom.json'), '﻿' + JSON.stringify(docA));
+  check('메모장이 붙이는 BOM 이 있어도 읽힘', (await (await api('GET', '/api/wbs/bom')).json()).doc.items.length === 5);
+  for (const u of ['/api/wbs/nul', '/api/wbs/NUL', '/api/wbs/a.b', '/api/wbs/..%2Fusers', '/api/wbs/a%2Fb'])
+    check(`이상한 프로젝트 id 는 거절: PUT ${u}`, (await api('PUT', u, { etag: 'none', doc: docA })).status === 404);
+  check('다른 사이트에서 온 저장 요청은 403', (await fetch(BASE + '/api/wbs/p1', { method: 'PUT', headers: { ...H, Origin: 'https://evil.example' }, body: JSON.stringify({ etag: 'x', doc: docA }) })).status === 403);
+}
+
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
 function startServer(port, dataDir, env) {
   const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
@@ -508,6 +698,9 @@ async function runNoClaude() {
   fs.rmSync(dir2, { recursive: true, force: true }); fs.rmSync(empty, { recursive: true, force: true });
 }
 
+// 옛 스킬 문서가 남아 있는 PC 를 흉내 낸다: 서버를 켜면 templates/ 의 새 내용으로 바뀌어야 한다 (새 규칙이 기존 설치에도 반영되게)
+fs.mkdirSync(path.join(dir, '.claude', 'skills', 'platform'), { recursive: true });
+fs.writeFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), '옛 스킬 문서');
 const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid' });
 srv.ready.then(async () => {
   try {

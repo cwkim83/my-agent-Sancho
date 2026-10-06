@@ -218,7 +218,7 @@
     $('nav').innerHTML = MENUS.map((m) => `<a href="#${m}" class="${m === current ? 'on' : ''}">${m}</a>`).join('');
   }
   function route() {
-    const h = decodeURIComponent(location.hash.slice(1)).split('/')[0]; // "#WBS/프로젝트id" 처럼 메뉴 뒤에 붙은 /… 는 그 화면이 쓴다
+    const [h, arg] = decodeURIComponent(location.hash.slice(1)).split('/'); // "#WBS/프로젝트id" 처럼 메뉴 뒤에 붙은 /… 는 그 화면이 쓴다
     current = MENUS.includes(h) ? h : '대시보드';
     stopDash(); // 대시보드를 떠나면 파일 감시도 끈다 (showChat 이 다시 켠다)
     document.body.classList.remove('menu');
@@ -226,6 +226,7 @@
     if (current === '대시보드') showChat();
     else if (current === '일정') showCalendar();
     else if (current === '프로젝트') showProjects();
+    else if (current === 'WBS') showWbs(arg);
     else if (current === '설정') showSettings();
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
   }
@@ -254,6 +255,7 @@
   let pendingAsk = null;
   function showCalendar() { $('main').innerHTML = '<iframe class="frame" src="/m/calendar.html" title="일정"></iframe>'; }
   function showProjects() { $('main').innerHTML = '<iframe class="frame" src="/m/projects.html" title="프로젝트"></iframe>'; }
+  function showWbs(pid) { $('main').innerHTML = `<iframe class="frame" src="/m/wbs.html${pid ? '?p=' + encodeURIComponent(pid) : ''}" title="WBS"></iframe>`; }
   window.addEventListener('message', (e) => {
     const frame = document.querySelector('iframe.frame');
     if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data || e.data.type !== 'ask') return;
