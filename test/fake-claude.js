@@ -8,8 +8,42 @@ const out = (o) => process.stdout.write(JSON.stringify({ session_id: sid, ...o }
 const delta = (text) => out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 메일정리 흉내: 서버가 보내는 "[메일 정리]"·"[답장 초안]" 지시를 받아, 진짜 비서가 하듯 data/db/mails.json 을 직접 고친다 (점검용 표시 파일로 동작을 바꾼다)
+//   fake-mail-bad.flag → 형식을 어긴다(원문 칸·긴 글·이상한 분류 + 기존 항목 지움) / fake-mail-slow.flag → 1.5초 걸림 / fake-mail-nodraft.flag → 초안을 안 적음
+async function mail(msg) {
+  const fs = require('fs'), real = msg.includes('실제 메일함 모드'), has = (f) => fs.existsSync(f);
+  fs.appendFileSync('fake-prompts.log', msg + '\n---\n');
+  if (has('fake-mail-slow.flag')) await sleep(1500);
+  const read = (f) => JSON.parse(fs.readFileSync(f, 'utf8')), day = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('sv-SE'); };
+  const done = (t) => { delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); };
+  let cur; try { cur = has('db/mails.json') ? read('db/mails.json') : []; } catch { return done('mails.json 이 깨져 있어서 건드리지 않았어요'); }
+  if (msg.startsWith('[답장 초안]')) {
+    const m = cur.find((x) => x.id === (/id 가 "([^"]+)"/.exec(msg) || [])[1]);
+    if (m && !has('fake-mail-nodraft.flag')) { m.초안 = '안녕하세요.\n확인 후 회신드리겠습니다.\n감사합니다.'; m.초안위치 = real ? 'Gmail 임시보관함' : '연습용(저장만)'; fs.writeFileSync('db/mails.json', JSON.stringify(cur, null, 2)); }
+    return done(m ? '답장 초안을 만들었어요' : '그 메일이 없어요');
+  }
+  if (has('fake-mail-break.flag')) { fs.writeFileSync('db/mails.json', '{ 깨짐'); return done('끝'); } // 파일을 깨 놓고 끝나는 비서
+  const src = real ? [{ id: 'g-1', 보낸사람: '가상 발신자', 소속: '', 제목: '[긴급] 실제 모드 시험 메일', 며칠전: 0, 본문: '실제 모드 본문' }] : read('db/sample-mails.json');
+  let n = 0;
+  for (const s of src) {
+    if (s.며칠전 > 1 || cur.some((c) => c.원본id === s.id)) continue;
+    const kind = /^\[긴급\]/.test(s.제목) ? '긴급' : /^\[광고\]/.test(s.제목) ? '광고' : '업무', ad = kind === '광고';
+    cur.push({ id: 'k' + String(cur.length + 1).padStart(7, '0'), 출처: real ? 'Gmail' : '연습', 원본id: s.id, 보낸사람: `${s.보낸사람}${s.소속 ? ` (${s.소속})` : ''}`, 제목: s.제목, 받은날: day(s.며칠전), 분류: kind,
+      요약: `${s.제목} 요약`, 할일: ad ? '' : '확인하고 회신', 마감일: ad ? '' : day(-1), 일정날짜: '', 일정시작: '', 일정장소: '', 일정종류: '', 상태: '새것', 초안: '', 초안위치: '', 일정id: '', 할일id: '' });
+    n++;
+  }
+  if (has('fake-mail-bad.flag')) { // 형식을 어긴 비서: 원문 칸·긴 글·이상한 분류·줄바꿈 제목을 끼우고, 맨 앞 기존 항목을 지워 버린다
+    const first = cur.find((c) => c.원본id === src[0].id);
+    if (first) Object.assign(first, { 본문: src[0].본문, 원문: src[0].본문, 요약: '긴'.repeat(500), 분류: '이상한분류', 제목: '줄\n바꿈  제목', 마감일: '2026-02-31', 일정시작: '25:99', 상태: '엉뚱' });
+    cur.shift();
+  }
+  fs.writeFileSync('db/mails.json', JSON.stringify(cur, null, 2));
+  done(`새 메일 ${n}통 정리\n(둘째 줄: 비서가 길게 보고해도 화면에는 첫 줄만 나와야 한다)`);
+}
+
 async function run(msg) {
   out({ type: 'system', subtype: 'init' });
+  if (msg.startsWith('[메일 정리]') || msg.startsWith('[답장 초안]')) return mail(msg);
   if (msg === '/login') { out({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }); process.exit(1); }
   if (msg === '/limit') {
     out({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });

@@ -468,7 +468,7 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
 // 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
-const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
+const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
 const brainCtx = (name, d = new Date()) => `주인 이름: ${name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${SKILL_HINT}`;
 
 // 두뇌가 실패했을 때 이유를 쉬운 한국어로 — 대화(streamReply)와 예약(askBrainOnce)이 같이 쓴다
@@ -767,6 +767,95 @@ async function scheduleApi(req, res, id, act) {
   return false;
 }
 
+// ---------- 메일정리 (data/db/mails.json) ----------
+// 화면의 "메일 정리하기"·"답장 초안 만들기" 단추가 비서(두뇌)에게 일을 시키고, 끝나면 서버가 결과 파일을 검사해 다듬는다.
+// 연습 모드(연결된 앱 꺼짐): 가상 메일 templates/sample-mails.json 을 data/db/sample-mails.json 으로 한 번 복사해 두고(있으면 그대로) 비서가 그걸 읽는다.
+// 실제 모드(연결된 앱 켜짐): 비서가 Gmail 을 읽는다. 어느 쪽이든 원문은 저장하지 않고 요약만, 메일은 보내지 않고 초안까지만.
+const SAMPLE_MAILS = path.join(DB_DIR, 'sample-mails.json');
+if (!fs.existsSync(SAMPLE_MAILS)) fs.copyFileSync(path.join(__dirname, 'templates', 'sample-mails.json'), SAMPLE_MAILS);
+const mailJob = { running: null, last: null }; // running: 'organize' | 'draft' | null — 한 번에 하나만 / last: { kind, ok, text, at, mode } 마지막 결과 (화면이 보여 준다)
+const mailMode = () => (readPerms().연결된앱 ? 'Gmail' : '연습');
+
+// 비서가 쓴 mails.json 다듬기: 아는 칸만 남기고 글자 수를 자른다. "본문"·"원문" 같은 모르는 칸이나 긴 글이 끼어도 여기서 지워져서 원문이 파일에 남지 않는다
+const MAIL_LEN = { 원본id: 120, 보낸사람: 60, 제목: 120, 요약: 160, 할일: 160, 일정장소: 80, 초안위치: 40, 일정id: 64, 할일id: 64 };
+const MAIL_KINDS = ['긴급', '업무', '광고'], EVENT_KINDS = ['회의', '출장', '검사 입회', '개인'];
+const mailClip = (v, n, oneLine = true) => { const s = String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ''); return (oneLine ? s.replace(/\s+/g, ' ') : s).trim().slice(0, n); };
+const isYmd = (s) => typeof s === 'string' && /^\d{4}-\d\d-\d\d$/.test(s) && new Date(`${s}T00:00:00`).toLocaleDateString('sv-SE') === s; // "2026-02-31" 같은 없는 날은 아님
+const isHm = (s) => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+function cleanMail(m, mode) {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const s = (k) => mailClip(m[k], MAIL_LEN[k]);
+  return {
+    id: /^[A-Za-z0-9_-]{1,64}$/.test(String(m.id)) ? String(m.id) : crypto.randomBytes(4).toString('hex'),
+    출처: ['연습', 'Gmail'].includes(m.출처) ? m.출처 : mode, 원본id: s('원본id'), 보낸사람: s('보낸사람'), 제목: s('제목'), 받은날: isYmd(m.받은날) ? m.받은날 : '',
+    분류: MAIL_KINDS.includes(m.분류) ? m.분류 : '업무', 요약: s('요약'), 할일: s('할일'), 마감일: isYmd(m.마감일) ? m.마감일 : '',
+    일정날짜: isYmd(m.일정날짜) ? m.일정날짜 : '', 일정시작: isHm(m.일정시작) ? m.일정시작 : '', 일정장소: s('일정장소'), 일정종류: EVENT_KINDS.includes(m.일정종류) ? m.일정종류 : '',
+    상태: m.상태 === '처리됨' ? '처리됨' : '새것', 초안: mailClip(m.초안, 2000, false), 초안위치: s('초안위치'), 일정id: s('일정id'), 할일id: s('할일id'),
+  };
+}
+// 비서가 mails.json 을 쓴 뒤에 부른다. 문제가 있으면 쉬운 한국어 이유를, 괜찮으면 '' 를 돌려준다.
+// 다듬는 것 외에: 비서가 지워 버린 기존 항목(처리됨 표시·등록 기록이 든 것)은 되살리고, 같은 메일(원본id)이 두 번 적혔으면 앞의 것만 남긴다
+function fixMails(before, mode) {
+  let cur; try { cur = loadCollection('mails'); } catch { return 'data/db/mails.json 이 올바른 목록이 아니에요. 덮어쓰지 않았으니 파일을 확인해 주세요.'; }
+  const ids = new Set(), froms = new Set(), out = [];
+  for (const m of [...cur, ...before.filter((b) => b && !cur.some((c) => c && c.id === b.id))]) {
+    const c = cleanMail(m, mode);
+    if (!c || ids.has(c.id) || (c.원본id && froms.has(c.원본id))) continue;
+    ids.add(c.id); if (c.원본id) froms.add(c.원본id); out.push(c);
+  }
+  let old = null; try { old = fs.readFileSync(dbFile('mails'), 'utf8'); } catch { /* 파일이 없다 */ }
+  if (old === null && !out.length) return ''; // 아무것도 없으면 빈 파일도 만들지 않는다
+  if (JSON.stringify(out, null, 2) !== old) writeJson(dbFile('mails'), out);
+  return '';
+}
+const MAIL_ASK = {
+  organize: (mode) => `[메일 정리] ${mode === '연습'
+    ? '연습 모드다. 연결된 앱이 꺼져 있으니 실제 메일함은 쓰지 않는다. mail 스킬(.claude/skills/mail/SKILL.md)을 먼저 읽고 그 문서의 "메일 정리하기"를 연습 모드로 한다: data/db/sample-mails.json 의 가상 메일 중 최근 2일(며칠전이 0 또는 1)인 것을 읽고'
+    : '실제 메일함 모드다. mail 스킬(.claude/skills/mail/SKILL.md)을 먼저 읽고 그 문서의 "메일 정리하기"를 실제 모드로 한다: Gmail 도구로 최근 2일 받은편지함 메일(검색어 in:inbox newer_than:2d)을 읽고'}`
+    + ' 긴급·업무·광고로 나눠, 요약 한 줄·할 일·마감일을 data/db/mails.json 에 적는다. 메일 원문은 저장하지 않고 요약만 적는다. 메일은 보내지 않는다.',
+  draft: (mode, m) => `[답장 초안] ${mode === '연습'
+    ? '연습 모드다. Gmail 은 쓰지 않는다. mail 스킬(.claude/skills/mail/SKILL.md)의 "답장 초안 만들기"를 연습 모드로 한다:'
+    : '실제 메일함 모드다. mail 스킬(.claude/skills/mail/SKILL.md)의 "답장 초안 만들기"를 실제 모드로 한다: Gmail 의 create_draft 로 임시보관함에 넣기만 하고 절대 보내지 않는다.'}`
+    + ` data/db/mails.json 에서 id 가 "${m.id}" 인 메일(원본id ${JSON.stringify(m.원본id)})의 답장 초안을 만들어 그 항목의 "초안"·"초안위치" 칸에 적는다. 메일은 보내지 않는다.`,
+};
+async function runMail(kind, prompt, mode, before, user, id) { // 끝나기를 기다리지 않고 불러도 된다. 절대 던지지 않는다. running 은 첫 await 전에 켠다 (두 번 눌러도 하나만 돈다)
+  mailJob.running = kind;
+  let r;
+  try { r = await askBrainOnce(prompt, `${brainCtx(user.name)} 이 실행은 메일정리 화면의 단추가 시작했다. 주인은 화면에서 기다리고 있어 되물을 수 없다. 끝나면 한 줄로 결과만 보고한다.`); }
+  catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
+  let ok = r.ok, text = r.text || (r.ok ? '(보고 글이 없어요)' : '');
+  try {
+    const bad = fixMails(before, mode); // 비서가 실패했어도 쓰다 만 파일은 다듬는다
+    if (bad && ok) { ok = false; text = bad; }
+    if (ok && kind === 'draft' && !(loadCollection('mails').find((m) => m.id === id) || {}).초안) { ok = false; text = '초안이 적히지 않았어요. 한 번 더 눌러 보세요.'; }
+  } catch (e) { if (ok) { ok = false; text = `결과를 다듬지 못했어요: ${e.message}`; } }
+  mailJob.last = { kind, ok, text: mailClip(String(text).trim().split('\n')[0], 200), at: nowIso(), mode }; // 비서가 길게 보고해도 첫 줄만 (화면 한 줄에 들어가게)
+  mailJob.running = null;
+  emitDb('mails');
+}
+// /api/mail/status · organize · draft — 메일정리 화면이 쓴다. 처리했으면 true
+//   GET status → { mode: "연습"|"Gmail", running, last } · POST organize → 시작(끝나기를 기다리지 않고 바로 답함) · POST draft { id } → 그 메일의 답장 초안
+async function mailApi(req, res, act, user) {
+  const M = req.method, done = (status, body) => { send(res, status, body); return true; };
+  if (act === 'status') return M === 'GET' ? done(200, { mode: mailMode(), running: mailJob.running, last: mailJob.last }) : false;
+  if (M !== 'POST') return false;
+  let b = {}; if (act === 'draft') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
+  // 여기부터는 await 없이: 실행 중인지 보고 → 시작
+  if (mailJob.running) return done(409, { error: '지금 다른 메일 작업이 돌고 있어요. 끝난 뒤에 눌러 주세요.' });
+  let before; try { before = loadCollection('mails'); } catch { return done(500, { error: 'data/db/mails.json 이 올바른 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  const mode = mailMode();
+  if (mode === '연습' && !fs.existsSync(SAMPLE_MAILS)) fs.copyFileSync(path.join(__dirname, 'templates', 'sample-mails.json'), SAMPLE_MAILS); // 지웠으면 다시 둔다
+  let prompt, id = '';
+  if (act === 'draft') {
+    id = String(b.id || '');
+    const m = /^[A-Za-z0-9_-]{1,64}$/.test(id) && before.find((x) => x && x.id === id);
+    if (!m) return done(404, { error: '없는 메일입니다. 목록을 새로 불러와 주세요.' });
+    prompt = MAIL_ASK.draft(mode, m);
+  } else prompt = MAIL_ASK.organize(mode);
+  runMail(act, prompt, mode, before, user, id);
+  return done(200, { ok: true, mode });
+}
+
 // ---------- 요청 처리 ----------
 async function handle(req, res) {
   // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다
@@ -869,6 +958,8 @@ async function handle(req, res) {
     if (qm && await scheduleApi(req, res, qm[1], qm[2])) return;
     const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions)(?:\/(test))?)?$/);
     if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
+    const mm = p.match(/^\/api\/mail\/(organize|draft|status)$/);
+    if (mm && await mailApi(req, res, mm[1], user)) return;
 
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }

@@ -91,7 +91,7 @@ async function run() {
     ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
     ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share'],
     ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['POST', '/api/schedule/x/phone'], ['DELETE', '/api/schedule/x'],
-    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions']];
+    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions'], ['GET', '/api/mail/status'], ['POST', '/api/mail/organize'], ['POST', '/api/mail/draft']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -163,6 +163,7 @@ async function run() {
   await runTelegram(ck);
   await runInbox(ck);
   await runPerms(ck);
+  await runMail(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -289,7 +290,7 @@ async function runSeed(ck) {
   const get = async (n) => (await fetch(`${BASE}/api/db/${n}`, { headers: H })).json();
   const dbDir = path.join(dir, 'db');
   const snapshot = () => ['events', 'projects', 'tasks', 'notices'].map((n) => fs.readFileSync(path.join(dbDir, `${n}.json`), 'utf8')).join('\n');
-  for (const f of fs.readdirSync(dbDir)) if (f.endsWith('.json')) fs.unlinkSync(path.join(dbDir, f)); // 앞 검사가 남긴 자료를 치우고 빈 저장소에서 시작
+  for (const f of fs.readdirSync(dbDir)) if (f.endsWith('.json') && f !== 'sample-mails.json') fs.unlinkSync(path.join(dbDir, f)); // 앞 검사가 남긴 자료를 치우고 빈 저장소에서 시작 (연습용 메일 파일은 서버가 켜질 때 놓은 것이라 남긴다)
 
   const r1 = await seed();
   const added = (await r1.json()).added || {};
@@ -1367,6 +1368,162 @@ async function runPerms(ck) {
   const html = await (await fetch(BASE + '/', { headers: H })).text();
   check('메인 화면: 설정에 "권한" 칸(연결된 앱·명령 실행·내 홈 폴더 읽기 스위치, 기본 꺼짐, 명령 실행은 켜기 전에 되묻기)과 채팅 입력창 왼쪽의 켜진 권한 표시(없으면 🔒)',
     ['id="permBadge"', 'data-perm', '연결된 앱 (Gmail · 캘린더 · 드라이브)', '명령 실행', '내 홈 폴더 읽기', '/api/settings/permissions', 'showPerm', '🔒', '기본은 전부 꺼짐', '명령 실행을 켤까요?', 'id="permMsg"', '지금 켜진 권한'].every((w) => html.includes(w)));
+}
+
+// 메일정리 (data/db/mails.json): 연습용 가상 메일 8통 · "메일 정리하기"(연습/실제 모드)·답장 초안·원문 저장 방지·지워진 기존 항목 되살리기·mail.js 계산·화면
+// (진짜 Gmail 은 건드리지 않는다. 비서 대신 가짜 claude 가 지시를 받아 mails.json 을 고친다)
+async function runMail(ck) {
+  const H = { 'Content-Type': 'application/json', Cookie: ck };
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const until = async (fn, ms = 15000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
+  const api = (m, u, b, extra) => fetch(BASE + '/api/mail' + u, { method: m, headers: { ...H, ...extra }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const status = async () => (await api('GET', '/status')).json();
+  const idle = () => until(async () => !(await status()).running);
+  const mfile = path.join(dir, 'db', 'mails.json'), mails = () => JSON.parse(fs.readFileSync(mfile, 'utf8'));
+  const flag = (n, on = true) => { const f = path.join(dir, `fake-mail-${n}.flag`); on ? fs.writeFileSync(f, '1') : fs.rmSync(f, { force: true }); };
+  const plog = path.join(dir, 'fake-prompts.log'), prompts = () => (fs.existsSync(plog) ? fs.readFileSync(plog, 'utf8').split('\n---\n').filter(Boolean) : []);
+  const setApps = (on) => fetch(BASE + '/api/settings/permissions', { method: 'PUT', headers: H, body: JSON.stringify({ 연결된앱: on }) });
+  const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('sv-SE'); };
+  const KNOWN = ['id', '출처', '원본id', '보낸사람', '제목', '받은날', '분류', '요약', '할일', '마감일', '일정날짜', '일정시작', '일정장소', '일정종류', '상태', '초안', '초안위치', '일정id', '할일id'];
+
+  // 연습용 가상 메일 (templates/sample-mails.json → data/db/sample-mails.json, 서버가 켜질 때 한 번 복사)
+  const sampleText = fs.readFileSync(path.join(dir, 'db', 'sample-mails.json'), 'utf8'), sample = JSON.parse(sampleText);
+  check('연습용 메일 파일(data/db/sample-mails.json)이 서버를 켜면 templates/sample-mails.json 과 똑같이 놓임', sampleText === fs.readFileSync(path.join(__dirname, 'templates', 'sample-mails.json'), 'utf8'));
+  const tag = (m) => (/^\[긴급\]/.test(m.제목) ? '긴급' : /^\[광고\]/.test(m.제목) ? '광고' : '업무');
+  check('가상 메일 8통: 긴급 2·업무 4·광고 2, 모두 보낸사람·제목·본문·시각이 있고 "최근 2일(며칠전 0 또는 1)"이며 주소는 가짜 도메인(.example)',
+    sample.length === 8 && ['긴급', '업무', '광고'].map((k) => sample.filter((m) => tag(m) === k).length).join() === '2,4,2' && new Set(sample.map((m) => m.id)).size === 8
+    && sample.every((m) => m.보낸사람 && m.제목 && m.본문 && /^\d\d:\d\d$/.test(m.시각) && [0, 1].includes(m.며칠전) && /@[a-z0-9.-]+\.example$/.test(m.주소)));
+  const realNames = ['삼성', '현대', '포스코', '한화', '두산', '네이버', '카카오', '쿠팡', '구글', '한국전력', '한수원', '대우', '롯데', '효성', 'LG', 'SK', 'KT', 'GS', 'CJ', 'Samsung', 'Hyundai', 'Google', 'Naver'];
+  check('가상 메일에 널리 알려진 실제 회사 이름이 없음(점검 가능한 범위: 대표 회사 이름 목록)', !realNames.some((n) => sampleText.includes(n)));
+  check('mail 스킬이 data/.claude/skills/mail/SKILL.md 로 복사됨(이름 mail·원문 저장 금지·보내지 않음·분류 기준·연습/실제 모드·create_draft 로 넣기만)', (() => {
+    const sk = fs.readFileSync(path.join(dir, '.claude', 'skills', 'mail', 'SKILL.md'), 'utf8');
+    return /^---\r?\nname: mail\r?\n/.test(sk) && ['원문은 저장하지 않는다', '메일을 보내지 않는다', '긴급', '업무', '광고', 'sample-mails.json', 'newer_than:2d', 'create_draft', '넣기만', '건너뛴다', '`일정날짜`'].every((w) => sk.includes(w));
+  })());
+  const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('.system.md: 메일 정리 안내(mail 스킬 먼저·원문 저장 안 함·보내지 않고 초안까지)가 정확히 한 번 더해짐', sys.split('<!-- 지침:메일정리 -->').length === 2 && ['mail 스킬', '원문은 저장하지 않는다', '초안까지만'].every((w) => sys.includes(w)));
+
+  // 처음 상태 · 로그인 · 다른 사이트
+  const s0 = await status();
+  check('처음에는 연습 모드(연결된 앱이 꺼져 있음)·실행 중 아님·지난 결과 없음, 메일 자료는 빈 목록', s0.mode === '연습' && s0.running === null && s0.last === null && same(await (await fetch(BASE + '/api/db/mails', { headers: H })).json(), []));
+  const anon = (m, u) => fetch(BASE + '/api/mail' + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{}' : undefined });
+  check('로그인 없이는 상태·정리·초안이 모두 401, 다른 사이트에서 온 정리 요청은 403 이고 아무것도 시작되지 않음',
+    (await anon('GET', '/status')).status === 401 && (await anon('POST', '/organize')).status === 401 && (await anon('POST', '/draft')).status === 401
+    && (await api('POST', '/organize', {}, { Origin: 'https://evil.example' })).status === 403 && (await status()).running === null && prompts().length === 0);
+  check('메일 정리 이외의 방식(GET organize·POST status)은 404', (await api('GET', '/organize')).status === 404 && (await api('POST', '/status', {})).status === 404);
+
+  // 연습 모드로 "메일 정리하기": 겹쳐 누르기(409)·결과
+  flag('slow');
+  const go = await api('POST', '/organize', {});
+  check('메일 정리하기를 누르면 바로 답이 오고(끝나기를 기다리지 않음) 연습 모드로 시작됨', go.status === 200 && same({ ok: true, mode: '연습' }, await go.json()));
+  const busy = await status();
+  const second = await api('POST', '/organize', {}), third = await api('POST', '/draft', { id: 'x' });
+  check('도는 동안 상태는 running=organize, 한 번 더 누르거나 초안을 시켜도 409(한 번에 하나만)', busy.running === 'organize' && second.status === 409 && third.status === 409 && (await second.json()).error.includes('돌고 있어요'));
+  await idle(); flag('slow', false);
+  const got = mails(), last = (await status()).last;
+  check('끝나면 mails.json 에 8통(긴급 2·업무 4·광고 2)이 들어가고, 모두 출처 "연습"·원본id 는 가상 메일 id·상태 "새것"',
+    got.length === 8 && ['긴급', '업무', '광고'].map((k) => got.filter((m) => m.분류 === k).length).join() === '2,4,2' && got.every((m) => m.출처 === '연습' && m.상태 === '새것' && /^sm-0[1-8]$/.test(m.원본id)) && new Set(got.map((m) => m.원본id)).size === 8);
+  check('받은날은 오늘 − 며칠전(오늘 받은 메일은 오늘, 어제 받은 메일은 어제)', got.find((m) => m.원본id === 'sm-01').받은날 === day(0) && got.find((m) => m.원본id === 'sm-03').받은날 === day(-1));
+  check('마지막 결과가 상태에 남음(성공·연습·보고 글, 비서가 두 줄로 보고해도 첫 줄만)', last && last.kind === 'organize' && last.ok === true && last.mode === '연습' && last.text === '새 메일 8통 정리');
+  const ptxt = prompts()[0] || '';
+  check('비서에게 간 지시: 연습 모드·mail 스킬 먼저·sample-mails.json 읽기·최근 2일·긴급 업무 광고·요약 한 줄 할 일 마감일·원문 저장 안 함·보내지 않음, Gmail 도구는 안 씀',
+    ['[메일 정리] 연습 모드', 'mail 스킬', 'data/db/sample-mails.json', '최근 2일', '긴급·업무·광고', '요약 한 줄·할 일·마감일', 'data/db/mails.json', '원문은 저장하지 않고 요약만', '메일은 보내지 않는다'].every((w) => ptxt.includes(w)) && !ptxt.includes('Gmail 도구'));
+  const bodies = ['오후 5시까지 회신', '12.0mm', '수신거부', '하차 장소가', '공유 폴더의 양식'];
+  check('mails.json 에 메일 본문(원문)이 없음: 본문 칸도, 가상 메일 본문의 문장도 안 들어감', !fs.readFileSync(mfile, 'utf8').includes('본문') && !bodies.some((b) => fs.readFileSync(mfile, 'utf8').includes(b)));
+  check('화면용 저장소 API(/api/db/mails)로도 같은 8통이 읽힘', same(await (await fetch(BASE + '/api/db/mails', { headers: H })).json(), got));
+  await api('POST', '/organize', {}); await idle();
+  check('한 번 더 정리해도 같은 메일은 다시 적지 않음(8통 그대로, "새 메일 0통")', mails().length === 8 && (await status()).last.text === '새 메일 0통 정리');
+
+  // 답장 초안
+  const four = mails().find((m) => m.원본id === 'sm-04'), snap = JSON.stringify(four);
+  await api('POST', '/draft', { id: four.id }); await idle();
+  const after = mails().find((m) => m.id === four.id), dl = prompts().pop();
+  check('답장 초안(연습 모드): 그 메일의 "초안"에 글이, "초안위치"에 "연습용(저장만)"이 적히고 다른 칸은 그대로', after.초안.includes('확인 후 회신') && after.초안위치 === '연습용(저장만)'
+    && JSON.stringify({ ...after, 초안: '', 초안위치: '' }) === JSON.stringify({ ...JSON.parse(snap), 초안: '', 초안위치: '' }) && (await status()).last.ok === true);
+  check('초안 지시: 연습 모드·Gmail 쓰지 않음·그 메일의 id·보내지 않음', ['[답장 초안] 연습 모드', 'Gmail 은 쓰지 않는다', `id 가 "${four.id}"`, '메일은 보내지 않는다'].every((w) => dl.includes(w)));
+  check('없는 메일·이상한 id·id 없음은 404 이고 아무것도 시작되지 않음', (await api('POST', '/draft', { id: 'nope1234' })).status === 404 && (await api('POST', '/draft', { id: '../x' })).status === 404 && (await api('POST', '/draft', {})).status === 404 && (await status()).running === null);
+  const five = mails().find((m) => m.원본id === 'sm-05'); // 아직 초안이 없는 메일로 (이미 초안이 있으면 "적혔다"로 보이니까)
+  flag('nodraft');
+  await api('POST', '/draft', { id: five.id }); await idle(); flag('nodraft', false);
+  const nd = (await status()).last;
+  check('비서가 초안을 안 적고 끝나면 "초안이 적히지 않았어요" 라고 실패로 알림', nd.ok === false && nd.text.includes('초안이 적히지 않았어요') && nd.kind === 'draft');
+
+  // 실제 모드(연결된 앱 켜짐): 지시가 Gmail 로 바뀌고, 초안은 Gmail 임시보관함에 넣기만
+  await setApps(true);
+  check('연결된 앱을 켜면 상태의 모드가 Gmail 로 바뀜', (await status()).mode === 'Gmail');
+  await api('POST', '/organize', {}); await idle();
+  const gp = prompts().pop(), gm = mails().find((m) => m.원본id === 'g-1');
+  check('실제 모드 지시: Gmail 도구로 최근 2일 받은편지함(in:inbox newer_than:2d)·원문 저장 안 함·보내지 않음, 연습용 파일은 안 읽음. 결과는 출처 "Gmail"',
+    ['[메일 정리] 실제 메일함 모드', 'Gmail 도구', 'in:inbox newer_than:2d', '원문은 저장하지 않고 요약만', '메일은 보내지 않는다'].every((w) => gp.includes(w)) && !gp.includes('sample-mails.json') && gm && gm.출처 === 'Gmail' && mails().length === 9);
+  await api('POST', '/draft', { id: gm.id }); await idle();
+  const gd = prompts().pop(), gafter = mails().find((m) => m.id === gm.id);
+  check('실제 모드 초안: create_draft 로 임시보관함에 넣기만 하고 절대 보내지 않음, 초안위치 "Gmail 임시보관함"', ['create_draft', '임시보관함에 넣기만', '절대 보내지 않는다'].every((w) => gd.includes(w)) && gafter.초안위치 === 'Gmail 임시보관함');
+  await setApps(false);
+  check('연결된 앱을 끄면 다시 연습 모드', (await status()).mode === '연습');
+
+  // 비서가 형식을 어기고 기존 항목을 지워도: 서버가 다듬고 되살림
+  const old = { id: 'keepme01', 출처: '연습', 원본id: 'old-1', 보낸사람: '옛 발신자', 제목: '옛 메일', 받은날: day(-3), 분류: '업무', 요약: '옛 요약', 할일: '', 마감일: '', 일정날짜: '', 일정시작: '', 일정장소: '', 일정종류: '', 상태: '처리됨', 초안: '', 초안위치: '', 일정id: 'ev-1', 할일id: '' };
+  fs.writeFileSync(mfile, JSON.stringify([old], null, 2));
+  flag('bad'); await api('POST', '/organize', {}); await idle(); flag('bad', false);
+  const fixed = mails(), keep = fixed.find((m) => m.id === 'keepme01'), badOne = fixed.find((m) => m.원본id === 'sm-01'), txt = fs.readFileSync(mfile, 'utf8');
+  check('비서가 지워 버린 기존 항목(처리됨·일정id 기록)은 서버가 그대로 되살림', same(keep, old));
+  check('비서가 끼운 "본문"·"원문" 칸과 가상 메일 본문은 서버가 지움 — 아는 칸만 남음', fixed.every((m) => same(Object.keys(m), KNOWN)) && !txt.includes('본문') && !txt.includes('원문') && !txt.includes('오후 5시까지 회신'));
+  check('긴 요약은 160자로 잘리고, 줄바꿈·겹공백 제목은 한 줄로, 이상한 분류는 업무로, 없는 날짜(2026-02-31)·25:99 시각·이상한 상태는 비워지거나 새것으로 고쳐짐',
+    badOne.요약.length === 160 && badOne.제목 === '줄 바꿈 제목' && badOne.분류 === '업무' && badOne.마감일 === '' && badOne.일정시작 === '' && badOne.상태 === '새것');
+  check('다듬은 결과도 정상 성공으로 알림(상태 ok)', (await status()).last.ok === true);
+
+  // 파일이 깨져 있을 때: 덮어쓰지 않는다
+  fs.writeFileSync(mfile, '{ 깨짐');
+  const rb = await api('POST', '/organize', {});
+  check('mails.json 이 깨져 있으면 시작하지 않고(500) 쉬운 이유를 알리며 파일은 덮어쓰지 않음', rb.status === 500 && (await rb.json()).error.includes('mails.json') && fs.readFileSync(mfile, 'utf8') === '{ 깨짐' && (await status()).running === null);
+  fs.writeFileSync(mfile, '[]'); flag('break');
+  await api('POST', '/organize', {}); await idle(); flag('break', false);
+  const br = (await status()).last;
+  check('비서가 일하다 파일을 깨 놓고 끝나면 실패로 알리고 덮어쓰지 않음', br.ok === false && br.text.includes('mails.json') && fs.readFileSync(mfile, 'utf8') === '{ 깨짐');
+  fs.writeFileSync(mfile, '[]');
+
+  // mail.js 계산 (화면이 쓰는 파일 그대로)
+  const box = { window: {} }; vm.createContext(box);
+  for (const f of ['cal', 'mail']) vm.runInContext(await (await fetch(`${BASE}/m/${f}.js`, { headers: { Cookie: ck } })).text(), box); // mail.js 는 cal.js 를 먼저 불러와야 한다
+  const { cal, mailx: M } = box.window, T = '2026-10-07';
+  const mk = (id, 분류, extra = {}) => ({ id, 분류, 상태: '새것', 받은날: '2026-10-07', 마감일: '', ...extra });
+  const cols = M.columns([mk('a', '업무', { 마감일: '2026-10-13' }), mk('b', '업무', { 마감일: '2026-10-09' }), mk('c', '업무'), mk('d', '긴급', { 마감일: T }), mk('e', '광고'), mk('f', '이상', { 마감일: '2026-10-08' }), mk('g', '업무', { 상태: '처리됨' }), null, '글'], false);
+  check('mail.js columns: 칸은 긴급·업무·광고 셋, 마감 빠른 순(없으면 맨 뒤), 모르는 분류는 업무로, 처리됨·이상한 항목은 빼기',
+    Object.keys(cols).join() === '긴급,업무,광고' && cols.긴급.map((m) => m.id).join() === 'd' && cols.업무.map((m) => m.id).join() === 'f,b,a,c' && cols.광고.map((m) => m.id).join() === 'e');
+  check('mail.js columns: "처리된 메일도 보기"를 켜면 처리됨도 함께', M.columns([mk('g', '업무', { 상태: '처리됨' })], true).업무.length === 1);
+  const du = (d) => M.dueInfo({ 마감일: d }, T);
+  check('mail.js dueInfo: 지남(빨강)·오늘·내일(주황)·그 뒤, 마감일이 없거나 모양이 틀리면 표시 없음', du('2026-10-06').cls === 'late' && du('2026-10-06').text === '마감 10/6(화) · 1일 지남' && du(T).text === '마감 오늘' && du(T).cls === 'soon'
+    && du('2026-10-08').text === '마감 내일 10/8(목)' && du('2026-10-13').text === '마감 10/13(화)' && du('2026-10-13').cls === '' && du('') === null && du('abc') === null && du('2026-02-31') === null);
+  const mt = { 보낸사람: '박마바 대리 (가나다전자)', 제목: '[긴급] 용접절차서 승인 협의 회의 안내', 요약: 'WPS 협의 회의', 할일: '참석 여부 회신', 마감일: '2026-10-08', 일정날짜: '2026-10-13', 일정시작: '14:00', 일정장소: '본사 2층 설계실', 일정종류: '회의' };
+  const ev = M.eventFrom(mt, 'e-1').event;
+  check('mail.js eventFrom: 메일이 알리는 일정이 있으면 그 날 그 시각(끝은 1시간 뒤)·장소·종류로, 제목의 [긴급] 꼬리표는 떼고, 메모에 보낸사람과 요약',
+    ev.date === '2026-10-13' && ev.endDate === ev.date && ev.start === '14:00' && ev.end === '15:00' && ev.kind === '회의' && ev.place === '본사 2층 설계실' && ev.title === '용접절차서 승인 협의 회의 안내'
+    && ev.memo.includes('박마바 대리') && ev.memo.includes('WPS 협의 회의') && ev.projectId === null && ev.id === 'e-1');
+  const dl2 = M.eventFrom({ 보낸사람: 'X', 제목: '자료 요청', 요약: '자료 보내 주세요', 마감일: '2026-10-09' }, 'e-2').event;
+  check('mail.js eventFrom: 일정이 없고 마감일만 있으면 그 날 종일 "마감: …" 일정(종류 개인)', dl2.date === '2026-10-09' && dl2.title === '마감: 자료 요청' && dl2.start === '' && dl2.end === '' && dl2.kind === '개인');
+  check('mail.js eventFrom: 날짜가 하나도 없으면 쉬운 이유와 함께 { error }, 늦은 시각은 23:59 를 넘지 않음',
+    M.eventFrom({ 제목: '날짜 없음' }, 'e-3').error.includes('날짜') && M.eventFrom({ ...mt, 일정시작: '23:30' }, 'e-4').event.end === '23:59');
+  const gk = (t, k) => M.guessKind({ 제목: t, 일정종류: k });
+  check('mail.js guessKind: 비서가 적은 종류가 맞으면 그대로, 아니면 글에서 짐작(입회·검사→검사 입회, 방문·현장→출장, 회의·협의→회의, 그 밖→개인)',
+    gk('x', '출장') === '출장' && gk('수압시험 입회', '') === '검사 입회' && gk('현장 방문 안내', '') === '출장' && gk('설계 협의', '이상') === '회의' && gk('안부 인사', '') === '개인');
+  check('mail.js: 등록한 일정은 달력 검사를 통과해 그 날짜에 보임(날짜 모양·시각·id·종류 확인)', cal.validate(ev) === '' && cal.problems([ev, dl2], []).length === 0 && cal.eventsOn([ev, dl2], '2026-10-13').length === 1 && cal.eventsOn([ev, dl2], '2026-10-09').length === 1);
+  const tk = M.taskFrom(mt, 't-1'), tk2 = M.taskFrom({ 제목: '[업무] 자료 요청', 마감일: '' }, 't-2');
+  check('mail.js taskFrom: 할 일 한 줄(없으면 제목에서 꼬리표를 뗀 것)·마감일·상태 "할 일"·담당자 빈칸, 대시보드 검사를 통과', tk.title === '참석 여부 회신' && tk.due === '2026-10-08' && tk.status === '할 일' && tk.owner === '' && tk.projectId === null
+    && tk2.title === '자료 요청' && tk2.due === '' && cal.problems([], [tk, tk2]).length === 0);
+  check('mail.js isRegistered: 등록한 일정·할 일이 아직 있을 때만 참(지웠으면 "등록됨" 표시를 거둠)', M.isRegistered([{ id: 'e-1' }], 'e-1') === true && M.isRegistered([{ id: 'e-1' }], 'e-9') === false && M.isRegistered([{ id: 'e-1' }], '') === false);
+  // 일정 등록의 끝까지: 만든 일정을 저장소 API 가 받아 주고 읽힘 (화면이 하는 그대로)
+  fs.writeFileSync(path.join(dir, 'db', 'events.json'), '[]'); // 앞쪽 점검이 깨진 파일을 남겨 뒀을 수 있어 빈 목록으로
+  const put = await fetch(BASE + '/api/db/events/' + ev.id, { method: 'PUT', headers: H, body: JSON.stringify(ev) });
+  check('만든 일정을 일정 저장소(/api/db/events)에 저장하면 목록에서 읽힘', put.status === 200 && (await (await fetch(BASE + '/api/db/events', { headers: H })).json()).some((e) => e.id === ev.id && e.title === ev.title));
+  await fetch(BASE + '/api/db/events/' + ev.id, { method: 'DELETE', headers: H });
+
+  // 화면
+  const html = await (await fetch(BASE + '/m/mail.html', { headers: H })).text(), idx = await (await fetch(BASE + '/', { headers: H })).text();
+  check('메일정리 화면: db.js·cal.js·mail.js 를 쓰고 "✳ 메일 정리하기"·세 칸(긴급·업무·광고)·카드·오른쪽 자세히·네 단추(답장 초안·일정으로 등록·할 일로 등록·처리됨)가 있음',
+    ['src="/m/db.js"', 'src="/m/cal.js"', 'src="/m/mail.js"', '✳ 메일 정리하기', 'id="board"', 'id="detail"', 'data-act="draft"', 'data-act="event"', 'data-act="task"', 'data-act="done"', '답장 초안 만들기', '일정으로 등록', '할 일로 등록', '처리됨', '카드를 누르면'].every((w) => html.includes(w)));
+  check('메일정리 화면: 파일이 바뀌면(mails·events·tasks) 다시 그리고, 정리·초안은 서버 주소로 시키고 진행 상태를 물어봄, 연습/Gmail 모드 표시, 원문 저장 안 함·초안 안 보냄 안내',
+    ["db.watch('mails'", "db.watch('events'", "db.watch('tasks'", '/api/mail/organize', '/api/mail/draft', '/api/mail/status', '연습 모드', '내 Gmail', '원문은 저장하지 않고 요약만', '보내지 않아요', '처리된 메일도 보기'].every((w) => html.includes(w)));
+  check('메일정리 화면: 모르는 글이 화면을 깨지 않게 모두 esc 로 감쌈(카드의 보낸사람·제목·요약, 자세히의 제목·초안)', ['esc(m.보낸사람)', 'esc(m.제목)', 'esc(m.요약)', 'esc(m.초안)'].every((w) => html.includes(w)) && !html.includes('${m.제목}') && !html.includes('${m.요약}'));
+  check('메인 화면: 왼쪽 메뉴에 "메일정리"가 있고 /m/mail.html 을 띄움, 로그인 없이는 화면(/m/mail.html)이 401', idx.includes("'메일', '메일정리', '메신저'") && idx.includes('/m/mail.html') && (await fetch(BASE + '/m/mail.html')).status === 401);
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다

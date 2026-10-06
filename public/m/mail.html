@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>메일정리</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --amber: #b54708; --amber-bg: #fef0c7; --green: #067647; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+    font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+
+  /* 위쪽 줄: 제목 · 모드 · 상태 · 메일 정리하기 */
+  .bar { flex: none; display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+  .bar h2 { flex: none; margin: 0 4px 0 0; font-size: 18px; white-space: nowrap; }
+  .badge { flex: none; padding: 2px 10px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); font-size: 12px; font-weight: 600; }
+  .badge.real { background: var(--blue-bg); color: var(--blue); }
+  .sp { flex: 1; }
+  #status { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--sub); }
+  #status.ok { color: var(--green); } #status.err { color: var(--red); } #status.busy { color: var(--blue); }
+  .show { flex: none; display: flex; align-items: center; gap: 4px; color: var(--sub); font-size: 13px; }
+  .primary { flex: none; padding: 8px 18px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font-weight: 600; }
+  .primary:disabled { background: #98a2b3; }
+
+  .main { flex: 1; min-height: 0; display: flex; }
+  .board { flex: 1; min-width: 0; overflow: auto; display: grid; grid-template-columns: repeat(3, minmax(170px, 1fr)); gap: 12px; padding: 14px 16px; align-content: start; }
+  .col { min-width: 0; }
+  .col h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 14px; }
+  .col h3 i { width: 10px; height: 10px; border-radius: 50%; }
+  .col h3 small { color: var(--sub); font-weight: 400; }
+  .col .none { padding: 14px 10px; border: 1px dashed #d0d5dd; border-radius: 10px; color: #98a2b3; font-size: 13px; text-align: center; }
+  .cards { display: flex; flex-direction: column; gap: 8px; }
+  .k-긴급 { --c: #d92d20; } .k-업무 { --c: #2f6fed; } .k-광고 { --c: #98a2b3; }
+  .col h3 i { background: var(--c); }
+
+  .card { display: block; width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 10px; background: #fff; text-align: left; color: inherit; }
+  .card:hover { border-color: #c4cad4; border-left-color: var(--c); box-shadow: 0 1px 4px rgba(16, 24, 40, .08); }
+  .card.sel { box-shadow: 0 0 0 2px var(--blue); border-color: var(--blue); border-left-color: var(--c); }
+  .card.done { opacity: .5; }
+  .card .from { font-size: 12px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .subj { font-weight: 600; overflow-wrap: anywhere; }
+  .card .sum { margin-top: 2px; font-size: 13px; color: #475467; overflow-wrap: anywhere; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chip { padding: 0 8px; border-radius: 999px; background: #f2f4f7; color: #475467; font-size: 12px; line-height: 20px; }
+  .chip.late { background: var(--red-bg); color: var(--red); font-weight: 600; }
+  .chip.soon { background: var(--amber-bg); color: var(--amber); font-weight: 600; }
+  .chip.ok { background: #dcfae6; color: var(--green); }
+
+  .empty { grid-column: 1 / -1; margin-top: 8vh; text-align: center; color: var(--sub); }
+  .empty h3 { margin: 0 0 6px; color: var(--text); font-size: 17px; }
+
+  /* 오른쪽 자세히 */
+  #detail { flex: none; width: 340px; overflow-y: auto; padding: 16px 18px; background: #fff; border-left: 1px solid var(--line); }
+  #detail .hint { margin-top: 30vh; text-align: center; color: #98a2b3; }
+  #detail h3 { margin: 8px 0 2px; font-size: 17px; overflow-wrap: anywhere; }
+  #detail .who { color: var(--sub); font-size: 13px; }
+  .kindtag { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--c); color: #fff; font-size: 12px; font-weight: 600; }
+  .src { margin-left: 6px; color: var(--sub); font-size: 12px; }
+  dl { margin: 12px 0; }
+  dt { margin-top: 8px; color: var(--sub); font-size: 12px; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 6px; }
+  .act { padding: 7px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; }
+  .act:hover:not(:disabled) { background: #f2f4f7; }
+  .act.on { border-color: #abefc6; background: #ecfdf3; color: var(--green); }
+  .act:disabled:not(.on) { opacity: .55; }
+  #msg { min-height: 1.4em; font-size: 13px; }
+  #msg.err { color: var(--red); } #msg a { color: var(--blue); cursor: pointer; text-decoration: underline; }
+  .draft { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
+  .draft b { font-size: 12px; color: var(--sub); }
+  .draft pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+  .fine { margin: 16px 0 0; color: #98a2b3; font-size: 12px; }
+
+  @media (max-width: 900px) {
+    .bar { flex-wrap: wrap; }
+    .main { flex-direction: column; overflow: auto; }
+    .board { flex: none; overflow: visible; grid-template-columns: 1fr; }
+    #detail { width: auto; border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+    #detail .hint { margin-top: 12px; }
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <h2>메일정리</h2>
+    <span class="badge" id="mode">…</span>
+    <span class="sp"></span>
+    <span id="status" role="status" aria-live="polite"></span>
+    <label class="show"><input type="checkbox" id="showDone"><span id="doneLabel">처리된 메일도 보기</span></label>
+    <button class="primary" id="run">✳ 메일 정리하기</button>
+  </div>
+  <div class="main">
+    <div class="board" id="board"></div>
+    <aside id="detail" aria-live="polite"></aside>
+  </div>
+
+<script src="/m/db.js"></script>
+<script src="/m/cal.js"></script>
+<script src="/m/mail.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  let mails = [], events = [], tasks = [], sel = null, showDone = false, seq = 0, stat = { mode: '연습', running: null, last: null }, sawRunning = false, polling = false;
+  let flash = { id: null, html: '', err: false }; // 자세히 창의 안내 글(등록했어요 등). 파일이 바뀌어 화면이 다시 그려져도 남도록 따로 들고 있는다
+  const today = () => cal.ymd(new Date());
+  const find = (id) => mails.find((m) => cal.isObj(m) && String(m.id) === String(id));
+
+  // ---------- 자료: db.js 로 받고, 파일이 바뀌면(비서가 직접 고쳐도) 바로 다시 그린다 ----------
+  async function load() {
+    const my = ++seq;
+    const [ma, ev, tk] = await Promise.all(['mails', 'events', 'tasks'].map((n) => db.list(n).catch(() => null)));
+    if (my !== seq) return;
+    mails = ma || []; events = ev || []; tasks = tk || [];
+    if (ma === null) setStatus('⚠ 메일 자료를 읽지 못했어요. data/db/mails.json 파일을 확인해 주세요.', 'err');
+    render();
+  }
+  db.watch('mails', load); db.watch('events', load); db.watch('tasks', load);
+
+  // ---------- 비서가 일하는 동안: 상태를 1.5초마다 물어본다 ----------
+  function setStatus(text, cls) { $('status').textContent = text; $('status').title = text; $('status').className = cls || ''; }
+  async function poll() {
+    if (polling) return; polling = true;
+    try {
+      for (;;) {
+        stat = await (await fetch('/api/mail/status')).json();
+        applyStatus();
+        if (!stat.running) break;
+        sawRunning = true;
+        await new Promise((ok) => setTimeout(ok, 1500));
+      }
+    } catch { setStatus('⚠ 서버에 연결할 수 없어요.', 'err'); }
+    polling = false; load();
+  }
+  function applyStatus() {
+    const real = stat.mode === 'Gmail';
+    $('mode').textContent = real ? '📬 내 Gmail · 최근 2일 받은 메일' : '🧪 연습 모드 · 가상 메일 (연결된 앱 꺼짐)';
+    $('mode').className = 'badge' + (real ? ' real' : '');
+    $('mode').title = real ? '연결된 앱이 켜져 있어서 내 실제 메일함을 읽어요. 원문은 저장하지 않고 요약만 저장해요.' : '연결된 앱이 꺼져 있어서 실제 메일함 대신 연습용 가상 메일을 읽어요. (설정 → 권한에서 켤 수 있어요)';
+    const busy = !!stat.running;
+    $('run').disabled = busy; $('run').textContent = stat.running === 'organize' ? '⏳ 정리하는 중…' : '✳ 메일 정리하기';
+    if (busy) setStatus(stat.running === 'organize' ? '비서가 메일을 읽고 나누는 중이에요… (1~2분쯤 걸려요)' : '비서가 답장 초안을 쓰는 중이에요…', 'busy');
+    else if (stat.last) { const t = new Date(stat.last.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }); setStatus(`${stat.last.ok ? '✓' : '⚠'} ${stat.last.text} (${t})`, sawRunning ? (stat.last.ok ? 'ok' : 'err') : ''); }
+    else setStatus('');
+    renderDetail();
+  }
+
+  // ---------- 그리기 ----------
+  const KIND_NOTE = { 긴급: '오늘·내일 안에 답이 필요해요', 업무: '일반 업무 요청·회의·자료', 광고: '홍보·할인 메일' };
+  function card(m) {
+    const d = mailx.dueInfo(m, today()), chips = [
+      d ? `<span class="chip ${d.cls}">${esc(d.text)}</span>` : '',
+      mailx.isRegistered(events, m.일정id) ? '<span class="chip ok">📅 일정</span>' : '',
+      mailx.isRegistered(tasks, m.할일id) ? '<span class="chip ok">☑ 할 일</span>' : '',
+      m.초안 ? '<span class="chip ok">✉ 초안</span>' : '',
+      m.상태 === '처리됨' ? '<span class="chip">처리됨</span>' : '',
+    ].join('');
+    return `<button class="card ${m.상태 === '처리됨' ? 'done' : ''} ${String(m.id) === sel ? 'sel' : ''}" data-id="${esc(m.id)}">
+      <div class="from">${esc(m.보낸사람)}</div><div class="subj">${esc(m.제목)}</div><div class="sum">${esc(m.요약)}</div>${chips ? `<div class="meta">${chips}</div>` : ''}</button>`;
+  }
+  function render() {
+    const done = mails.filter((m) => cal.isObj(m) && m.상태 === '처리됨').length;
+    $('doneLabel').textContent = `처리된 메일도 보기${done ? ` (${done})` : ''}`;
+    const cols = mailx.columns(mails, showDone), total = mailx.KINDS.reduce((n, k) => n + cols[k].length, 0);
+    $('board').innerHTML = !mails.length
+      ? '<div class="empty"><h3>아직 정리한 메일이 없어요</h3><p>위의 <b>✳ 메일 정리하기</b> 를 누르면 비서가 최근 2일 받은 메일을 읽고<br>긴급·업무·광고로 나눠서 요약해 줘요.</p></div>'
+      : mailx.KINDS.map((k) => `<section class="col k-${k}"><h3 title="${KIND_NOTE[k]}"><i></i>${k} <small>${cols[k].length}통</small></h3>
+          <div class="cards">${cols[k].length ? cols[k].map(card).join('') : `<div class="none">${total || done ? '여기엔 남은 메일이 없어요' : ''}</div>`}</div></section>`).join('');
+    if (sel && !find(sel)) sel = null;
+    renderDetail();
+  }
+  function renderDetail() {
+    const m = sel && find(sel), el = $('detail');
+    if (!m) { el.innerHTML = '<div class="hint">카드를 누르면<br>여기에 자세히 보여요</div>'; return; }
+    const d = mailx.dueInfo(m, today()), hasEv = cal.isDate(m.일정날짜), evOk = mailx.isRegistered(events, m.일정id), tkOk = mailx.isRegistered(tasks, m.할일id);
+    const drafting = stat.running === 'draft', busy = !!stat.running;
+    const when = hasEv ? `${mailx.short(m.일정날짜)}${m.일정시작 ? ' ' + m.일정시작 : ''}${m.일정장소 ? ' · ' + m.일정장소 : ''}${m.일정종류 ? ' · ' + m.일정종류 : ''}` : '';
+    const dd = (label, v) => (v ? `<dt>${label}</dt><dd>${esc(v)}</dd>` : '');
+    el.className = `k-${mailx.KINDS.includes(m.분류) ? m.분류 : '업무'}`;
+    el.innerHTML = `<span class="kindtag">${esc(m.분류)}</span><span class="src">${m.출처 === 'Gmail' ? '내 Gmail' : '연습용 가상 메일'}</span>
+      <h3>${esc(m.제목)}</h3><div class="who">${esc(m.보낸사람)}${cal.isDate(m.받은날) ? ` · ${esc(mailx.short(m.받은날))}` : ''}</div>
+      <dl>${dd('요약', m.요약)}${dd('할 일', m.할일)}${d ? `<dt>마감</dt><dd><span class="chip ${d.cls}">${esc(d.text)}</span></dd>` : ''}${dd('메일이 알리는 일정', when)}</dl>
+      <div class="acts">
+        <button class="act ${m.초안 ? 'on' : ''}" data-act="draft" ${busy ? 'disabled' : ''}>${drafting ? '⏳ 초안 쓰는 중…' : m.초안 ? '✉ 초안 다시 만들기' : '✉ 답장 초안 만들기'}</button>
+        <button class="act ${evOk ? 'on' : ''}" data-act="event" ${evOk ? 'disabled' : ''}>${evOk ? '📅 일정 등록됨 ✓' : '📅 일정으로 등록'}</button>
+        <button class="act ${tkOk ? 'on' : ''}" data-act="task" ${tkOk ? 'disabled' : ''}>${tkOk ? '☑ 할 일 등록됨 ✓' : '☑ 할 일로 등록'}</button>
+        <button class="act ${m.상태 === '처리됨' ? 'on' : ''}" data-act="done">${m.상태 === '처리됨' ? '↩ 처리 취소' : '✓ 처리됨'}</button>
+      </div>
+      <div id="msg" role="status" class="${flash.id === m.id && flash.err ? 'err' : ''}">${flash.id === m.id ? flash.html : ''}</div>
+      ${m.초안 ? `<div class="draft"><b>답장 초안 · ${esc(m.초안위치 || '')}</b><pre>${esc(m.초안)}</pre></div>` : ''}
+      <p class="fine">메일 원문은 저장하지 않고 요약만 보관해요. 답장 초안은 보내지 않아요.</p>`;
+  }
+  const msg = (html, err) => { flash = { id: sel, html, err: !!err }; const e = $('msg'); if (e) { e.innerHTML = html; e.className = err ? 'err' : ''; } }; // html 은 호출하는 쪽에서 esc 한 것
+
+  // ---------- 누르기 ----------
+  $('board').onclick = (e) => { const c = e.target.closest('[data-id]'); if (c) { sel = c.dataset.id; render(); } };
+  $('showDone').onchange = (e) => { showDone = e.target.checked; render(); };
+  async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || '처리하지 못했어요.');
+    return j;
+  }
+  $('run').onclick = async () => {
+    try { await post('/api/mail/organize'); sawRunning = true; } catch (x) { return setStatus(`⚠ ${x.message}`, 'err'); }
+    poll();
+  };
+  $('detail').onclick = async (e) => {
+    if (e.target.closest('[data-go]')) { parent.location.hash = '#' + e.target.closest('[data-go]').dataset.go; return; } // 일정·할 일은 일정 메뉴(달력)에서 본다
+    const b = e.target.closest('[data-act]'), m = sel && find(sel);
+    if (!b || !m || b.disabled) return;
+    try {
+      if (b.dataset.act === 'draft') { await post('/api/mail/draft', { id: m.id }); sawRunning = true; poll(); }
+      else if (b.dataset.act === 'done') await db.save('mails', m.id, { ...m, 상태: m.상태 === '처리됨' ? '새것' : '처리됨' });
+      else if (b.dataset.act === 'event') {
+        const r = mailx.eventFrom(m, crypto.randomUUID());
+        if (r.error) return msg(esc(r.error), true);
+        await db.save('events', r.event.id, r.event); await db.save('mails', m.id, { ...m, 일정id: r.event.id });
+        msg(`✓ 일정 메뉴에 등록했어요: ${esc(mailx.short(r.event.date))}${r.event.start ? ' ' + r.event.start : ' (종일)'} ${esc(r.event.title)} <a data-go="일정">일정 메뉴 보기</a>`);
+      } else if (b.dataset.act === 'task') {
+        const t = mailx.taskFrom(m, crypto.randomUUID());
+        await db.save('tasks', t.id, t); await db.save('mails', m.id, { ...m, 할일id: t.id });
+        msg(`✓ 할 일로 등록했어요: ${esc(t.title)}${t.due ? ` (마감 ${esc(mailx.short(t.due))})` : ''} <a data-go="대시보드">대시보드에서 보기</a>`);
+      }
+    } catch (x) { msg(`⚠ ${esc(x.message)}`, true); }
+  };
+
+  render();
+  load();
+  poll();
+</script>
+</body>
+</html>

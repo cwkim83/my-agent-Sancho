@@ -279,7 +279,7 @@
 <script src="/m/dash.js"></script>
 <script src="/m/inbox.js"></script>
 <script>
-  const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
+  const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
   const $ = (id) => document.getElementById(id);
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -340,6 +340,7 @@
     else if (current === '일정') showCalendar();
     else if (current === '프로젝트') showProjects();
     else if (current === 'WBS') showWbs(arg);
+    else if (current === '메일정리') showMail();
     else if (current === '설정') showSettings();
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
   }
@@ -368,6 +369,7 @@
   let pendingAsk = null;
   function showCalendar() { $('main').innerHTML = '<iframe class="frame" src="/m/calendar.html" title="일정"></iframe>'; }
   function showProjects() { $('main').innerHTML = '<iframe class="frame" src="/m/projects.html" title="프로젝트"></iframe>'; }
+  function showMail() { $('main').innerHTML = '<iframe class="frame" src="/m/mail.html" title="메일정리"></iframe>'; }
   function showWbs(pid) { $('main').innerHTML = `<iframe class="frame" src="/m/wbs.html${pid ? '?p=' + encodeURIComponent(pid) : ''}" title="WBS"></iframe>`; }
   window.addEventListener('message', (e) => {
     const frame = document.querySelector('iframe.frame');
