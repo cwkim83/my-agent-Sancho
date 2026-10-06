@@ -379,14 +379,20 @@ async function handle(req, res) {
       return;
     }
     const dm = p.match(/^\/api\/db\/([a-z][a-z0-9_-]{0,39})(?:\/([A-Za-z0-9_-]{1,64}))?$/);
-    if (dm) {
+    if (dm && !/^(con|prn|aux|nul|com\d|lpt\d)$/.test(dm[1])) { // 윈도우 장치 이름(nul 등)은 파일이 아니라서 거절
       const [, name, id] = dm;
+      // 본문을 먼저 다 받고, 그 다음 읽기→고치기→쓰기를 await 없이 한 번에 한다.
+      // 읽은 뒤 본문을 기다리면 그 틈에 끝난 다른 저장(또는 비서가 고친 내용)을 옛 내용으로 덮어써 버린다
+      let b;
+      if (id && req.method === 'PUT') {
+        try { b = await readBody(req, 200_000); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+        if (!b || typeof b !== 'object' || Array.isArray(b)) return send(res, 400, { error: '저장할 내용은 JSON 객체여야 합니다.' });
+      }
       let items; try { items = loadCollection(name); } catch { return send(res, 500, { error: `data/db/${name}.json 이 올바른 목록(JSON 배열)이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
       const at = () => items.findIndex((x) => x && String(x.id) === id);
       if (!id && req.method === 'GET') return send(res, 200, items);
+      // ponytail: 서버 안의 저장끼리는 이제 안 겹친다. 비서(다른 프로그램)가 파일을 쓰는 바로 그 순간과는 잠금이 없어 겹칠 수 있다. 자주 생기면 파일 잠금을 둔다
       if (id && req.method === 'PUT') { // 같은 id 가 있으면 통째로 바꾸고, 없으면 추가
-        let b; try { b = await readBody(req, 200_000); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
-        if (!b || typeof b !== 'object' || Array.isArray(b)) return send(res, 400, { error: '저장할 내용은 JSON 객체여야 합니다.' });
         const item = { id, ...b }; item.id = id; // 주소의 id 가 항상 이긴다
         const i = at();
         if (i < 0) items.push(item); else items[i] = item;

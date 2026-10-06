@@ -25,7 +25,7 @@
   .seg button.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); font-weight: 600; }
   .ask { border-color: var(--blue); color: var(--blue); font-weight: 600; }
   .ask:hover { background: var(--blue-bg); }
-  #warn { flex: none; padding: 0 16px; color: var(--red); font-size: 13px; }
+  #warn { flex: none; padding: 0 16px; color: var(--red); font-size: 13px; white-space: pre-line; }
   #warn:not(:empty) { padding-top: 8px; }
 
   #view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 12px 16px 16px; }
@@ -181,7 +181,12 @@
     const today = cal.ymd(new Date());
     $('title').textContent = titleText();
     document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
-    $('warn').textContent = bad.length ? `⚠ ${bad.join('·')} 자료를 읽지 못했어요. data/db 의 파일을 확인해 주세요.` : '';
+    const probs = cal.problems(events, tasks); // 비서가 형식을 어겨 쓴 항목: 멈추지 않고 건너뛰되 여기서 알려 준다
+    $('warn').textContent = [
+      bad.length ? `⚠ ${bad.join('·')} 자료를 읽지 못했어요. data/db 의 파일을 확인해 주세요.` : '',
+      probs.length ? `⚠ 형식이 맞지 않아 제대로 안 보이는 항목 ${probs.length}개 (data/db 의 파일을 확인해 주세요): ${probs.slice(0, 3).join(' · ')}${probs.length > 3 ? ' …' : ''}` : '',
+    ].filter(Boolean).join('\n');
+    $('warn').title = probs.join('\n');
     $('view').innerHTML = mode === 'month' ? monthHtml(today) : weekHtml(today);
   }
 

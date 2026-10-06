@@ -17,10 +17,34 @@
     return weeks;
   }
 
-  // 그 날에 걸친 일정(여러 날짜 일정 포함), 시작 시각 순. AI 가 파일을 고쳐 깨진 항목이 섞여 있어도 건너뛴다
-  const eventsOn = (events, day) => events.filter((e) => e && e.date && str(e.date) <= day && day <= str(e.endDate || e.date))
+  // 모양 검사: 날짜는 진짜 있는 날("2026-02-31" 은 안 됨), 시각은 0 을 붙인 24시간, id 는 서버 주소에 쓸 수 있는 글자
+  const isDate = (s) => typeof s === 'string' && /^\d{4}-\d\d-\d\d$/.test(s) && ymd(parse(s)) === s;
+  const isTime = (s) => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+  const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const okId = (id) => /^[A-Za-z0-9_-]{1,64}$/.test(str(id));
+  const endOf = (e) => (isDate(e.endDate) && e.endDate >= e.date ? e.endDate : e.date); // 끝 날짜가 이상하면 하루짜리로 본다
+
+  // 그 날에 걸친 일정(여러 날짜 일정 포함), 시작 시각 순. 날짜 모양이 틀린 항목은 건너뛴다 (problems 가 따로 알려 준다)
+  const eventsOn = (events, day) => events.filter((e) => isObj(e) && isDate(e.date) && e.date <= day && day <= endOf(e))
     .sort((a, b) => str(a.start).localeCompare(str(b.start)));
-  const dueOn = (tasks, day) => tasks.filter((t) => t && str(t.due) === day);
+  const dueOn = (tasks, day) => tasks.filter((t) => isObj(t) && t.due === day);
+
+  // 화면이 제대로 못 보여 주거나 고칠 수 없는 항목(주로 비서가 형식을 어겨 쓴 것). 멈추지 않고 건너뛰되, 무엇이 문제인지 모아 알려 준다
+  function problems(events = [], tasks = []) {
+    const label = (x) => (isObj(x) && x.title ? str(x.title) : JSON.stringify(x) ?? str(x)).slice(0, 30);
+    const why = (x, isEvent) => {
+      if (!isObj(x)) return '항목 모양이 아님';
+      if (!okId(x.id)) return 'id 가 없거나 쓸 수 없는 글자';
+      if (isEvent) {
+        if (!isDate(x.date)) return '날짜가 YYYY-MM-DD 가 아님';
+        if (x.endDate && (!isDate(x.endDate) || x.endDate < x.date)) return '끝 날짜가 이상함';
+        if ((x.start && !isTime(x.start)) || (x.end && !isTime(x.end))) return '시각이 HH:MM 이 아님';
+      } else if (x.due && !isDate(x.due)) return '마감일이 YYYY-MM-DD 가 아님';
+      return '';
+    };
+    return [...events.map((e) => [e, why(e, true), '일정']), ...tasks.map((t) => [t, why(t, false), '할 일'])]
+      .filter(([, w]) => w).map(([x, w, kind]) => `${kind} "${label(x)}": ${w}`);
+  }
 
   // 일정 창에서 저장을 누를 때: 문제가 있으면 쉬운 말로 된 이유를, 괜찮으면 '' 를 돌려준다
   function validate(f) {
@@ -37,5 +61,5 @@
     start: str(f.start), end: str(f.end), place: str(f.place).trim(), memo: str(f.memo).trim(),
   });
 
-  window.cal = { ymd, parse, addDays, addMonths, weekStart, weekDays, monthGrid, eventsOn, dueOn, validate, toEvent };
+  window.cal = { ymd, parse, addDays, addMonths, weekStart, weekDays, monthGrid, isDate, isTime, eventsOn, dueOn, problems, validate, toEvent };
 })();

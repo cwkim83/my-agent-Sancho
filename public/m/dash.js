@@ -3,8 +3,7 @@
 //   dash.stats({events, projects, tasks, notices}, now) → 숫자 카드와 목록에 쓸 값
 //   dash.dday('2026-10-09', now)     → "D-3" / "오늘" / "1일 지남"
 (() => {
-  const { ymd, eventsOn } = window.cal; // cal.js 를 먼저 불러와야 한다
-  const str = (v) => String(v ?? '');
+  const { ymd, isDate, eventsOn } = window.cal; // cal.js 를 먼저 불러와야 한다
 
   function greeting(now, name) {
     const h = now.getHours();
@@ -19,14 +18,16 @@
     const soon = ymd(limit);
     const todayEvents = eventsOn(events, today);
     // 마감이 지난 것도 "임박"에 넣는다 (더 급하니까). 몇 개가 지난 건지는 overdue 로 따로 알려 준다
-    const dueSoon = tasks.filter((t) => t && t.due && t.status !== '완료' && str(t.due) <= soon)
-      .sort((a, b) => str(a.due).localeCompare(str(b.due)));
+    // 마감일 모양이 틀린 것("10/7" 등)은 글자 비교가 엉뚱하게 맞아떨어지므로 아예 빼고 센다
+    const dueSoon = tasks.filter((t) => t && isDate(t.due) && t.status !== '완료' && t.due <= soon)
+      .sort((a, b) => a.due.localeCompare(b.due));
+    const obj = (x) => x !== null && typeof x === 'object';
     return {
       todayEvents,
-      activeProjects: projects.filter((p) => p && p.status === '진행중').length,
+      activeProjects: projects.filter((p) => obj(p) && p.status === '진행중').length,
       dueSoon,
-      overdue: dueSoon.filter((t) => str(t.due) < today).length,
-      unread: notices.filter((n) => n && !n.read).length,
+      overdue: dueSoon.filter((t) => t.due < today).length,
+      unread: notices.filter((n) => obj(n) && !Array.isArray(n) && !n.read).length,
     };
   }
 

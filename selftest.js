@@ -201,6 +201,23 @@ async function runDb(ck) {
   check('다른 사이트에서 온 저장 요청은 403', (await fetch(BASE + '/api/db/events/e3', { method: 'PUT', headers: { ...H, Origin: 'https://evil.example' }, body: '{}' })).status === 403
     && (await getList('events')).length === 1);
 
+  // 동시 저장: 본문이 늦게 오는 저장 사이에 다른 저장이 끝나도 둘 다 남아야 한다 (예전엔 늦은 쪽이 옛 목록으로 덮어써 하나가 사라졌다)
+  const slowBody = JSON.stringify({ title: '느린 저장' });
+  const slow = new Promise((ok) => {
+    const q = require('http').request({ host: '127.0.0.1', port: PORT, method: 'PUT', path: '/api/db/race/slow',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(slowBody), Cookie: ck } }, (r) => { r.resume(); ok(r.statusCode); });
+    q.write(slowBody.slice(0, 5)); // 본문 앞부분만 보내고 잠시 멈춘다
+    setTimeout(() => q.end(slowBody.slice(5)), 300);
+  });
+  await sleep(80);
+  const fastOk = (await api('PUT', '/api/db/race/fast', { title: '빠른 저장' })).status === 200;
+  check('동시 저장: 늦게 끝나는 저장 사이에 다른 저장이 끝나도 둘 다 남음', fastOk && (await slow) === 200
+    && (await getList('race')).map((x) => x.id).sort().join() === 'fast,slow');
+  const many = await Promise.all(Array.from({ length: 30 }, (_, i) => api('PUT', `/api/db/race2/r${i}`, { i })));
+  check('동시 저장: 30개를 한꺼번에 저장해도 30개 모두 남고 파일이 안 깨짐', many.every((r) => r.status === 200) && (await getList('race2')).length === 30
+    && !fs.readdirSync(dbDir).some((f) => f.endsWith('.tmp')));
+  check('윈도우 장치 이름(nul·con 등)은 묶음 이름으로 못 씀', (await api('PUT', '/api/db/nul/x', { x: 1 })).status === 404 && (await api('GET', '/api/db/con')).status === 404);
+
   // AI 가 파일을 직접 고쳐도 화면이 따라 바뀐다
   await quiet();
   fs.writeFileSync(path.join(dbDir, 'tasks.json'), JSON.stringify([{ id: 't1', title: 'AI 가 직접 적음' }]));
@@ -333,6 +350,12 @@ async function runDash(ck) {
   check('안 읽은 알림 수(read 가 없으면 안 읽음)', s.unread === 2);
   const z = stats({}, at(9));
   check('자료가 하나도 없어도 멈추지 않고 0', z.todayEvents.length === 0 && z.activeProjects === 0 && z.dueSoon.length === 0 && z.unread === 0);
+  const junk = [null, 0, 'x', [], true, {}];
+  let js;
+  try { js = stats({ events: junk, projects: junk, tasks: [...junk, { id: 'w', due: '10/7', status: '할 일' }], notices: [...junk, { read: false }] }, at(9)); } catch (e) { js = '예외: ' + e.message; }
+  check('대시보드: 이상한 자료가 섞여도 계산이 멈추지 않음', typeof js === 'object');
+  check('대시보드: 마감일 모양이 틀린 할 일("10/7")은 7일 안 마감에 안 셈', typeof js === 'object' && js.dueSoon.length === 0);
+  check('대시보드: 알림 파일에 숫자·글자가 섞여도 안 읽은 알림은 진짜 항목만 셈', typeof js === 'object' && js.unread === 2);
   check('D-day 글자: 지남·오늘·D-n', dday('2026-10-05', at(9)) === '1일 지남' && dday('2026-10-06', at(23, 59)) === '오늘' && dday('2026-10-09', at(9)) === 'D-3' && dday('엉터리', at(9)) === '');
 }
 
@@ -378,6 +401,20 @@ async function runCal(ck) {
   check('새 일정: 새 id·종료 날짜는 날짜와 같게·앞뒤 공백 제거', made.id === 'new-1' && made.title === '열교환기 도면 검토' && made.endDate === '2026-10-09' && made.place === '설계실' && made.start === '11:00');
   const edited = c.toEvent({ id: 7, projectId: 'demo-p1', title: '옛', date: '2026-10-09' }, f, 'ignored');
   check('일정 고치기: 기존 id(숫자여도 글자로)·창에 없는 필드(projectId)는 그대로', edited.id === '7' && edited.projectId === 'demo-p1' && edited.title === '열교환기 도면 검토');
+
+  // 비서가 형식을 어겨 쓴 항목: 화면이 멈추지 않고 건너뛰되, 무엇이 문제인지 찾아 알려 준다
+  check('날짜·시각 모양 검사: 없는 날(2/31)·숫자 날짜·한 자리 시·24시는 틀림',
+    c.isDate('2026-10-06') && !c.isDate('2026-02-31') && !c.isDate(20261006) && !c.isDate('2026/10/06') && c.isTime('09:00') && !c.isTime('9:00') && !c.isTime('24:00'));
+  const weird = [null, 0, 'x', [], true, { id: 1, title: 2, date: 20261006 }, { id: 'a', date: '2026/10/06', title: '슬래시' },
+    { id: 'b', date: '10월 6일', title: '한글 날짜' }, { id: 'c', date: '2026-10-06', endDate: '2026-10-05', title: '끝이 빠름' },
+    { id: 'd', date: '2026-10-06', start: '9:00', title: '한 자리 시' }, { id: 'e', date: '2026-02-31', title: '없는 날' },
+    { id: '한글', date: '2026-10-06', title: '이상한 id' }, { id: 'ok', date: '2026-10-06', start: '10:00', title: '정상' }];
+  let probs, on6;
+  try { probs = c.problems(weird, [{ id: 't', due: '10/7', title: '마감 모양' }, 'y']); on6 = c.eventsOn(weird, '2026-10-06').map((e) => e.id).join(); } catch (e) { probs = '예외: ' + e.message; }
+  check('형식이 틀린 항목이 섞여도 계산이 멈추지 않음', Array.isArray(probs));
+  check('형식 검사: 틀린 일정 12개·할 일 2개를 모두 찾고, 정상 항목은 안 잡음', Array.isArray(probs) && probs.length === 14 && !probs.some((p) => p.includes('정상'))
+    && ['일정 "슬래시": 날짜가', '일정 "없는 날": 날짜가', '일정 "끝이 빠름": 끝 날짜가', '일정 "한 자리 시": 시각이', '일정 "이상한 id": id 가', '할 일 "마감 모양": 마감일이'].every((w) => probs.some((p) => p.startsWith(w))));
+  check('달력: 날짜 모양이 틀린 일정은 빼고, 끝 날짜만 이상한 일정은 시작 날짜 하루짜리로 보여 줌', on6 === 'c,한글,ok,d');
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
