@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>일정</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+    font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; }
+
+  /* 위쪽 줄: 이전·오늘·다음 · 제목 · 월/주 · 비서에게 시키기 */
+  .bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+  .bar h2 { margin: 0 8px 0 4px; font-size: 18px; }
+  .btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #344054; }
+  .btn:hover { background: #f2f4f7; }
+  .sp { flex: 1; }
+  .seg { display: flex; }
+  .seg button { padding: 6px 14px; border: 1px solid var(--line); background: #fff; color: #344054; }
+  .seg button:first-child { border-radius: 8px 0 0 8px; } .seg button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+  .seg button.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+  .ask { border-color: var(--blue); color: var(--blue); font-weight: 600; }
+  .ask:hover { background: var(--blue-bg); }
+  #warn { flex: none; padding: 0 16px; color: var(--red); font-size: 13px; }
+  #warn:not(:empty) { padding-top: 8px; }
+
+  #view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 12px 16px 16px; }
+  .sat { color: var(--blue); } .sun { color: var(--red); }
+
+  /* 월 보기 */
+  .dows { flex: none; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); text-align: center; color: var(--sub); font-size: 13px; padding-bottom: 4px; }
+  .month { flex: 1; min-width: 560px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 4px 6px; overflow: hidden; background: #fff; cursor: pointer; }
+  .cell:hover { background: #fbfcfe; }
+  .cell.out { background: #fafbfc; color: var(--sub); }
+  .dn { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-height: 22px; }
+  .n { display: inline-block; min-width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 999px; font-size: 13px; }
+  .today .n { background: var(--blue); color: #fff; font-weight: 700; }
+  .dots { display: flex; align-items: center; gap: 3px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; }
+  .dot.late { background: #d92d20; } .dot.done { background: #c8ced6; }
+
+  .ev { display: block; width: 100%; padding: 1px 6px; border: 0; border-left: 3px solid; border-radius: 4px; text-align: left; font-size: 12px; line-height: 1.55;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev b { font-weight: 600; }
+  .k-meet { background: #eaf1ff; border-color: #2f6fed; color: #1d4ed8; }
+  .k-trip { background: #e7f6ec; border-color: #12a150; color: #0b6b36; }
+  .k-insp { background: #fff1e0; border-color: #f08a24; color: #9a4d00; }
+  .k-me { background: #f1ebfd; border-color: #8b5cf6; color: #5b34b5; }
+  .k-other { background: #f2f4f7; border-color: #98a2b3; color: #475467; }
+  .more { align-self: flex-start; padding: 0 6px; border: 0; background: none; color: var(--sub); font-size: 12px; }
+  .more:hover { color: var(--blue); }
+
+  /* 주 보기 */
+  .week { flex: 1; min-width: 720px; min-height: 340px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .wcol { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px; overflow-y: auto; background: #fff; cursor: pointer; }
+  .wh { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .wtask { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475467; }
+  .wtask .dot { flex: none; }
+  .wev { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 5px 8px; border: 0; border-left: 3px solid; border-radius: 6px; text-align: left; font-size: 13px; }
+  .wev b { font-size: 12px; } .wev small { font-size: 12px; opacity: .8; }
+  .none { color: #98a2b3; font-size: 12px; }
+
+  /* 일정 창 */
+  dialog { width: min(440px, calc(100% - 24px)); padding: 0; border: 0; border-radius: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); color: var(--text); }
+  dialog::backdrop { background: rgba(16, 24, 40, .4); }
+  form { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; }
+  form h3 { margin: 0; font-size: 17px; }
+  label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 13px; color: var(--sub); }
+  .r2 { display: flex; gap: 10px; }
+  .r2 label { flex: 1; }
+  input, select, textarea { width: 100%; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: var(--text); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .err { min-height: 1.2em; color: var(--red); font-size: 13px; }
+  .btns { display: flex; align-items: center; gap: 8px; }
+  .primary { padding: 7px 18px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-weight: 600; }
+  .danger { padding: 7px 14px; border: 1px solid #fecdca; border-radius: 8px; background: #fff; color: var(--red); }
+  .danger:hover { background: #fee4e2; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <button class="btn" id="prev" aria-label="이전">‹</button>
+    <button class="btn" id="today">오늘</button>
+    <button class="btn" id="next" aria-label="다음">›</button>
+    <h2 id="title"></h2>
+    <div class="seg"><button data-view="month">월</button><button data-view="week">주</button></div>
+    <span class="sp"></span>
+    <button class="btn ask" id="ask">✳ 비서에게 시키기</button>
+  </div>
+  <div id="warn"></div>
+  <div id="view"></div>
+
+  <dialog id="dlg">
+    <form id="f">
+      <h3 id="dlgTitle">일정 추가</h3>
+      <label>제목 <input name="title" maxlength="100" autocomplete="off"></label>
+      <div class="r2">
+        <label>날짜 <input type="date" name="date"></label>
+        <label>종료 날짜 (여러 날이면) <input type="date" name="endDate"></label>
+      </div>
+      <div class="r2">
+        <label>시작 시각 <input type="time" name="start"></label>
+        <label>끝 시각 <input type="time" name="end"></label>
+      </div>
+      <label>종류 <select name="kind"></select></label>
+      <label>장소 <input name="place" maxlength="100" autocomplete="off"></label>
+      <label>메모 <textarea name="memo" rows="3"></textarea></label>
+      <div class="err" id="err"></div>
+      <div class="btns">
+        <button type="button" class="danger" id="del">삭제</button><span class="sp"></span>
+        <button type="button" class="btn" id="cancel">취소</button><button type="submit" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+<script src="/m/db.js"></script>
+<script src="/m/cal.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const KINDS = ['회의', '출장', '검사 입회', '개인'];
+  const KCLASS = { '회의': 'meet', '출장': 'trip', '검사 입회': 'insp', '개인': 'me' };
+  const DOW = ['월', '화', '수', '목', '금', '토', '일'];
+  const ASK = '이번 주 일정 중 겹치는 게 있는지 봐 줘';
+
+  let mode = 'month', cursor = cal.ymd(new Date()), events = [], tasks = [], bad = [], seq = 0, editing = null;
+
+  // ---------- 자료: db.js 로 받고, 파일이 바뀌면(AI 가 직접 고쳐도) 바로 다시 그린다 ----------
+  async function load() {
+    const my = ++seq, b = [];
+    const [ev, tk] = await Promise.all([db.list('events').catch(() => (b.push('일정'), [])), db.list('tasks').catch(() => (b.push('할 일'), []))]);
+    if (my !== seq) return; // 더 새 요청이 있다
+    events = ev; tasks = tk; bad = b;
+    render();
+  }
+  db.watch('events', load);
+  db.watch('tasks', load);
+
+  // ---------- 그리기 ----------
+  const tip = (e) => `${e.start || '종일'}${e.end ? '~' + e.end : ''} ${e.title || ''}${e.place ? ' · ' + e.place : ''}`;
+  const kcls = (e) => 'k-' + (KCLASS[e.kind] || 'other');
+  const chip = (e) => `<button class="ev ${kcls(e)}" data-id="${esc(e.id)}" title="${esc(tip(e))}">${e.start ? `<b>${esc(e.start)}</b> ` : ''}${esc(e.title)}</button>`;
+  const dotCls = (t, day, today) => (t.status === '완료' ? 'done' : day < today ? 'late' : '');
+  const dotTip = (t) => `마감: ${t.title || ''} (${t.status || '할 일'})`;
+
+  function monthHtml(today) {
+    const weeks = cal.monthGrid(cursor), month = cursor.slice(0, 7);
+    const cells = weeks.flat().map((day, i) => {
+      const evs = cal.eventsOn(events, day), due = cal.dueOn(tasks, day), shown = evs.slice(0, 3), more = evs.length - shown.length;
+      return `<div class="cell ${day.slice(0, 7) !== month ? 'out' : ''} ${day === today ? 'today' : ''}" data-day="${day}">
+        <div class="dn"><span class="n ${i % 7 === 5 ? 'sat' : i % 7 === 6 ? 'sun' : ''}">${Number(day.slice(8))}</span>
+          <span class="dots">${due.slice(0, 4).map((t) => `<i class="dot ${dotCls(t, day, today)}" title="${esc(dotTip(t))}"></i>`).join('')}${due.length > 4 ? '+' : ''}</span></div>
+        ${shown.map(chip).join('')}${more > 0 ? `<button class="more" data-more="${day}">+${more}개 더</button>` : ''}</div>`;
+    }).join('');
+    return `<div class="dows">${DOW.map((d, i) => `<div class="${i === 5 ? 'sat' : i === 6 ? 'sun' : ''}">${d}</div>`).join('')}</div>
+      <div class="month" style="grid-template-rows:repeat(${weeks.length},minmax(96px,1fr))">${cells}</div>`;
+  }
+
+  function weekHtml(today) {
+    return `<div class="week">${cal.weekDays(cursor).map((day, i) => {
+      const evs = cal.eventsOn(events, day), due = cal.dueOn(tasks, day);
+      return `<div class="wcol ${day === today ? 'today' : ''}" data-day="${day}">
+        <div class="wh ${i === 5 ? 'sat' : i === 6 ? 'sun' : ''}">${DOW[i]} <span class="n">${Number(day.slice(8))}</span></div>
+        ${due.map((t) => `<div class="wtask" title="${esc(dotTip(t))}"><i class="dot ${dotCls(t, day, today)}"></i><span>${esc(t.title)}</span></div>`).join('')}
+        ${evs.map((e) => `<button class="wev ${kcls(e)}" data-id="${esc(e.id)}"><b>${esc(e.start || '종일')}${e.end ? '~' + esc(e.end) : ''}</b>${esc(e.title)}${e.place ? `<small>${esc(e.place)}</small>` : ''}</button>`).join('')}
+        ${evs.length || due.length ? '' : '<div class="none">일정 없음</div>'}</div>`;
+    }).join('')}</div>`;
+  }
+
+  function titleText() {
+    if (mode === 'month') { const [y, m] = cursor.split('-'); return `${y}년 ${Number(m)}월`; }
+    const w = cal.weekDays(cursor), [y1, m1, d1] = w[0].split('-').map(Number), [y2, m2, d2] = w[6].split('-').map(Number);
+    return `${y1}년 ${m1}월 ${d1}일 – ${y2 !== y1 ? y2 + '년 ' : ''}${m2 !== m1 ? m2 + '월 ' : ''}${d2}일`;
+  }
+  function render() {
+    const today = cal.ymd(new Date());
+    $('title').textContent = titleText();
+    document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
+    $('warn').textContent = bad.length ? `⚠ ${bad.join('·')} 자료를 읽지 못했어요. data/db 의 파일을 확인해 주세요.` : '';
+    $('view').innerHTML = mode === 'month' ? monthHtml(today) : weekHtml(today);
+  }
+
+  // ---------- 누르기 ----------
+  $('view').onclick = (e) => {
+    const ev = e.target.closest('[data-id]'); // 일정 → 수정·삭제
+    if (ev) return openDlg(events.find((x) => x && String(x.id) === ev.dataset.id));
+    const more = e.target.closest('[data-more]'); // "+n개 더" → 그 날이 든 주 보기
+    if (more) { mode = 'week'; cursor = more.dataset.more; return render(); }
+    const cell = e.target.closest('[data-day]'); // 빈 칸 → 일정 추가
+    if (cell) openDlg(null, cell.dataset.day);
+  };
+  document.querySelectorAll('.seg button').forEach((b) => (b.onclick = () => { mode = b.dataset.view; render(); }));
+  $('prev').onclick = () => { cursor = mode === 'month' ? cal.addMonths(cursor, -1) : cal.addDays(cursor, -7); render(); };
+  $('next').onclick = () => { cursor = mode === 'month' ? cal.addMonths(cursor, 1) : cal.addDays(cursor, 7); render(); };
+  $('today').onclick = () => { cursor = cal.ymd(new Date()); render(); };
+  // 채팅 입력창은 메인 화면(부모)에 있다: 대시보드로 가서 글을 채워 달라고 부탁한다 (보내지는 않는다)
+  $('ask').onclick = () => parent.postMessage({ type: 'ask', text: ASK }, location.origin);
+
+  // ---------- 일정 추가·수정·삭제 창 ----------
+  const field = (n) => $('f').elements[n];
+  function openDlg(ev, day) {
+    editing = ev || null;
+    const e = ev || { date: day, start: '09:00', end: '10:00', kind: '회의' };
+    const kinds = KINDS.includes(e.kind) || !e.kind ? KINDS : [...KINDS, e.kind]; // 파일에 있던 다른 종류도 잃지 않는다
+    $('dlgTitle').textContent = ev ? '일정 수정' : '일정 추가';
+    field('kind').innerHTML = kinds.map((k) => `<option>${esc(k)}</option>`).join('');
+    for (const n of ['title', 'date', 'start', 'end', 'kind', 'place', 'memo']) field(n).value = e[n] ?? '';
+    field('endDate').value = e.endDate && e.endDate !== e.date ? e.endDate : '';
+    $('del').hidden = !ev;
+    $('err').textContent = '';
+    $('dlg').showModal();
+    field('title').focus();
+  }
+  $('cancel').onclick = () => $('dlg').close();
+  $('f').onsubmit = async (e) => {
+    e.preventDefault();
+    const form = Object.fromEntries(new FormData($('f')));
+    const problem = cal.validate(form);
+    if (problem) { $('err').textContent = problem; return; }
+    const ev = cal.toEvent(editing, form, crypto.randomUUID());
+    try { await db.save('events', ev.id, ev); $('dlg').close(); load(); }
+    catch (x) { $('err').textContent = x.message; }
+  };
+  $('del').onclick = async () => {
+    if (!confirm(`이 일정을 지울까요?\n\n${editing.title}`)) return;
+    try { await db.remove('events', String(editing.id)); $('dlg').close(); load(); }
+    catch (x) { $('err').textContent = x.message; }
+  };
+
+  render();
+  load();
+</script>
+</body>
+</html>

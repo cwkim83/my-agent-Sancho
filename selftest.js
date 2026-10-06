@@ -49,7 +49,7 @@ async function run() {
   check('로그인 후 /api/me 가능', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 200);
   check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="who"'));
   const mainHtml = await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text();
-  check('메인 화면이 db.js·dash.js 를 불러옴(대시보드)', mainHtml.includes('src="/m/db.js"') && mainHtml.includes('src="/m/dash.js"')
+  check('메인 화면이 db.js·cal.js·dash.js 를 불러오고 일정 메뉴에 달력(/m/calendar.html)을 띄움', ['/m/db.js', '/m/cal.js', '/m/dash.js'].every((f) => mainHtml.includes(`src="${f}"`)) && mainHtml.includes('/m/calendar.html')
     && ['오늘 브리핑', '이번 주 일정 정리', '마감 임박 알려줘', '새 프로젝트 등록'].every((q) => mainHtml.includes(q)));
   check('같은 사이트(Origin 이 우리 주소)에서 온 로그인은 정상', (await fetch(BASE + '/api/auth/login', { method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: BASE }, body: JSON.stringify({ username: 'tester', password: PW }) })).status === 200);
@@ -137,6 +137,7 @@ async function run() {
   await runDb(ck);
   await runSeed(ck);
   await runDash(ck);
+  await runCal(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -284,8 +285,8 @@ async function runSeed(ck) {
 
 // 대시보드 계산 (public/m/dash.js): 날짜를 2026-10-06 화요일로 고정해 같은 결과가 나오는지 본다
 async function runDash(ck) {
-  const box = { window: {} };
-  vm.runInNewContext(await (await fetch(BASE + '/m/dash.js', { headers: { Cookie: ck } })).text(), box);
+  const box = { window: {} }; vm.createContext(box);
+  for (const f of ['cal', 'dash']) vm.runInContext(await (await fetch(`${BASE}/m/${f}.js`, { headers: { Cookie: ck } })).text(), box); // dash.js 는 cal.js 를 먼저 불러와야 한다
   const { greeting, stats, dday } = box.window.dash;
   const at = (h, m = 0) => new Date(2026, 9, 6, h, m);
   const hi = (h, m) => greeting(at(h, m), '가나').split(',')[0];
@@ -320,6 +321,50 @@ async function runDash(ck) {
   const z = stats({}, at(9));
   check('자료가 하나도 없어도 멈추지 않고 0', z.todayEvents.length === 0 && z.activeProjects === 0 && z.dueSoon.length === 0 && z.unread === 0);
   check('D-day 글자: 지남·오늘·D-n', dday('2026-10-05', at(9)) === '1일 지남' && dday('2026-10-06', at(23, 59)) === '오늘' && dday('2026-10-09', at(9)) === 'D-3' && dday('엉터리', at(9)) === '');
+}
+
+// 달력 계산·일정 창 검사 (public/m/cal.js) + 달력 화면 파일
+async function runCal(ck) {
+  const get = (u) => fetch(BASE + u, { headers: { Cookie: ck } });
+  check('로그인 전에는 /m/calendar.html 이 401', (await fetch(BASE + '/m/calendar.html')).status === 401);
+  const html = await (await get('/m/calendar.html')).text();
+  check('달력 화면: db.js·cal.js 를 쓰고 "✳ 비서에게 시키기" 가 정해진 문장을 부탁함',
+    html.includes('src="/m/db.js"') && html.includes('src="/m/cal.js"') && html.includes('✳ 비서에게 시키기') && html.includes('이번 주 일정 중 겹치는 게 있는지 봐 줘'));
+  check('달력 화면: 월/주 전환·오늘·이전/다음·종류 4가지(회의·출장·검사 입회·개인)', ['data-view="month"', 'data-view="week"', 'id="today"', 'id="prev"', 'id="next"'].every((x) => html.includes(x))
+    && ["'회의'", "'출장'", "'검사 입회'", "'개인'"].every((k) => html.includes(k)));
+  const box = { window: {} }; vm.createContext(box);
+  vm.runInContext(await (await get('/m/cal.js')).text(), box);
+  const c = box.window.cal;
+  const m10 = c.monthGrid('2026-10-15'), m3 = c.monthGrid('2026-03-01'), m2 = c.monthGrid('2026-02-28');
+  check('월 보기 칸: 2026-10 은 9/28(월)~11/1(일) 5줄', m10.length === 5 && m10[0][0] === '2026-09-28' && m10[4][6] === '2026-11-01' && m10.every((w) => w.length === 7));
+  check('월 보기 칸: 2026-03 은 6줄(2/23~4/5), 2026-02 는 1/26~3/1 5줄', m3.length === 6 && m3[0][0] === '2026-02-23' && m3[5][6] === '2026-04-05' && m2.length === 5 && m2[0][0] === '2026-01-26' && m2[4][6] === '2026-03-01');
+  check('주 보기: 월요일부터 일요일 (일요일을 눌러도 같은 주)', c.weekDays('2026-10-09').join() === '2026-10-05,2026-10-06,2026-10-07,2026-10-08,2026-10-09,2026-10-10,2026-10-11'
+    && c.weekStart('2026-10-11') === '2026-10-05' && c.weekStart('2026-10-05') === '2026-10-05');
+  check('이전·다음: 달 경계·연 경계', c.addDays('2026-10-31', 1) === '2026-11-01' && c.addDays('2026-01-01', -1) === '2025-12-31'
+    && c.addMonths('2026-01-31', 1) === '2026-02-01' && c.addMonths('2026-01-15', -1) === '2025-12-01');
+  const events = [
+    { id: 'a', date: '2026-10-06', endDate: '2026-10-06', start: '14:00' },
+    { id: 'b', date: '2026-10-05', endDate: '2026-10-07', start: '09:00' }, // 사흘에 걸침
+    { id: 'c', date: '2026-10-06', start: '08:30' }, // endDate 없음
+    { id: 'd', date: '2026-10-08', start: '08:00' },
+    null, { id: 'e' }, // 깨진 항목
+  ];
+  check('그 날의 일정: 여러 날 일정은 걸친 모든 날에 보이고(마지막 날 포함), 시작 시각 순, 깨진 항목은 건너뜀',
+    c.eventsOn(events, '2026-10-06').map((e) => e.id).join() === 'c,b,a' && c.eventsOn(events, '2026-10-07').map((e) => e.id).join() === 'b'
+    && c.eventsOn(events, '2026-10-08').map((e) => e.id).join() === 'd' && c.eventsOn(events, '2026-10-04').length === 0);
+  check('할 일 마감일 점: 그 날 마감인 것만', c.dueOn([{ id: 1, due: '2026-10-06' }, { id: 2, due: '2026-10-07' }, null, { id: 3 }], '2026-10-06').map((t) => t.id).join() === '1');
+  const ok = { title: '회의', date: '2026-10-09', endDate: '', start: '10:00', end: '11:00' };
+  check('일정 창 검사: 정상은 통과', c.validate(ok) === '');
+  check('일정 창 검사: 제목이 비면 안내', c.validate({ ...ok, title: '   ' }).includes('제목'));
+  check('일정 창 검사: 날짜가 없으면 안내', c.validate({ ...ok, date: '' }).includes('날짜'));
+  check('일정 창 검사: 끝 시각이 시작보다 빠르면 안내(하루짜리일 때만)', c.validate({ ...ok, end: '09:00' }).includes('끝 시각')
+    && c.validate({ ...ok, endDate: '2026-10-10', end: '09:00' }) === '' && c.validate({ ...ok, start: '', end: '' }) === '');
+  check('일정 창 검사: 종료 날짜가 시작 날짜보다 빠르면 안내', c.validate({ ...ok, endDate: '2026-10-08' }).includes('종료 날짜'));
+  const f = { title: ' 열교환기 도면 검토 ', kind: '회의', date: '2026-10-09', endDate: '', start: '11:00', end: '12:00', place: ' 설계실 ', memo: '' };
+  const made = c.toEvent(null, f, 'new-1');
+  check('새 일정: 새 id·종료 날짜는 날짜와 같게·앞뒤 공백 제거', made.id === 'new-1' && made.title === '열교환기 도면 검토' && made.endDate === '2026-10-09' && made.place === '설계실' && made.start === '11:00');
+  const edited = c.toEvent({ id: 7, projectId: 'demo-p1', title: '옛', date: '2026-10-09' }, f, 'ignored');
+  check('일정 고치기: 기존 id(숫자여도 글자로)·창에 없는 필드(projectId)는 그대로', edited.id === '7' && edited.projectId === 'demo-p1' && edited.title === '열교환기 도면 검토');
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다

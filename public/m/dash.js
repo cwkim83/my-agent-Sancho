@@ -3,7 +3,7 @@
 //   dash.stats({events, projects, tasks, notices}, now) → 숫자 카드와 목록에 쓸 값
 //   dash.dday('2026-10-09', now)     → "D-3" / "오늘" / "1일 지남"
 (() => {
-  const ymd = (d) => d.toLocaleDateString('sv-SE'); // 2026-10-06
+  const { ymd, eventsOn } = window.cal; // cal.js 를 먼저 불러와야 한다
   const str = (v) => String(v ?? '');
 
   function greeting(now, name) {
@@ -17,8 +17,7 @@
     const today = ymd(now);
     const limit = new Date(now); limit.setDate(limit.getDate() + 7);
     const soon = ymd(limit);
-    const todayEvents = events.filter((e) => e && str(e.date) <= today && today <= str(e.endDate || e.date) && e.date)
-      .sort((a, b) => str(a.start).localeCompare(str(b.start)));
+    const todayEvents = eventsOn(events, today);
     // 마감이 지난 것도 "임박"에 넣는다 (더 급하니까). 몇 개가 지난 건지는 overdue 로 따로 알려 준다
     const dueSoon = tasks.filter((t) => t && t.due && t.status !== '완료' && str(t.due) <= soon)
       .sort((a, b) => str(a.due).localeCompare(str(b.due)));

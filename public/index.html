@@ -120,6 +120,8 @@
   .quick button { padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: #344054; font-size: 13px; }
   .quick button:hover { border-color: var(--blue); background: var(--blue-bg); color: var(--blue); }
 
+  .frame { flex: 1; min-width: 0; border: 0; background: var(--bg); }
+
   /* 설정 */
   .settings { flex: 1; min-width: 0; overflow-y: auto; padding: 24px 16px; }
   .settings > * { max-width: 640px; margin-left: auto; margin-right: auto; }
@@ -161,6 +163,7 @@
   </div>
 
 <script src="/m/db.js"></script>
+<script src="/m/cal.js"></script>
 <script src="/m/dash.js"></script>
 <script>
   const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
@@ -221,6 +224,7 @@
     document.body.classList.remove('menu');
     renderNav();
     if (current === '대시보드') showChat();
+    else if (current === '일정') showCalendar();
     else if (current === '설정') showSettings();
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
   }
@@ -238,6 +242,22 @@
 
   // 빠른 지시: [버튼 글자, 입력창에 채울 글]. 누르면 채우기만 하고 보내지는 않는다
   const QUICK = [['오늘 브리핑'], ['이번 주 일정 정리'], ['마감 임박 알려줘'], ['새 프로젝트 등록', '새 프로젝트 등록: ']];
+
+  function fillInput(text) { // 입력창에 글만 채운다 (보내지는 않는다)
+    const t = $('input'); t.value = text;
+    t.dispatchEvent(new Event('input')); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
+  }
+
+  // ---------- 일정 (public/m/calendar.html 을 메인 화면 안에 띄운다) ----------
+  // 채팅 입력창은 대시보드에만 있다. 달력의 "비서에게 시키기"는 글을 부탁만 하고, 여기서 대시보드로 옮겨 채운다
+  let pendingAsk = null;
+  function showCalendar() { $('main').innerHTML = '<iframe class="frame" src="/m/calendar.html" title="일정"></iframe>'; }
+  window.addEventListener('message', (e) => {
+    const frame = document.querySelector('iframe.frame');
+    if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data || e.data.type !== 'ask') return;
+    pendingAsk = String(e.data.text || '');
+    location.hash = '#대시보드';
+  });
 
   function showChat() {
     $('main').innerHTML = `
@@ -257,10 +277,7 @@
         </div>
       </section>
       </div>`;
-    document.querySelectorAll('.quick button').forEach((b) => (b.onclick = () => {
-      const t = $('input'); t.value = b.dataset.text;
-      t.dispatchEvent(new Event('input')); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
-    }));
+    document.querySelectorAll('.quick button').forEach((b) => (b.onclick = () => fillInput(b.dataset.text)));
     startDash();
     $('newChat').onclick = () => { if (!busy) openChat(null); $('chat').classList.remove('listopen'); };
     $('listBtn').onclick = () => $('chat').classList.toggle('listopen');
@@ -273,6 +290,7 @@
     setBusy(busy);
     loadMemory();
     loadList().then(() => (chatId ? openChat(chatId) : renderThread([])));
+    if (pendingAsk) { fillInput(pendingAsk); pendingAsk = null; } // 다른 화면(일정)에서 "비서에게 시키기"로 넘어온 글
   }
 
   async function loadList() {
