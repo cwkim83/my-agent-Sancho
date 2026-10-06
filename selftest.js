@@ -40,7 +40,23 @@ async function run() {
   check('올바른 비밀번호로 로그인(아이디 대소문자 무시)', login.status === 200);
   const ck = cookieOf(login);
   check('로그인 후 /api/me 가능', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 200);
-  check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="logout"'));
+  check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="who"'));
+  // 대화(가짜 답 스트리밍)
+  const H = { 'Content-Type': 'application/json', Cookie: ck };
+  check('로그인 전 /api/chats 는 401', (await fetch(BASE + '/api/chats')).status === 401);
+  const chatId = (await (await fetch(BASE + '/api/chats', { method: 'POST', headers: H })).json()).id;
+  check('새 대화 만들기', /^[0-9a-f-]{36}$/.test(chatId));
+  const sres = await fetch(`${BASE}/api/chats/${chatId}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content: '안녕' }) });
+  check('답이 SSE(text/event-stream)로 옴', (sres.headers.get('content-type') || '').startsWith('text/event-stream'));
+  const sse = await sres.text();
+  const streamed = [...sse.matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join('');
+  check('가짜 답이 "준비 중입니다"로 시작하고 끝에 done 이벤트', streamed.startsWith('준비 중입니다') && sse.includes('event: done'));
+  check('글자가 여러 조각으로 나뉘어 옴', (sse.match(/^data: \{"t"/gm) || []).length > 10);
+  const saved = await (await fetch(`${BASE}/api/chats/${chatId}`, { headers: H })).json();
+  check('대화가 저장됨(내 말 + 답, 제목=첫 말)', saved.messages.length === 2 && saved.messages[1].content === streamed && saved.title === '안녕');
+  check('대화 목록에 나옴', (await (await fetch(BASE + '/api/chats', { headers: H })).json()).some((c) => c.id === chatId));
+  check('없는 대화는 404', (await fetch(`${BASE}/api/chats/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`, { headers: H })).status === 404);
+  check('빈 메시지는 400', (await fetch(`${BASE}/api/chats/${chatId}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content: '  ' }) })).status === 400);
   check('이상한 Host 헤더는 403', await new Promise((ok) => {
     require('http').get({ host: '127.0.0.1', port: PORT, path: '/', headers: { Host: 'evil.example' } }, (r) => { r.resume(); ok(r.statusCode === 403); });
   }));

@@ -114,6 +114,49 @@ function serveFile(res, urlPath) {
   });
 }
 
+// ---------- 대화 (data/chats/<id>.json, 로그인한 본인 것만) ----------
+const CHATS_DIR = path.join(DATA_DIR, 'chats');
+fs.mkdirSync(CHATS_DIR, { recursive: true });
+const nowIso = () => new Date().toISOString();
+const chatFile = (id) => path.join(CHATS_DIR, `${id}.json`);
+function saveChat(chat) { chat.updatedAt = nowIso(); writeJson(chatFile(chat.id), chat); }
+function loadChat(id, userId) {
+  const c = readJson(chatFile(id), null);
+  return c && c.userId === userId ? c : null;
+}
+function listChats(userId) {
+  return fs.readdirSync(CHATS_DIR).filter((f) => f.endsWith('.json'))
+    .map((f) => readJson(path.join(CHATS_DIR, f), null))
+    .filter((c) => c && c.userId === userId)
+    .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+// ---------- 가짜 답 (두뇌 연결 전). 한 글자씩 SSE 로 흘려보낸다 ----------
+const MD_SAMPLE = '## 화면 확인용 예시\n\n**굵게**, *기울임*, `코드` 도 보입니다.\n\n- 첫째 항목\n- 둘째 항목\n\n1. 하나\n2. 둘\n\n| 이름 | 상태 |\n|---|---|\n| 일정 | 준비 중 |\n| 메일 | 준비 중 |\n\n```js\nconsole.log("안녕");\n```\n\n> 인용문도 됩니다.';
+const FAKE_REPLY = '준비 중입니다. (아직 두뇌가 연결되지 않았습니다.)';
+const CHAR_DELAY_MS = 40;
+function streamReply(res, chat, content) {
+  const text = content === '/md' ? MD_SAMPLE : FAKE_REPLY; // '/md' 는 마크다운 표시 확인용
+  chat.messages.push({ role: 'user', content, at: nowIso() });
+  if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
+  saveChat(chat);
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  const chars = Array.from(text);
+  let i = 0, sent = '';
+  const finish = () => { // 끝났든 중지했든 지금까지 받은 만큼 저장
+    clearInterval(timer);
+    chat.messages.push({ role: 'assistant', content: sent, at: nowIso() });
+    saveChat(chat);
+  };
+  const timer = setInterval(() => {
+    if (i >= chars.length) { finish(); res.write('event: done\ndata: {}\n\n'); res.end(); return; }
+    sent += chars[i++];
+    res.write(`data: ${JSON.stringify({ t: chars[i - 1] })}\n\n`);
+  }, CHAR_DELAY_MS);
+  res.on('close', () => { if (!res.writableFinished && i < chars.length) { i = chars.length; finish(); } });
+}
+
 // ---------- 요청 처리 ----------
 async function handle(req, res) {
   // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다
@@ -161,6 +204,26 @@ async function handle(req, res) {
     // 여기부터는 로그인해야만 쓸 수 있다
     if (!user) return send(res, 401, { error: '로그인이 필요합니다.' });
     if (p === '/api/me' && req.method === 'GET') return send(res, 200, { name: user.name, username: user.username });
+
+    const cm = p.match(/^\/api\/chats(?:\/([0-9a-f-]{36}))?(\/messages)?$/);
+    if (cm) {
+      const [, id, isMsg] = cm;
+      if (!id && req.method === 'GET') return send(res, 200, listChats(user.id));
+      if (!id && req.method === 'POST') {
+        const chat = { id: crypto.randomUUID(), userId: user.id, title: '새 대화', createdAt: nowIso(), updatedAt: nowIso(), messages: [] };
+        saveChat(chat);
+        return send(res, 200, { id: chat.id });
+      }
+      const chat = id && loadChat(id, user.id);
+      if (!chat) return send(res, 404, { error: '없는 대화입니다.' });
+      if (!isMsg && req.method === 'GET') return send(res, 200, chat);
+      if (isMsg && req.method === 'POST') {
+        let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+        const content = String(b.content || '').trim();
+        if (!content) return send(res, 400, { error: '내용이 비어 있습니다.' });
+        return streamReply(res, chat, content);
+      }
+    }
     return send(res, 404, { error: '없는 API 입니다.' });
   }
 
