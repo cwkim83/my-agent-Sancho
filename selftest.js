@@ -562,6 +562,26 @@ async function runWbs(ck) {
   const lc = w.compute({ items: [{ code: '1', name: 'a' }, leaf('1.1', '2026-10-01', '2026-10-10', 10), leaf('1.2', '2026-10-01', '2026-10-10', 10), leaf('1.3', '2026-10-01', '2026-10-10', 100)] }, T);
   check('지연 작업 수는 맨 아래 작업만 센다 (작업 2개 지연, 상위 항목도 지연이지만 안 셈)', lc.evms.late === 2 && lc.rows.filter((r) => r.status === '지연').length === 3);
 
+  // ---- 3편 점검: 경계값 ----
+  const z = w.compute({ items: [{ code: '1', name: 'a' }, leaf('1.1', '2026-10-01', '2026-10-10', 100, 0), leaf('1.2', '2026-10-01', '2026-10-10', 0, 5)] }, T);
+  const z2 = w.compute({ items: [{ code: '1', name: 'a', weight: 0 }, leaf('1.1', '2026-10-01', '2026-10-10', 100), { code: '2', name: 'b', weight: 0 }, leaf('2.1', '2026-10-01', '2026-10-10', 0)] }, T);
+  check('경계(가중치 0): 가중치 0 인 작업은 100% 여도 상위 진도에 안 들어가고(상위 0%), 형제가 모두 0 이면 똑같이 나눔(50%)', near(z.rows[0].actual, 0) && z.rows[1].eff === 0 && near(z2.overall.actual, 50));
+  const day = (p, asOf) => one(p, asOf, T, T);
+  check('경계(기간 하루): 전날 계획 0%·대기, 그날 계획 100%(오늘 하루를 다 지난 것으로 셈)라 0% 면 지연, 다음 날 100% 면 완료',
+    day(0, '2026-10-06').plan === 0 && st(0, '2026-10-06', T, T) === '대기' && day(0, T).plan === 100 && st(0, T, T, T) === '지연' && st(100, '2026-10-08', T, T) === '완료');
+  const pre = w.compute({ bac: 1e8, ac: 5e7, items: [leaf('1', '2026-10-01', '2026-10-10', 0)] }, '2026-09-01').evms;
+  const after = w.compute({ bac: 1e8, ac: 5e7, items: [leaf('1', '2026-10-01', '2026-10-10', 85)] }, '2026-11-01');
+  check('경계(오늘이 기간 밖): 시작 전이면 PV 0·SPI "—", 끝난 뒤면 PV = BAC(1억)·SPI 0.85·85% 는 지연',
+    pre.pv === 0 && pre.spi === null && after.evms.pv === 1e8 && near(after.evms.spi, 0.85) && after.rows[0].status === '지연');
+  const b0 = w.compute({ bac: 0, ac: 5e7, items: [leaf('1', '2026-10-01', '2026-10-10', 50)] }, T).evms;
+  check('경계(BAC 0): 계약금액 0 은 "안 넣음"으로 보고 PV·EV·SV·CPI 를 "—"로 (0원·CPI 0.00 으로 보이지 않게), SPI 는 진도로 계산', b0.pv === null && b0.ev === null && b0.sv === null && b0.cpi === null && b0.spi !== null);
+  const w100 = w.compute({ items: [{ code: '1', name: '설계', weight: 50 }, leaf('1.1', '2026-10-01', '2026-10-10', 100, 60), leaf('1.2', '2026-10-01', '2026-10-10', 0, 40), { code: '2', name: '제작', weight: 50 }, leaf('2.1', '2026-10-01', '2026-10-10', 0, 100)] }, T);
+  const w90 = w.compute({ items: [{ code: '1', name: '설계', weight: 45 }, leaf('1.1', '2026-10-01', '2026-10-10', 100, 30), leaf('1.2', '2026-10-01', '2026-10-10', 0, 20), { code: '2', name: '제작', weight: 45 }, leaf('2.1', '2026-10-01', '2026-10-10', 0, 70)] }, T);
+  check('가중치 합이 100 이 아니어도(비서 실수: 45+45=90, 30+20=50) 비율로 계산해 전체 진도는 합 100 일 때와 같음(30%)', near(w100.overall.actual, 30) && near(w90.overall.actual, 30) && w90.problems.length === 0);
+  const notes = w.weightNotes(w90.rows);
+  check('가중치 합이 100 이 아닌 묶음을 찾아 화면에 알려 줌(최상위 90 · 1 설계 50 · 2 제작 70), 합이 100 인 묶음과 작은 수(1·2·3)로 쓴 상대값은 안 잡음',
+    notes.map((n) => `${n.code}:${n.sum}`).join() === ':90,1:50,2:70' && notes[1].name === '설계' && w.weightNotes(w100.rows).length === 0 && w.weightNotes(w.compute({ items: [leaf('1', T, T, 0, 1), leaf('2', T, T, 0, 2)] }, T).rows).length === 0);
+
   // ---- 정렬·상위 기간·접기·형식 오류 ----
   const c5 = w.compute({ items: [leaf('1.10', '2026-11-01', '2026-11-05', 0), leaf('1.9', '2026-10-03', '2026-10-04', 0), { code: '1', name: 'a' }, leaf('2', '2026-12-01', '2026-12-02', 0), leaf('1.2', '2026-10-10', '2026-10-12', 0)] }, T);
   check('코드 정렬: 1, 1.2, 1.9, 1.10, 2 (1.10 이 1.9 뒤)', c5.rows.map((r) => r.code).join() === '1,1.2,1.9,1.10,2');
@@ -649,6 +669,9 @@ async function runWbs(ck) {
   check('엑셀(CSV): 쉼표·따옴표·줄바꿈이 든 칸은 따옴표로 감쌈', cs.includes('"설계, 기본"') && cs.includes('"5"" 배관"') && cs.includes('"줄1\n줄2"'));
   check('엑셀(CSV): = - 로 시작하는 글자 칸은 수식으로 읽히지 않게 앞에 \' 를 붙이고, 코드 1.10 은 ="1.10" 으로 써서 1.1 로 안 바뀜',
     cs.includes("'=SUM(A1)") && cs.includes("'-홍") && cs.includes('="1.10"') && cs.includes(',55.5,'));
+  const csvBytes = Buffer.from(await new Blob([cs], { type: 'text/csv;charset=utf-8' }).arrayBuffer()); // 화면이 내려받기에 쓰는 것과 같은 방법(Blob)으로 만든 실제 파일 바이트
+  check('엑셀(CSV) 파일 바이트: 맨 앞이 UTF-8 BOM(EF BB BF)이고 한글이 UTF-8 로 들어감(엑셀이 한글을 안 깨고 엶)',
+    csvBytes[0] === 0xEF && csvBytes[1] === 0xBB && csvBytes[2] === 0xBF && csvBytes.toString('utf8').slice(1).startsWith('코드,단계,작업명') && csvBytes.includes(Buffer.from('설계, 기본', 'utf8')));
 
   // ---- 저장 API: data/wbs/<프로젝트id>.json ----
   const wbsDir = path.join(dir, 'wbs'), today = new Date().toLocaleDateString('sv-SE');
@@ -699,6 +722,8 @@ async function runWbs(ck) {
 
   // ---- 화면 파일: 새 단추·S-곡선·인쇄 ----
   check('WBS 화면: 💾 Rev 저장 · 📜 이력 · 📊 엑셀 · 📄 PDF · 🔗 공유 링크 단추와 S-곡선(SVG)·인쇄 화면(@page)', ['💾 Rev 저장', '📜 이력', '📊 엑셀', '📄 PDF', '🔗 공유 링크', 'id="sc"', '<svg', '<polyline', '@page', 'beforeprint', 'data-b="restore"'].every((x) => html.includes(x)));
+  check('WBS 화면: 가중치 합 안내(weightNotes, 빨간 경고가 아닌 #note)와, 프로젝트 선택 목록에 고객사를 붙여 같은 이름을 구분', html.includes('wbs.weightNotes(calc.rows)') && html.includes('id="note"')
+    && html.includes("p.client ? ' · ' + esc(p.client) : ''"));
   check('WBS 화면: 공유 화면(/s/)에서는 /m/db.js 를 부르지 않음(로그인이 없어 못 받음)', html.includes("location.pathname.startsWith('/s/')") && html.includes('document.write'));
 
   // ---- Rev (저장 이력): data/wbs/_history/<프로젝트id>/<번호>_<날짜>_<시각>.json ----
@@ -726,12 +751,17 @@ async function runWbs(ck) {
   check('없는 Rev 는 404, 설명이 100자를 넘으면 400, 공정표 파일이 없으면 Rev 저장 400',
     (await api('GET', '/api/wbs/r1/revs/99')).status === 404 && (await api('POST', '/api/wbs/r1/revs/99/restore')).status === 404
     && (await api('POST', '/api/wbs/r1/revs', { note: 'x'.repeat(101) })).status === 400 && (await api('POST', '/api/wbs/nofile/revs', {})).status === 400);
+  // 되돌려도 S-곡선의 실제 기록(actualLog)은 지워지면 안 된다: 기록은 "그날 실제로 그랬다"는 사실이라 계획을 되돌린다고 없어지지 않는다
+  const cur3 = await (await api('GET', '/api/wbs/r1')).json();
+  await api('PUT', '/api/wbs/r1', { etag: cur3.etag, doc: { ...cur3.doc, actualLog: { ...cur3.doc.actualLog, '2026-01-05': 12.5 } } });
+  const rr2 = await (await api('POST', '/api/wbs/r1/revs/1/restore')).json();
+  check('되돌려도 그 사이 쌓인 실제 진도 기록(actualLog)은 남고, 오늘 값만 되돌린 상태로 바뀜', rr2.doc.actualLog['2026-01-05'] === 12.5 && rr2.doc.actualLog[today] === Math.round(w.compute(rr2.doc, today).overall.actual * 100) / 100);
   const before = fs.readFileSync(path.join(wbsDir, 'r1.json'), 'utf8');
   fs.writeFileSync(path.join(histDir, '0010_2026-01-01_000000.json'), JSON.stringify({ rev: 10, savedAt: '2026-01-01T00:00:00Z', note: '깨진 내용', auto: false, snapshot: { items: [{ code: 'x', name: 'a' }] } }));
   fs.writeFileSync(path.join(histDir, 'memo.json'), '{}'); fs.writeFileSync(path.join(histDir, '0011_2026-01-01_000000.json'), '{ 깨짐');
   const bad10 = await api('POST', '/api/wbs/r1/revs/10/restore');
   check('형식이 틀린 Rev 는 되돌리기 400 이고 지금 파일은 그대로, 이름이 다른 파일·깨진 Rev 는 목록에서 건너뜀',
-    bad10.status === 400 && fs.readFileSync(path.join(wbsDir, 'r1.json'), 'utf8') === before && (await (await api('GET', '/api/wbs/r1/revs')).json()).revs.map((v) => v.rev).join() === '1,2,3,10');
+    bad10.status === 400 && fs.readFileSync(path.join(wbsDir, 'r1.json'), 'utf8') === before && (await (await api('GET', '/api/wbs/r1/revs')).json()).revs.map((v) => v.rev).join() === '1,2,3,4,10');
   await put('cap', docA);
   fs.mkdirSync(path.join(wbsDir, '_history', 'cap'), { recursive: true });
   for (let i = 1; i <= 200; i++) fs.writeFileSync(path.join(wbsDir, '_history', 'cap', `${String(i).padStart(4, '0')}_2026-01-01_000000.json`), '{}');
@@ -742,6 +772,9 @@ async function runWbs(ck) {
   // ---- 읽기 전용 공유 링크 ----
   const anon = (u, o) => fetch(BASE + u, o); // 쿠키 없이
   const mk = async (pid) => (await (await api('POST', `/api/wbs/${pid}/share`)).json());
+  // 비서나 사람이 파일에 모르는 칸(예: 금액 메모)을 덧붙여도 공유로 새어 나가면 안 된다 → 공유는 정해진 칸만 골라 보낸다
+  const cur4 = await (await api('GET', '/api/wbs/r1')).json();
+  await api('PUT', '/api/wbs/r1', { etag: cur4.etag, doc: { ...cur4.doc, contractNote: '극비 단가표', items: cur4.doc.items.map((i) => (i.code === '1.1' ? { ...i, cost: 7777777, 단가: '비밀' } : i)) } });
   const s1 = await mk('r1'), tok = (s1.path || '').slice(3);
   const shareFile = path.join(dir, 'share.json');
   check('공유 링크 만들기: /s/<긴 토큰> 주소와 만료일(30일 뒤)', /^\/s\/[A-Za-z0-9_-]{32}$/.test(s1.path) && Math.abs(Date.parse(s1.expiresAt) - Date.now() - 30 * 864e5) < 60000);
@@ -751,6 +784,9 @@ async function runWbs(ck) {
   const pubRes = await anon(`/api/share/${tok}`), pubTxt = await pubRes.text(), pub = JSON.parse(pubTxt);
   check('로그인 없이 /api/share/<토큰> 이 열리고 공정표를 돌려줌', pubRes.status === 200 && pub.doc.items.length === 5 && pub.name === 'r1' && pub.doc.items.some((i) => i.code === '1.1'));
   check('금액(BAC·AC)과 메모는 서버가 아예 안 보냄(응답 글 전체에 없음)', pub.doc.bac === null && pub.doc.ac === null && !pubTxt.includes('비밀 메모') && !pubTxt.includes('1000000000') && !pub.doc.items.some((i) => 'memo' in i));
+  check('파일에 덧붙은 모르는 칸(맨 위 contractNote, 항목의 cost·단가)도 공유로 새어 나가지 않음 — 정해진 칸만 보냄',
+    !pubTxt.includes('극비') && !pubTxt.includes('7777777') && !pubTxt.includes('비밀') && Object.keys(pub.doc).sort().join() === 'ac,actualLog,bac,items'
+    && pub.doc.items.every((i) => Object.keys(i).every((k) => ['code', 'type', 'name', 'owner', 'start', 'end', 'weight', 'progress'].includes(k))));
   const pg = await anon(`/s/${tok}`), pgTxt = await pg.text();
   check('로그인 없이 /s/<토큰> 화면이 열림(캐시·referrer 차단 헤더 포함)', pg.status === 200 && (pg.headers.get('content-type') || '').startsWith('text/html') && pgTxt.includes('WBS 공정표') && pgTxt.includes('/m/wbs-calc.js')
     && pg.headers.get('cache-control') === 'no-store' && pg.headers.get('referrer-policy') === 'no-referrer');

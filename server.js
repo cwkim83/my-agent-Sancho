@@ -202,10 +202,15 @@ const shareEntry = (token) => { const e = readJson(SHARE_FILE, {})[sha(token)]; 
 function publicWbs(pid) { // 공유 화면에 보내는 자료: 계약금액·실제 비용·메모는 화면에서 숨기는 게 아니라 서버가 아예 안 보낸다
   let doc; try { doc = JSON.parse(fs.readFileSync(wbsFile(pid), 'utf8').replace(/^﻿/, '')); } catch (e) { if (e.code === 'ENOENT') doc = wbsCalc.emptyDoc(); else return null; }
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return null;
-  const items = (Array.isArray(doc.items) ? doc.items : []).map((it) => { if (!it || typeof it !== 'object') return it; const { memo, ...rest } = it; return rest; });
+  // 빼는 칸을 고르는 게 아니라 보낼 칸만 고른다: 파일에 누가 모르는 칸(예: 단가)을 덧붙여도 새어 나가지 않게
+  const items = (Array.isArray(doc.items) ? doc.items : []).map((it) => (it && typeof it === 'object' && !Array.isArray(it)
+    ? Object.fromEntries(PUBLIC_ITEM_KEYS.filter((k) => k in it).map((k) => [k, it[k]])) : null));
   let name = pid; try { const p = loadCollection('projects').find((x) => x && x.id === pid); if (p && p.name) name = String(p.name); } catch { /* 이름을 못 읽어도 id 로 */ }
-  return { name, doc: { ...doc, bac: null, ac: null, items } };
+  return { name, doc: { bac: null, ac: null, items, actualLog: cleanLog(doc.actualLog) } };
 }
+const PUBLIC_ITEM_KEYS = ['code', 'type', 'name', 'owner', 'start', 'end', 'weight', 'progress'];
+// actualLog 중 {날짜: 0~100 숫자} 모양인 것만 (공유로 보낼 때·되돌릴 때 이상한 값이 끼지 않게)
+const cleanLog = (log) => Object.fromEntries(Object.entries(log && typeof log === 'object' ? log : {}).filter(([d, v]) => wbsCalc.isDate(d) && typeof v === 'number' && v >= 0 && v <= 100));
 
 // /api/wbs/<프로젝트id>[/revs[/<번호>[/restore]] | /share] — 처리했으면 true (아니면 404 로 넘어간다)
 async function wbsApi(req, res, pid, sub, revN, restore) {
@@ -264,7 +269,9 @@ async function wbsApi(req, res, pid, sub, revN, restore) {
         if (w.error) return done(409, { error: w.error });
         backupRev = w.rev;
       }
-      const doc = wbsCalc.normalize(rev.doc, wbsCalc.today());
+      // 되돌리는 건 계획(항목·금액)이다. 실제 진도 기록(actualLog)은 "그날 실제로 그랬다"는 사실이라 지금 것을 남기고 Rev 의 기록과 합친다 (오늘 값은 정리할 때 되돌린 상태로 다시 적힌다)
+      const actualLog = { ...cleanLog(rev.doc.actualLog), ...(cur.missing ? {} : cleanLog(cur.doc.actualLog)) };
+      const doc = wbsCalc.normalize({ ...rev.doc, actualLog }, wbsCalc.today());
       writeJson(wbsFile(pid), doc);
       return done(200, { doc, etag: etagOf(fs.readFileSync(wbsFile(pid))), backupRev });
     }

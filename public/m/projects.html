@@ -58,6 +58,7 @@
   .gr[data-id]:hover { background: #fbfcfe; }
   .lab { position: sticky; left: 0; z-index: 2; display: flex; align-items: center; padding: 4px 10px; overflow: hidden; background-color: #fff;
     border-right: 1px solid var(--line); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+  .lab small { margin-left: 6px; color: var(--sub); font-size: 11px; } /* 같은 이름의 프로젝트를 고객사로 구분 */
   .gh { min-height: 30px; background: #f9fafb; color: var(--sub); font-size: 12px; }
   .gh .lab { background-color: #f9fafb; }
   .gr[data-id]:hover .lab { background-color: #fbfcfe; }
@@ -162,7 +163,7 @@
     const line = td === null ? '' : `<u class="td" style="left:${td}%"></u>`;
     const rows = list.map((p) => [p, proj.span(p, year)]).filter(([, s]) => s);
     const head = `<div class="gr gh"><div class="lab">프로젝트</div><div class="tl" style="grid-template-columns:${cols}">${Array.from({ length: 12 }, (_, i) => `<span>${i + 1}월</span>`).join('')}</div></div>`;
-    const body = rows.map(([p, s]) => `<div class="gr" data-id="${esc(p.id)}"><div class="lab" title="${esc(p.name)}">${esc(p.name) || '(이름 없음)'}</div>
+    const body = rows.map(([p, s]) => `<div class="gr" data-id="${esc(p.id)}"><div class="lab" title="${esc(p.name)}${p.client ? ' · ' + esc(p.client) : ''}">${esc(p.name) || '(이름 없음)'}${p.client ? `<small>${esc(p.client)}</small>` : ''}</div>
       <div class="tl" style="grid-template-columns:${cols}">${'<i></i>'.repeat(12)}${line}
         <span class="gb ${sc(p)}${s.cutL ? ' cutl' : ''}${s.cutR ? ' cutr' : ''}" style="left:${s.left}%;width:${s.width}%" title="${esc(proj.periodText(p))} · ${proj.pct(p)}%"><i class="fill" style="width:${proj.pct(p)}%"></i><b>${proj.pct(p)}%</b></span></div></div>`).join('');
     return `<div class="g">${head}${body}</div>${rows.length ? '' : `<div class="none">${year}년에 걸친 프로젝트가 없어요.</div>`}`;

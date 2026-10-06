@@ -32,6 +32,8 @@
   #main { flex: 1; min-height: 0; overflow-y: auto; }
   #warn { padding: 0 16px; color: var(--red); font-size: 13px; white-space: pre-line; }
   #warn:not(:empty) { padding-top: 8px; }
+  #note { padding: 0 16px; color: var(--sub); font-size: 12px; }
+  #note:not(:empty) { padding-top: 6px; }
 
   /* EVMS 카드: BAC·PV·EV·SV·SPI·CPI + 지연 작업 */
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 16px; }
@@ -154,6 +156,7 @@
   <div id="banner" hidden></div>
   <div id="main">
     <div id="warn"></div>
+    <div id="note"></div>
     <div class="cards" id="cards"></div>
     <div id="scroll"></div>
     <section id="sc"></section>
@@ -259,7 +262,7 @@
     calc = wbs.compute(curDoc, calcAsOf);
     CW = { ...W, act: ro() || PM ? 0 : W.act }; // 읽기 전용·인쇄 화면에는 행 단추 칸이 없다
     document.body.classList.toggle('pm', PM);
-    $('proj').innerHTML = projects.length ? projects.map((p) => `<option value="${esc(p.id)}"${p.id === pid ? ' selected' : ''}>${esc(p.name) || '(이름 없음)'}</option>`).join('') : '<option>프로젝트 없음</option>';
+    $('proj').innerHTML = projects.length ? projects.map((p) => `<option value="${esc(p.id)}"${p.id === pid ? ' selected' : ''}>${esc(p.name) || '(이름 없음)'}${p.client ? ' · ' + esc(p.client) : ''}</option>`).join('') : '<option>프로젝트 없음</option>';
     $('proj').disabled = !projects.length; $('proj').hidden = SHARE || PM;
     $('pname').textContent = projName(); $('pname').hidden = !(SHARE || PM);
     $('addRoot').hidden = ro(); $('addRoot').disabled = !pid;
@@ -268,6 +271,9 @@
     $('overall').textContent = pid ? `전체 진도 실제 ${fmtP(calc.overall.actual)} / 계획 ${fmtP(calc.overall.plan)} · 기준 ${calcAsOf}` : '';
     $('warn').textContent = [loadErr ? `⚠ ${loadErr}` : '', calc.problems.length ? `⚠ 형식이 맞지 않는 항목 ${calc.problems.length}개${SHARE ? '' : ` (data/wbs/${pid}.json 을 확인해 주세요)`}: ${calc.problems.slice(0, 3).join(' · ')}${calc.problems.length > 3 ? ' …' : ''}` : ''].filter(Boolean).join('\n');
     $('warn').title = calc.problems.join('\n');
+    // 가중치는 비율로 계산하니 숫자는 맞다. 다만 100 에 맞추려다 어긋난 묶음(예: 비서가 합 90 으로 씀)이 있으면 조용히 알려 준다 (빨간 경고 아님)
+    const wn = wbs.weightNotes(calc.rows);
+    $('note').textContent = wn.length ? `ℹ 가중치 합이 100 이 아닌 묶음이 있어요 — 비율로 나눠 계산했어요: ${wn.map((n) => `${n.code ? `${n.code} ${n.name} 아래` : '대단락끼리'} 합 ${n.sum}`).join(' · ')}` : '';
     const ban = $('banner');
     ban.hidden = !(view || SHARE) || PM;
     ban.innerHTML = view

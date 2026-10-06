@@ -97,13 +97,23 @@
     roots.forEach((r) => emit(r, 0, 1));
 
     // EVMS: PV = BAC × 계획 진도, EV = BAC × 실제 진도, SV = EV − PV, SPI = EV ÷ PV, CPI = EV ÷ AC
-    const bac = isNum(doc.bac) && doc.bac >= 0 ? doc.bac : null, ac = isNum(doc.ac) && doc.ac >= 0 ? doc.ac : null;
+    // 계약금액 0 은 "아직 안 넣음"으로 본다 (0원·CPI 0.00 이 진짜 값처럼 보이지 않게)
+    const bac = isNum(doc.bac) && doc.bac > 0 ? doc.bac : null, ac = isNum(doc.ac) && doc.ac >= 0 ? doc.ac : null;
     const pv = bac === null ? null : (bac * overall.plan) / 100, ev = bac === null ? null : (bac * overall.actual) / 100;
     const evms = { bac, ac, pv, ev, sv: bac === null ? null : ev - pv, spi: overall.plan > 0 ? overall.actual / overall.plan : null,
       cpi: ev !== null && ac > 0 ? ev / ac : null, late: rows.filter((r) => r.leaf && r.status === '지연').length };
     const dated = rows.filter((r) => r.leaf && r.start);
     const range = dated.length ? { start: dated.map((r) => r.start).sort()[0], end: dated.map((r) => r.end).sort().pop() } : null;
     return { rows, overall, evms, problems, range };
+  }
+
+  // 같은 부모 아래 가중치 합이 100 이 아닌 묶음. 계산은 비율이라 그대로 맞지만, 100 에 맞춰 쓰려다 어긋난 것(예: 비서가 90 으로 씀)을 화면에 알리려고 찾는다.
+  // 1·2·3 처럼 작은 수로 쓴 상대값은 일부러 그렇게 쓴 것이라 잡지 않는다(합이 50~150 일 때만)
+  function weightNotes(rows) {
+    const sums = new Map();
+    for (const r of rows) { const p = parentOf(r.code); sums.set(p, (sums.get(p) || 0) + r.weight); }
+    return [...sums].filter(([, s]) => s >= 50 && s <= 150 && Math.abs(s - 100) > 1e-9)
+      .map(([code, s]) => ({ code, name: code ? (rows.find((r) => r.code === code) || {}).name : '', sum: Math.round(s * 100) / 100 }));
   }
 
   // 접힌 대단락 밑의 줄은 뺀다
@@ -303,7 +313,7 @@
     return { value: Math.round(Number(m[1] || 0) * 1e8 + Number(m[2] || 0) * 1e4 + Number(m[3] || 0)) };
   }
 
-  const api = { MAX_ITEMS, CODE, num, ymd, isDate, addDays, today, parentOf, cmp, planPct, compute, visible, span, months, x, px, scurve, actualPoints, sampleLog, csv,
+  const api = { MAX_ITEMS, CODE, num, ymd, isDate, addDays, today, parentOf, cmp, planPct, compute, weightNotes, visible, span, months, x, px, scurve, actualPoints, sampleLog, csv,
     validate, normalize, emptyDoc, addRoot, addBelow, addChild, remove, move, countSubtree, setField, shiftTask, parseMoney };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.wbs = api;
 })(typeof window !== 'undefined' ? window : globalThis);
