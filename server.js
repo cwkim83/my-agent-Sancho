@@ -151,14 +151,12 @@ function loadCollection(name) { // 파일이 없으면 빈 목록, 깨져 있으
 // 파일이 바뀌면(우리가 썼든 AI 가 직접 고쳤든) 열려 있는 화면(/api/events)에 "<이름> 이 바뀜"을 알린다
 const streams = new Set();
 const pending = new Map(); // 한 번 쓸 때 이벤트가 여러 번 오므로 50ms 안의 것은 하나로 합친다
+function emitDb(name) { for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name })}\n\n`); } // 열려 있는 화면에 "<이름> 이 바뀜"
 function watchJson(dir, re, prefix) { // dir 안의 <이름>.json 이 바뀌면 "<prefix><이름>" 이 바뀜을 알린다
   fs.watch(dir, (_, file) => {
     const m = re.exec(file || ''), key = m && prefix + m[1]; // 쓰는 중인 임시 파일(.tmp)은 무시
     if (!m || pending.has(key)) return;
-    pending.set(key, setTimeout(() => {
-      pending.delete(key);
-      for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name: key })}\n\n`);
-    }, 50));
+    pending.set(key, setTimeout(() => { pending.delete(key); emitDb(key); }, 50));
   }).on('error', (e) => console.error(`${dir} 감시 실패:`, e.message));
 }
 watchJson(DB_DIR, /^([a-z][a-z0-9_-]*)\.json$/, '');
@@ -486,6 +484,7 @@ function streamReply(res, chat, content, user) {
   // 실행 자체가 그 자리에서 실패해도 화면이 ■ 에 멈추지 않게 바로 마무리한다
   try { child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return finish(); }
   cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
+  child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
   child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
   child.stderr.on('data', (d) => { if (errText.length < 2000) errText += d; });
   child.stdin.on('error', () => {});
@@ -503,10 +502,15 @@ const JOURNAL_DIR = path.join(DATA_DIR, 'journal');
 const TICK_MS = Number(process.env.SANCHO_TICK_MS) || 30_000; // 점검에서만 짧게 줄인다
 const schedRunning = new Set(); // 지금 도는 예약 id — 같은 예약이 겹쳐 돌지 않게
 const warned = new Set(); // 이미 알림으로 알린 문제 (30초마다 같은 알림이 쌓이지 않게)
+const wasOff = new Set(); // 꺼 둔 걸 본 예약 id — 다시 켜진 순간을 알아보려고
+const DETAIL_MAX = 20_000; // 알림에 담는 결과 전체의 한도. 화면이 알림을 고쳐 저장할 때 보내는 크기 제한(200KB)을 넘지 않게. 전체는 일지에 있다
+watchJson(DATA_DIR, /^(schedule)\.json$/, ''); // 화면의 예약 칸은 db.watch('schedule') 로 받는다 (비서가 파일을 직접 고쳐도 따라 바뀌게)
 
-function addNotice(title, body, level) { // 알림(data/db/notices.json)에 한 줄 — 열려 있는 대시보드는 파일 감시로 바로 따라 바뀐다
+function addNotice(title, body, level, detail) { // 알림(data/db/notices.json)에 한 줄 — 열려 있는 대시보드는 파일 감시로 바로 따라 바뀐다. detail 은 "누르면 보이는 결과 전체"
   let items; try { items = loadCollection('notices'); } catch { return console.error('data/db/notices.json 이 올바른 목록이 아니라 알림을 넣지 못했어요. (덮어쓰지 않았어요)'); }
-  items.push({ id: crypto.randomBytes(4).toString('hex'), title, body, level, at: nowIso(), read: false });
+  const n = { id: crypto.randomBytes(4).toString('hex'), title, body, level, at: nowIso(), read: false };
+  if (detail) n.detail = detail.length > DETAIL_MAX ? `${detail.slice(0, DETAIL_MAX)}\n\n…(길어서 여기까지만 담았어요. 전체는 일지 파일에 있어요.)` : detail;
+  items.push(n);
   writeJson(dbFile('notices'), items);
 }
 function warnOnce(key, title, body) { if (!warned.has(key)) { warned.add(key); addNotice(title, body, '주의'); } }
@@ -535,6 +539,7 @@ function askBrainOnce(prompt, ctx) {
     };
     try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...BRAIN_ARGS, '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
     cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
+    child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
     child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
     child.stderr.on('data', (d) => { if (errText.length < 2000) errText += d; });
     child.stdin.on('error', () => {});
@@ -546,17 +551,18 @@ function askBrainOnce(prompt, ctx) {
 
 async function runScheduled(e) {
   schedRunning.add(e.id); // 첫 await 전에 넣는다 (다음 점검이 끼어들기 전에)
+  emitDb('schedule'); // 화면의 예약 칸이 "실행 중"을 보이게
   const name = String(e.이름 || e.id), t0 = new Date(), owner = readJson(USERS_FILE, [])[0];
   let r;
   try {
     r = await askBrainOnce(e.지시문, `${brainCtx(owner ? owner.name : '주인', t0)} 이 실행은 예약("${name}")이 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 요약한다.`);
   } catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
-  finally { schedRunning.delete(e.id); }
+  finally { schedRunning.delete(e.id); emitDb('schedule'); }
   try {
     const day = t0.toLocaleDateString('sv-SE'), file = path.join(JOURNAL_DIR, `${day}.md`), text = r.text || '(결과 글이 없어요)';
     fs.mkdirSync(JOURNAL_DIR, { recursive: true });
     fs.appendFileSync(file, `${fs.existsSync(file) ? '' : `# ${day} 일지\n\n`}## ${t0.toTimeString().slice(0, 5)} ${r.ok ? '' : '⚠ '}${name}\n\n지시: ${e.지시문.replace(/\s+/g, ' ')}\n\n${text}\n\n`);
-    addNotice(`${r.ok ? '예약 결과' : '예약 실패'}: ${name}`, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의');
+    addNotice(`${r.ok ? '예약 결과' : '예약 실패'}: ${name}`, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의', text);
   } catch (err) { console.error('예약 결과를 적지 못했어요:', err.message); }
 }
 
@@ -566,7 +572,9 @@ function scheduleTick() {
   for (const e of list) {
     const why = sched.check(e);
     if (why) { warnOnce(`${e && e.id}:${why}`, '예약 하나를 건너뛰었어요', `"${(e && (e.이름 || e.id)) || '이름 없음'}": ${why} data/schedule.json 에서 고쳐 주세요.`); continue; }
-    if (e.켬 === false) continue;
+    if (e.켬 === false) { wasOff.add(e.id); continue; }
+    // 쉬던 예약을 다시 켰다(화면 스위치든 비서가 파일을 고쳤든): 지금부터 센다 — 쉬는 동안 놓친 회차가 켜자마자 돌지 않게
+    if (wasOff.delete(e.id)) { e.마지막실행 = now.toISOString(); dirty = true; continue; }
     // 처음 보는 예약(마지막실행 없음)은 지금부터 센다 — 아침 9시 예약을 오후 3시에 만들었다고 바로 돌지 않게. 한 번만 하는 예약(once)은 시각이 지났으면 바로 돈다
     if (!e.마지막실행 && e.언제.종류 !== 'once') { e.마지막실행 = now.toISOString(); dirty = true; continue; }
     if (schedRunning.has(e.id) || !sched.isDue(e, now)) continue; // 실행 중이면 건너뛴다
@@ -576,6 +584,36 @@ function scheduleTick() {
     runScheduled(e); // 끝나기를 기다리지 않는다
   }
   if (dirty) writeJson(SCHEDULE_FILE, list); // 읽기→쓰기 사이에 기다림이 없어서 비서가 고친 내용을 덮어쓸 틈이 거의 없다
+}
+
+// /api/schedule[/<id>[/enable|/run]] — 화면의 예약 칸이 쓴다. 처리했으면 true (아니면 404 로 넘어간다)
+//   GET /api/schedule → { items: [예약 + error(형식 이유|null) + running] }   DELETE /<id> → 지우기
+//   POST /<id>/enable { on: true|false } → 켬/끔   POST /<id>/run → 지금 한 번 실행 (끝나기를 기다리지 않고 바로 답한다. 결과는 알림으로)
+async function scheduleApi(req, res, id, act) {
+  const M = req.method, done = (status, body) => { send(res, status, body); return true; };
+  let b = {};
+  if (id && act === 'enable' && M === 'POST') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
+  // 여기부터는 await 없이 한 번에: 읽기→고치기→쓰기 사이에 서버 시계(scheduleTick)가 끼어들지 못한다
+  let list; try { list = loadSchedule(); } catch { return done(500, { error: 'data/schedule.json 이 올바른 JSON 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+  if (!id) return M === 'GET' ? done(200, { items: list.map((e) => ({ ...(isObj(e) ? e : {}), error: sched.check(e), running: isObj(e) && schedRunning.has(e.id) })) }) : false;
+  const i = list.findIndex((e) => isObj(e) && e.id === id);
+  if (i < 0) return done(404, { error: '없는 예약입니다.' });
+  const e = list[i];
+  if (!act && M === 'DELETE') { list.splice(i, 1); writeJson(SCHEDULE_FILE, list); return done(200, { ok: true }); } // 지우기 전 확인은 화면이 한다
+  if (act === 'enable' && M === 'POST') {
+    if (typeof b.on !== 'boolean') return done(400, { error: 'on 은 true 또는 false 여야 합니다.' });
+    e.켬 = b.on; writeJson(SCHEDULE_FILE, list); // 다시 켠 순간 "지금부터 센다"는 서버 시계(scheduleTick)가 챙긴다
+    return done(200, { ok: true });
+  }
+  if (act === 'run' && M === 'POST') { // 지금 한 번 — 예약 시각·마지막실행은 건드리지 않는다 (시험 삼아 돌려 보는 용도). 꺼 둔 예약도 돌릴 수 있다
+    const why = sched.check(e);
+    if (why) return done(400, { error: `이 예약은 형식이 맞지 않아 실행할 수 없어요: ${why}` });
+    if (schedRunning.has(id)) return done(409, { error: '이미 실행 중이에요. 끝나면 알림으로 알려 드려요.' });
+    runScheduled(e); // 기다리지 않는다
+    return done(200, { ok: true });
+  }
+  return false;
 }
 
 // ---------- 요청 처리 ----------
@@ -675,6 +713,9 @@ async function handle(req, res) {
 
     const wm = p.match(/^\/api\/wbs\/([A-Za-z0-9_-]{1,64})(?:\/(revs|share)(?:\/(\d{1,6})(\/restore)?)?)?$/);
     if (wm && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(wm[1]) && await wbsApi(req, res, wm[1], wm[2], wm[3], wm[4])) return;
+
+    const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|run))?)?$/);
+    if (qm && await scheduleApi(req, res, qm[1], qm[2])) return;
 
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }

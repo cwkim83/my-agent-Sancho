@@ -14,15 +14,51 @@
 
   /* 위쪽 바 */
   header { flex: none; height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
-    background: #fff; border-bottom: 1px solid var(--line); }
-  header .brand { font-weight: 700; font-size: 17px; }
+    background: #fff; border-bottom: 1px solid var(--line); position: relative; z-index: 10; }
+  header .brand { font-weight: 700; font-size: 17px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   header .brand span { color: var(--blue); }
   header .space { flex: 1; }
   .icon-btn { display: none; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 18px; }
-  .chip { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border: 1px solid var(--line);
+  .chip { flex: none; white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border: 1px solid var(--line);
     border-radius: 999px; background: #fff; font-size: 14px; }
   .chip small { padding: 2px 8px; border-radius: 999px; background: #f2f4f7; color: var(--sub); font-size: 12px; }
   .chip:hover small { background: #fee4e2; color: #b42318; }
+  [hidden] { display: none !important; }
+
+  /* 🔔 알림 단추·목록·결과 창 */
+  .bell { position: relative; flex: none; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 18px; line-height: 1; }
+  .bell:hover, .bell[aria-expanded="true"] { border-color: var(--blue); background: var(--blue-bg); }
+  .badge { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: #d92d20; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+  .bellpanel { position: fixed; z-index: 30; top: 60px; right: 12px; width: min(400px, calc(100vw - 24px)); max-height: min(70vh, 560px);
+    display: flex; flex-direction: column; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(16, 24, 40, .18); }
+  .bp-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 700; }
+  .bp-head button { border: 0; background: none; color: var(--blue); font-size: 13px; }
+  .bp-head button:disabled { color: #98a2b3; cursor: default; }
+  .bp-list { overflow-y: auto; padding: 4px; }
+  .nrow { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 8px; background: none; text-align: left; color: inherit; }
+  .nrow:hover { background: #f2f4f7; }
+  .nrow .dot { flex: none; width: 8px; height: 8px; margin-top: 7px; border-radius: 50%; background: transparent; }
+  .nrow.unread .dot { background: var(--blue); }
+  .nrow.warn.unread .dot { background: #d92d20; }
+  .nrow .nt { flex: 1; min-width: 0; }
+  .nrow .nt b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nrow.unread .nt b { font-weight: 700; }
+  .nrow .nt span { display: block; color: var(--sub); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nrow time { flex: none; color: var(--sub); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .bp-none { padding: 22px; text-align: center; color: var(--sub); font-size: 14px; }
+  .bp-foot { flex: none; padding: 6px 14px 10px; color: var(--sub); font-size: 12px; }
+  .modal { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(16, 24, 40, .45); }
+  .mcard { width: min(720px, 100%); max-height: 85vh; display: flex; flex-direction: column; background: #fff; border-radius: 14px; box-shadow: 0 20px 48px rgba(16, 24, 40, .3); }
+  .mhead { flex: none; display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .mhead .mt { flex: 1; min-width: 0; }
+  .mhead h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  .mhead .meta { margin-top: 4px; color: var(--sub); font-size: 13px; }
+  .mhead button { flex: none; width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: var(--sub); font-size: 16px; }
+  .mhead button:hover { background: #f2f4f7; color: var(--text); }
+  .mbody { overflow-y: auto; padding: 14px 18px 18px; }
+  .lvl { padding: 1px 8px; border-radius: 999px; background: #f2f4f7; color: var(--sub); font-size: 12px; }
+  .lvl.warn { background: #fee4e2; color: #b42318; }
 
   /* 본문: 왼쪽 메뉴 + 내용 */
   .body { flex: 1; min-height: 0; display: flex; position: relative; }
@@ -45,8 +81,31 @@
   #list button:hover { background: #f2f4f7; }
   #list button.on { background: var(--blue-bg); color: var(--blue); }
   #list .none { padding: 8px 12px; color: var(--sub); font-size: 13px; }
-  .memory { flex: none; max-height: 42%; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
-  .memory h3 { margin: 0; padding: 10px 16px 6px; font-size: 13px; color: var(--sub); }
+  #list { min-height: 72px; }
+  .memory, .sched { flex: none; max-height: 28%; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  .sched { max-height: 40%; }
+  .memory h3, .sched h3 { margin: 0; padding: 10px 16px 6px; font-size: 13px; color: var(--sub); }
+  /* 예약 칸: [스위치] 이름 + 언제 · ▶ 지금 실행 · ✕ 삭제 */
+  #sch { overflow-y: auto; padding: 0 8px 10px; }
+  .sitem { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; }
+  .sitem:hover { background: #f2f4f7; }
+  .sitem .st { flex: 1; min-width: 0; }
+  .sitem .st b { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sitem .st small { display: block; color: var(--sub); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sitem.off .st { opacity: .55; }
+  .sitem.bad .st small { color: #b42318; }
+  .sitem > button { flex: none; width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--sub); }
+  .sitem > button[data-run]:hover:not(:disabled) { background: var(--blue-bg); color: var(--blue); }
+  .sitem > button[data-del]:hover:not(:disabled) { background: #fee4e2; color: #b42318; }
+  .sitem > button:disabled { opacity: .35; cursor: default; }
+  .sw { position: relative; flex: none; width: 32px; height: 18px; }
+  .sw input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .sw span { position: absolute; inset: 0; border-radius: 999px; background: #d0d5dd; transition: background .15s; pointer-events: none; }
+  .sw span::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .sw input:checked + span { background: var(--blue); }
+  .sw input:checked + span::after { transform: translateX(14px); }
+  .sw input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+  #sch .none { padding: 4px 8px; color: var(--sub); font-size: 12px; }
   #mem { overflow-y: auto; padding: 0 8px 10px; }
   #mem .item { display: flex; gap: 6px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; font-size: 13px; line-height: 1.45; }
   #mem .item:hover { background: #f2f4f7; }
@@ -135,6 +194,10 @@
 
   /* 휴대폰 */
   @media (max-width: 800px) {
+    header { gap: 6px; padding: 0 10px; }
+    header .brand { font-size: 13px; }
+    .bell { width: 34px; height: 34px; }
+    .chip { gap: 6px; font-size: 13px; }
     .icon-btn { display: block; }
     nav { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; transform: translateX(-100%); transition: transform .2s; box-shadow: 4px 0 20px rgba(0,0,0,.1); }
     body.menu nav { transform: none; }
@@ -155,8 +218,16 @@
     <button class="icon-btn" id="menuBtn" aria-label="메뉴">☰</button>
     <div class="brand">나의 AI 비서 <span>Sancho</span></div>
     <div class="space"></div>
+    <button class="bell" id="bell" title="알림" aria-label="알림" aria-haspopup="dialog" aria-expanded="false">🔔<span class="badge" id="bellN" hidden></span></button>
     <button class="chip" id="who" title="누르면 로그아웃"><span id="whoName"></span><small>로그아웃</small></button>
   </header>
+  <div class="bellpanel" id="bellPanel" role="dialog" aria-label="알림 목록" hidden></div>
+  <div class="modal" id="noticeModal" hidden>
+    <div class="mcard" role="dialog" aria-modal="true" aria-labelledby="nmTitle">
+      <div class="mhead"><div class="mt"><h2 id="nmTitle"></h2><div class="meta" id="nmMeta"></div></div><button id="nmClose" aria-label="닫기">✕</button></div>
+      <div class="mbody md" id="nmBody"></div>
+    </div>
+  </div>
   <div class="body">
     <nav id="nav"></nav>
     <main id="main"></main>
@@ -165,6 +236,7 @@
 <script src="/m/db.js"></script>
 <script src="/m/cal.js"></script>
 <script src="/m/dash.js"></script>
+<script src="/m/inbox.js"></script>
 <script>
   const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
   const $ = (id) => document.getElementById(id);
@@ -269,6 +341,7 @@
       <div class="dash" id="dashBand"></div>
       <section id="chat">
         <aside class="chatlist"><button class="new" id="newChat">＋ 새 대화</button><div id="list"></div>
+          <div class="sched"><h3>예약 <span id="schN"></span></h3><div id="sch"></div></div>
           <div class="memory"><h3>기억 <span id="memN"></span></h3><div id="mem"></div></div></aside>
         <div class="pane">
           <div class="pane-top"><button id="listBtn">☰ 대화 목록</button></div>
@@ -293,6 +366,7 @@
     });
     setBusy(busy);
     loadMemory();
+    loadSched();
     loadList().then(() => (chatId ? openChat(chatId) : renderThread([])));
     if (pendingAsk) { fillInput(pendingAsk); pendingAsk = null; } // 다른 화면(일정)에서 "비서에게 시키기"로 넘어온 글
   }
@@ -387,7 +461,7 @@
   }
 
   // ---------- 대시보드 (채팅 위): 자료는 db.js 로 받고, 파일이 바뀌면 바로 다시 그린다 ----------
-  const DASH_DATA = ['events', 'projects', 'tasks', 'notices'];
+  const DASH_DATA = ['events', 'projects', 'tasks']; // 알림(notices)은 🔔 가 받아 두고 대시보드 카드도 그걸 쓴다 (아래 "🔔 알림")
   let me = '', dashData = { bad: [] }, dashSeq = 0, dashOff = [];
   const safe = (v) => esc(String(v ?? '')); // 파일에서 온 글자는 화면에 넣기 전에 꼭 거른다
 
@@ -402,17 +476,17 @@
     stopDash();
     loadDash();
     const tick = setInterval(renderDash, 60000); // 인사말·"오늘"이 시간 따라 바뀌게
-    dashOff = [...DASH_DATA.map((n) => db.watch(n, loadDash)), () => clearInterval(tick)];
+    dashOff = [...DASH_DATA.map((n) => db.watch(n, loadDash)), db.watch('schedule', loadSched), () => clearInterval(tick)]; // 예약 칸도 같이 (대시보드에 있는 동안만)
   }
   function stopDash() { dashSeq++; dashOff.forEach((f) => f()); dashOff = []; }
 
   function renderDash() {
     const el = $('dashBand'); if (!el) return;
-    const now = new Date(), s = dash.stats(dashData, now);
+    const now = new Date(), s = dash.stats({ ...dashData, notices: noticeRaw }, now); // 알림은 🔔 가 받아 둔 것: 단추 숫자와 같은 자료라 어긋나지 않는다
     const when = (iso) => { const d = new Date(iso); return d.toLocaleDateString('sv-SE') === now.toLocaleDateString('sv-SE')
       ? d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : `${d.getMonth() + 1}/${d.getDate()}`; };
     const list = (rows, none) => rows.length ? `<ul>${rows.join('')}</ul>` : `<div class="none">${none}</div>`;
-    const bad = dashData.bad.map((n) => LABELS[n]).join('·');
+    const bad = [...dashData.bad, ...(noticeBad ? ['notices'] : [])].map((n) => LABELS[n]).join('·');
     const probs = cal.problems(dashData.events, dashData.tasks);
     el.innerHTML = `
       <div>
@@ -436,6 +510,103 @@
           `<li data-chat="${safe(c.id)}"><span class="k">${when(c.updatedAt)}</span><span class="tt">${safe(c.title)}</span></li>`), '아직 대화가 없어요.')}</div>
       </div>`;
     el.querySelectorAll('[data-chat]').forEach((li) => (li.onclick = () => { if (!busy) openChat(li.dataset.chat); }));
+  }
+
+  // ---------- 🔔 알림 (data/db/notices.json): 위쪽 단추(안 읽은 수 배지) → 목록 → 누르면 결과 전체 ----------
+  // 알림 메뉴·대시보드의 "안 읽은 알림" 카드(href="#알림")를 눌러도 같은 목록이 열린다
+  let noticeRaw = [], noticeBad = false, noticeSeq = 0;
+  const unreadN = () => dash.stats({ notices: noticeRaw }, new Date()).unread; // 대시보드 카드와 같은 계산
+
+  async function loadNotices() {
+    const my = ++noticeSeq;
+    let got, bad = false;
+    try { got = await db.list('notices'); } catch { got = []; bad = true; }
+    if (my !== noticeSeq) return;
+    noticeRaw = got; noticeBad = bad;
+    renderBell(); renderDash(); // 단추 숫자와 대시보드 카드 숫자를 같이 바꾼다
+  }
+  function renderBell() {
+    const n = unreadN(), b = $('bellN');
+    b.hidden = !n; b.textContent = n > 99 ? '99+' : String(n);
+    $('bell').setAttribute('aria-label', n ? `알림 (안 읽은 ${n}개)` : '알림');
+    if (!$('bellPanel').hidden) renderBellPanel();
+  }
+  function renderBellPanel() {
+    const all = inbox.notices(noticeRaw), shown = all.slice(0, 50), now = new Date(), n = unreadN(), el = $('bellPanel');
+    el.innerHTML = `<div class="bp-head"><span>알림${n ? ` · 안 읽음 ${n}` : ''}</span><button id="readAll" ${n ? '' : 'disabled'}>모두 읽음</button></div>
+      <div class="bp-list">${shown.length ? shown.map((x, i) => `<button class="nrow ${x.read ? '' : 'unread'} ${x.level === '주의' ? 'warn' : ''}" data-i="${i}">
+        <span class="dot"></span><span class="nt"><b>${safe(x.title)}</b><span>${safe(x.body)}</span></span><time>${safe(inbox.when(x.at, now))}</time></button>`).join('')
+        : '<div class="bp-none">아직 알림이 없어요.</div>'}</div>
+      ${all.length > shown.length ? `<div class="bp-foot">오래된 알림 ${all.length - shown.length}개는 접어 두었어요.</div>` : ''}`;
+    el.querySelectorAll('.nrow').forEach((b) => (b.onclick = () => openNotice(shown[b.dataset.i])));
+    $('readAll').onclick = async () => {
+      await Promise.all(all.filter((x) => !x.read && x.id).map((x) => db.save('notices', x.id, { ...x.raw, read: true }).catch(() => {})));
+      loadNotices();
+    };
+  }
+  function openBell() { document.body.classList.remove('menu'); renderBellPanel(); $('bellPanel').hidden = false; $('bell').setAttribute('aria-expanded', 'true'); }
+  function closeBell() { $('bellPanel').hidden = true; $('bell').setAttribute('aria-expanded', 'false'); }
+  function openNotice(x) { // 결과 전체를 창으로 보여 주고, 읽음으로 바꾼다
+    closeBell();
+    $('nmTitle').textContent = x.title;
+    $('nmMeta').innerHTML = `<span class="lvl ${x.level === '주의' ? 'warn' : ''}">${x.level}</span> ${safe(inbox.full(x.at))}`;
+    $('nmBody').innerHTML = md(x.detail || x.body || '(내용이 없어요.)'); // 글자는 md() 가 먼저 거른다
+    $('noticeModal').hidden = false; $('nmClose').focus();
+    if (!x.read && x.id) { // 화면 숫자는 바로 바꾸고, 파일에는 읽음으로 저장한다
+      x.raw.read = true; renderBell(); renderDash();
+      db.save('notices', x.id, x.raw).then(loadNotices).catch(loadNotices);
+    }
+  }
+  const closeNotice = () => { $('noticeModal').hidden = true; };
+  $('bell').onclick = () => ($('bellPanel').hidden ? openBell() : closeBell());
+  $('nmClose').onclick = closeNotice;
+  $('noticeModal').onclick = (e) => { if (e.target === $('noticeModal')) closeNotice(); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (!$('noticeModal').hidden) closeNotice(); else closeBell(); } });
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('a[href="#알림"]')) { e.preventDefault(); openBell(); } // 메뉴 "알림"·대시보드 카드
+    else if (!e.target.closest('#bell, #bellPanel')) closeBell(); // 바깥을 누르면 닫힘
+  });
+
+  // ---------- 예약 칸 (채팅 왼쪽, data/schedule.json): 켬/끔 스위치 · ▶ 지금 실행 · ✕ 삭제 ----------
+  let schedItems = [], schedErr = '', schedSeq = 0;
+  async function loadSched() {
+    const my = ++schedSeq;
+    let items = [], err = '';
+    try {
+      const r = await api('/api/schedule'), j = await r.json();
+      if (!r.ok) throw new Error(j.error || '예약을 읽지 못했어요.');
+      items = j.items;
+    } catch (e) { if (e.message === 'login') return; err = e.message; }
+    if (my !== schedSeq) return;
+    schedItems = items; schedErr = err;
+    renderSched();
+  }
+  function renderSched() {
+    const el = $('sch'); if (!el) return;
+    $('schN').textContent = schedItems.length ? `(${schedItems.length})` : '';
+    el.innerHTML = schedErr ? `<div class="none">⚠ ${safe(schedErr)}</div>` : schedItems.length ? schedItems.map((e, i) => {
+      const id = typeof e.id === 'string' ? e.id : '', on = e.켬 !== false, run = !!e.running;
+      const sub = e.error ? `⚠ ${e.error}` : run ? '⏳ 실행 중…' : inbox.scheduleText(e.언제);
+      return `<div class="sitem ${on ? '' : 'off'} ${e.error ? 'bad' : ''}" title="${safe(e.지시문)}">
+        <label class="sw" title="${on ? '켜짐 (누르면 끔)' : '꺼짐 (누르면 켬)'}"><input type="checkbox" data-i="${i}" ${on ? 'checked' : ''} ${id ? '' : 'disabled'}><span></span></label>
+        <div class="st"><b>${safe(e.이름 || id || '(이름 없음)')}</b><small>${safe(sub)}</small></div>
+        <button data-run="${i}" title="지금 한 번 실행 (예약 시각은 그대로)" aria-label="지금 실행" ${id && !e.error && !run ? '' : 'disabled'}>▶</button>
+        <button data-del="${i}" title="이 예약 지우기" aria-label="이 예약 지우기" ${id ? '' : 'disabled'}>✕</button></div>`;
+    }).join('') : '<div class="none">아직 예약이 없어요. 채팅에서 "매일 아침 8시 반에 … 해 줘" 라고 말해 보세요.</div>';
+    el.querySelectorAll('input[data-i]').forEach((c) => (c.onchange = () => schedCall(schedItems[c.dataset.i].id, 'enable', { on: c.checked })));
+    el.querySelectorAll('[data-run]').forEach((b) => (b.onclick = () => schedCall(schedItems[b.dataset.run].id, 'run')));
+    el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
+      const e = schedItems[b.dataset.del];
+      if (confirm(`이 예약을 지울까요?\n\n${e.이름 || e.id} — ${inbox.scheduleText(e.언제)}`)) schedCall(e.id);
+    }));
+  }
+  async function schedCall(id, act, body) { // act 없으면 삭제
+    try {
+      const r = await api(`/api/schedule/${encodeURIComponent(id)}${act ? '/' + act : ''}`, { method: act ? 'POST' : 'DELETE',
+        headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      if (!r.ok) alert((await r.json().catch(() => ({}))).error || '처리하지 못했어요.');
+    } catch (e) { if (e.message !== 'login') alert('서버에 연결할 수 없습니다.'); }
+    loadSched(); // 실패했어도 스위치 모양을 실제 상태로 되돌린다
   }
 
   // ---------- 설정 ----------
@@ -466,7 +637,7 @@
   // ---------- 시작 ----------
   $('who').onclick = async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.replace('/'); };
   fetch('/api/me').then((r) => (r.ok ? r.json() : Promise.reject()))
-    .then((u) => { me = u.name; $('whoName').textContent = u.name; route(); })
+    .then((u) => { me = u.name; $('whoName').textContent = u.name; loadNotices(); db.watch('notices', loadNotices); route(); })
     .catch(() => location.replace('/'));
 </script>
 </body>

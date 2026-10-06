@@ -16,6 +16,7 @@ async function run(msg) {
     out({ type: 'result', is_error: true, result: 'Claude AI usage limit reached' }); process.exit(1);
   }
   if (msg === '/crash') { process.stderr.write('boom: 갑자기 죽음'); process.exit(3); } // 결과 없이 죽는 경우
+  if (msg === '/long') { const t = '가'.repeat(25000); delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 알림에 담는 결과 길이 한도 점검용
   if (msg.startsWith('/wait')) { require('fs').appendFileSync('wait-runs.log', 'start\n'); await sleep(2500); } // 예약 겹침 점검용: 시작할 때마다 한 줄 적고 2.5초 걸린다
   if (msg === '/slow') { for (let i = 0; i < 300; i++) { delta('느림 '); await sleep(100); } }
   if (msg.includes('파일')) out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'Read', id: 't1' } } });

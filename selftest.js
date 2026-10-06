@@ -89,7 +89,8 @@ async function run() {
     ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete'],
     ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events'], ['POST', '/api/seed'],
     ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
-    ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share']];
+    ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share'],
+    ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['DELETE', '/api/schedule/x']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -98,6 +99,8 @@ async function run() {
   const crash = await ask(crashId, '/crash');
   check('claude 가 중간에 죽으면 안내 문구와 함께 답이 끝남(done)', crash.sse.includes('event: done') && textOf(crash.sse).includes('⚠ Claude 가 오류로 끝났습니다') && textOf(crash.sse).includes('boom'));
   check('죽은 뒤에도 같은 대화에 바로 다시 보낼 수 있음', (await ask(crashId, '다시')).r.status === 200);
+  const longAns = textOf((await ask(crashId, '/long')).sse);
+  check('긴 한글 답(25000자)도 출력 조각 경계에서 깨지지 않고 그대로 옴', longAns.includes('가'.repeat(25000)) && !longAns.includes('�'));
   check('빈 메시지는 400', (await fetch(`${BASE}/api/chats/${chatId}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content: '  ' }) })).status === 400);
   // 성격 · 기억
   const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
@@ -152,6 +155,8 @@ async function run() {
   runSkills();
   runScheduleCalc();
   await runSchedule(ck);
+  await runSchedApi(ck);
+  await runInbox(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -910,19 +915,27 @@ function runScheduleCalc() {
 }
 
 // 예약 전체 흐름(server.js): 점검용 서버는 시계를 200ms 마다 본다. 가짜 claude 로 실행 → 일지·알림·마지막실행·놓친 회차·겹침·깨진 파일
-async function runSchedule(ck) {
-  const S = require('./scheduler.js');
+function schedKit(ck) { // 예약 점검 두 가지(runSchedule·runSchedApi)가 같이 쓰는 도우미
   const H = { 'Content-Type': 'application/json', Cookie: ck };
   const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
-  const until = async (fn, ms = 20000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
-  const file = path.join(dir, 'schedule.json');
-  const writeSched = (list) => { fs.writeFileSync(file + '.t', typeof list === 'string' ? list : JSON.stringify(list, null, 2)); fs.renameSync(file + '.t', file); }; // 서버가 쓰다 만 파일을 읽지 않게 통째로 바꿔치기
-  const readSched = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+  const file = path.join(dir, 'schedule.json'), runsLog = path.join(dir, 'wait-runs.log');
   const notices = async () => (await (await fetch(BASE + '/api/db/notices', { headers: H })).json());
-  const mine = async (re) => (await notices()).filter((n) => re.test(n.title));
-  const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  return {
+    H, sleep, file, notices,
+    until: async (fn, ms = 20000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; },
+    writeSched: (list) => { fs.writeFileSync(file + '.t', typeof list === 'string' ? list : JSON.stringify(list, null, 2)); fs.renameSync(file + '.t', file); }, // 서버가 쓰다 만 파일을 읽지 않게 통째로 바꿔치기
+    readSched: () => JSON.parse(fs.readFileSync(file, 'utf8')),
+    mine: async (re) => (await notices()).filter((n) => re.test(n.title)),
+    ago: (min) => new Date(Date.now() - min * 60_000).toISOString(),
+    mkE: (id, 이름, 언제, 지시문, extra = {}) => ({ id, 이름, 언제, 지시문, 켬: true, 마지막실행: null, ...extra }),
+    runs: () => (fs.existsSync(runsLog) ? fs.readFileSync(runsLog, 'utf8').split('\n').filter(Boolean).length : 0), // 가짜 claude 의 "/wait" 실행 횟수
+  };
+}
+
+async function runSchedule(ck) {
+  const S = require('./scheduler.js');
+  const { sleep, file, notices, until, writeSched, readSched, mine, ago, mkE, runs } = schedKit(ck);
   const day = new Date().toLocaleDateString('sv-SE'), wd = '일월화수목금토'[new Date().getDay()];
-  const mkE = (id, 이름, 언제, 지시문, extra = {}) => ({ id, 이름, 언제, 지시문, 켬: true, 마지막실행: null, ...extra });
   const base = (await notices()).length;
 
   const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
@@ -976,7 +989,6 @@ async function runSchedule(ck) {
   check('꺼 둔 예약·먼 미래 예약은 마지막실행이 그대로 null, 모르는 칸(메모)과 순서도 그대로', by('aaaa0004').마지막실행 === null && by('aaaa0007').마지막실행 === null && by('aaaa0004').메모 === '모르는 칸도 그대로 남아야 함' && sc.map((e) => e.id).join() === ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => 'aaaa000' + n).join());
 
   // 겹침 방지: 2.5초 걸리는 예약이 도는 중에 다시 때가 된 것처럼 만들어도 두 번째가 뜨지 않는다
-  const runsLog = path.join(dir, 'wait-runs.log'), runs = () => (fs.existsSync(runsLog) ? fs.readFileSync(runsLog, 'utf8').split('\n').filter(Boolean).length : 0);
   writeSched([...readSched(), mkE('bbbb0001', '겹침 점검', { 종류: 'every', 분: 1 }, '/wait 겹침', { 마지막실행: ago(10) })]);
   check('겹침 점검 예약이 때가 되어 실행되기 시작함', await until(() => runs() === 1));
   writeSched(readSched().map((e) => (e.id === 'bbbb0001' ? { ...e, 마지막실행: ago(10) } : e))); // 도는 중인데 또 때가 된 것처럼
@@ -995,6 +1007,111 @@ async function runSchedule(ck) {
   writeSched([]);
   await sleep(600);
   check('파일을 고치면(빈 목록) 문제없이 지나가고 알림이 더 늘지 않음', (await notices()).length === before + 1 && JSON.parse(fs.readFileSync(file, 'utf8')).length === 0);
+}
+
+// 화면의 예약 칸이 쓰는 API (/api/schedule): 목록·켬/끔·지금 실행·삭제, 그리고 "다시 켜면 지금부터 센다"·긴 결과 한도·바뀜 알림
+async function runSchedApi(ck) {
+  const { H, sleep, file, notices, until, writeSched, readSched, mine, ago, mkE, runs } = schedKit(ck);
+  const call = (m, u, b, extra) => fetch(BASE + '/api/schedule' + u, { method: m, headers: { ...H, ...extra }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const list = async () => (await (await call('GET', '')).json()).items;
+  const recent = (v) => Date.now() - Date.parse(v) < 60_000;
+  // 바뀜 알림 통로를 열어 두고 오는 글을 모은다
+  const ac = new AbortController(); let heard = '';
+  fetch(BASE + '/api/events', { headers: { Cookie: ck }, signal: ac.signal }).then(async (r) => { const rd = r.body.getReader(), dec = new TextDecoder(); for (;;) { const { done, value } = await rd.read(); if (done) break; heard += dec.decode(value); } }).catch(() => {});
+  const schedEvents = () => (heard.match(/"name":"schedule"/g) || []).length;
+
+  check('예약이 없으면 빈 목록', (await list()).length === 0);
+  writeSched([
+    mkE('cccc0001', '화면 점검', { 종류: 'every', 분: 600 }, '/wait 화면 실행', { 마지막실행: ago(1) }),
+    mkE('cccc0002', '형식 틀림', { 종류: 'daily', 시각: '99:99' }, '틀린 지시'),
+    mkE('cccc0003', '꺼 둔 매일', { 종류: 'daily', 시각: '00:00' }, '다시 켠 뒤 점검', { 켬: false, 마지막실행: ago(60 * 24 * 3) }),
+    5,
+    mkE('cccc0004', '지울 예약', { 종류: 'every', 분: 90 }, '지울 것', { 마지막실행: ago(1) }),
+    mkE('cccc0005', '긴 결과', { 종류: 'once', 날짜: '2999-01-01', 시각: '00:00' }, '/long'),
+  ]);
+  check('파일을 직접 고쳐도 화면에 "schedule 이 바뀜" 알림이 옴(예약 칸이 따라 바뀜)', await until(() => schedEvents() >= 1, 3000));
+  const items = await list();
+  check('목록: 파일 순서 그대로(깨진 항목 포함), 항목마다 형식 오류 이유(없으면 null)와 실행 중 여부, 지시문도 함께', items.length === 6
+    && items.map((e) => e.id).join() === 'cccc0001,cccc0002,cccc0003,,cccc0004,cccc0005' && items[0].error === null && items[0].running === false && items[0].지시문 === '/wait 화면 실행'
+    && items[1].error.includes('시각은 24시간') && items[3].error.includes('{ … } 모양이 아니에요'));
+  check('로그인 없이는 목록·켬끔·실행·삭제 모두 401, 다른 사이트에서 온 요청은 403(실행도 안 됨)',
+    (await fetch(BASE + '/api/schedule')).status === 401 && (await fetch(BASE + '/api/schedule/cccc0001/run', { method: 'POST' })).status === 401
+    && (await call('POST', '/cccc0001/run', undefined, { Origin: 'https://evil.example' })).status === 403 && (await call('DELETE', '/cccc0004', undefined, { Origin: 'https://evil.example' })).status === 403
+    && runs() === 1 && (await list()).length === 6);
+
+  // 켬/끔
+  const before = readSched();
+  check('끄기: 그 예약의 켬만 false 로 바뀌고 다른 예약은 한 글자도 안 바뀜', (await call('POST', '/cccc0001/enable', { on: false })).status === 200
+    && readSched()[0].켬 === false && JSON.stringify(readSched().slice(1)) === JSON.stringify(before.slice(1)) && JSON.stringify({ ...readSched()[0], 켬: true }) === JSON.stringify(before[0]));
+  check('켬/끔 요청이 이상하면 400(on 이 true/false 가 아님), 없는 예약은 404', (await call('POST', '/cccc0001/enable', { on: 'yes' })).status === 400 && (await call('POST', '/nope0000/enable', { on: true })).status === 404 && (await call('POST', '/cccc0001/enable', undefined)).status === 400);
+  await sleep(700); // 서버 시계가 꺼 둔 걸 본다
+  const n0 = (await notices()).length;
+  check('쉬던 예약을 다시 켜면 지금부터 센다: 사흘 놓친 매일 예약이 켜자마자 돌지 않고 마지막실행만 지금으로', (await call('POST', '/cccc0003/enable', { on: true })).status === 200
+    && await until(() => { const e = readSched()[2]; return e.켬 === true && recent(e.마지막실행); }, 5000) && (await sleep(1200), (await mine(/꺼 둔 매일/)).length === 0));
+
+  // 지금 실행(▶): 꺼 둔 예약도 돌릴 수 있고, 끝나기를 기다리지 않고 바로 답하고, 예약 시각·마지막실행은 안 건드린다
+  const last1 = readSched()[0].마지막실행, ev0 = schedEvents(), r0 = runs();
+  const t0 = Date.now(), go = await call('POST', '/cccc0001/run');
+  check('▶ 지금 실행: 꺼 둔 예약도 바로 200 으로 답함(2.5초 걸리는 일을 기다리지 않음)', go.status === 200 && Date.now() - t0 < 1500);
+  check('실행 중에는 목록에 running 이 true', (await list())[0].running === true);
+  check('실행 중에 또 ▶ 를 누르면 409(겹쳐 돌지 않음), 형식이 틀린 예약은 400, 없는 예약은 404', (await call('POST', '/cccc0001/run')).status === 409
+    && (await call('POST', '/cccc0002/run')).status === 400 && (await call('POST', '/nope0000/run')).status === 404);
+  check('끝나면 결과가 알림으로 오고 running 이 false 로 돌아옴', await until(async () => (await mine(/^예약 결과: 화면 점검$/)).length === 1) && (await list())[0].running === false);
+  check('수동 실행은 한 번만 돌고(총 +1), 켬/마지막실행은 그대로이고, 실행 시작·끝에 "schedule 이 바뀜" 알림이 옴', runs() === r0 + 1 && readSched()[0].마지막실행 === last1 && readSched()[0].켬 === false && schedEvents() >= ev0 + 2);
+  const nt = (await mine(/^예약 결과: 화면 점검$/))[0];
+  check('알림에는 요약(120자 이하)과 함께 결과 전체(detail)가 들어 있음 — 누르면 전체를 보여 주려고', nt.body.length <= 120 && nt.detail.length > nt.body.length && nt.detail.includes('에코: /wait 화면 실행') && nt.detail.includes('ctx='));
+
+  // 결과가 아주 길 때: 알림에는 한도까지만, 전체는 일지에. 그 알림을 읽음으로 저장(화면이 하는 일)도 막히지 않아야 한다
+  check('긴 결과(25000자)를 지금 실행', (await call('POST', '/cccc0005/run')).status === 200 && await until(async () => (await mine(/^예약 결과: 긴 결과$/)).length === 1));
+  const big = (await mine(/^예약 결과: 긴 결과$/))[0], jtext = fs.readFileSync(path.join(dir, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8');
+  check('긴 결과: 알림 detail 은 2만 자까지+안내 문구, 요약은 120자 이하, 일지에는 전체(25000자)가 있음',
+    big.detail.length < 20_300 && big.detail.includes('전체는 일지 파일에 있어요') && big.body.length <= 120 && jtext.includes('가'.repeat(25000)));
+  const put = await fetch(`${BASE}/api/db/notices/${big.id}`, { method: 'PUT', headers: H, body: JSON.stringify({ ...big, read: true }) });
+  check('긴 알림을 읽음으로 저장해도 됨(화면이 보내는 크기 한도 안)', put.status === 200 && (await mine(/^예약 결과: 긴 결과$/))[0].read === true);
+
+  // 삭제
+  check('삭제: 그 예약만 사라지고 나머지는 순서 그대로, 같은 예약을 또 지우면 404', (await call('DELETE', '/cccc0004')).status === 200
+    && (await list()).map((e) => e.id).join() === 'cccc0001,cccc0002,cccc0003,,cccc0005' && (await call('DELETE', '/cccc0004')).status === 404);
+
+  // 파일이 깨졌을 때: 이유를 알리고 아무것도 덮어쓰지 않는다
+  writeSched('{ 깨짐');
+  const g = await call('GET', ''), d = await call('DELETE', '/cccc0001'), e2 = await call('POST', '/cccc0001/enable', { on: true });
+  check('schedule.json 이 깨져 있으면 목록·삭제·켬끔이 500 과 쉬운 이유를 돌려주고 파일은 그대로', g.status === 500 && (await g.json()).error.includes('schedule.json') && d.status === 500 && e2.status === 500 && fs.readFileSync(file, 'utf8') === '{ 깨짐');
+  writeSched([]);
+  ac.abort();
+}
+
+// 알림·예약 칸 계산 (public/m/inbox.js) + 🔔 단추·예약 칸이 들어 있는 메인 화면
+async function runInbox(ck) {
+  const box = { window: {} }; vm.createContext(box);
+  for (const f of ['cal', 'dash', 'inbox']) vm.runInContext(await (await fetch(`${BASE}/m/${f}.js`, { headers: { Cookie: ck } })).text(), box);
+  const { notices, when, full, scheduleText } = box.window.inbox, { stats } = box.window.dash;
+  const T = (h, m = 0, d = 7) => new Date(2026, 9, d, h, m), iso = (h, m, d) => T(h, m, d).toISOString();
+  const raw = [{ id: 'a', title: '오래된', at: iso(9, 0, 5), read: true }, { id: 'b', title: '최신', body: '요약', detail: '전체 글', level: '주의', at: iso(14, 3, 7) },
+    { id: 'c', title: '같은 시각 먼저', at: iso(10, 0, 6) }, { id: 'd', title: '같은 시각 나중', at: iso(10, 0, 6) },
+    null, 5, 'x', [], {}, { id: 7, title: 9, at: '엉터리', level: '긴급', read: 1 }];
+  const ns = notices(raw);
+  check('알림 목록: 객체만 남기고(null·숫자·글자·배열은 뺌), 새것부터·같은 시각이면 나중에 쌓인 것이 위·시각이 이상한 것은 맨 뒤',
+    ns.length === 6 && ns.map((n) => n.title).join() === '최신,같은 시각 나중,같은 시각 먼저,오래된,9,(제목 없음)');
+  check('알림 항목: 요약·결과 전체(detail)·단계(주의)를 그대로 싣고, 원래 항목(raw)을 함께 들고 있음', ns[0].body === '요약' && ns[0].detail === '전체 글' && ns[0].level === '주의' && ns[0].raw === raw[1] && ns[0].id === 'b');
+  check('알림 항목: 이상한 칸은 기본값(id 없음·단계 안내·시각 없음·읽음 여부는 참/거짓으로)', ns[4].id === '' && ns[4].level === '안내' && ns[4].at === '' && ns[4].read === true && ns[5].read === false && ns[5].detail === '');
+  check('🔔 숫자와 대시보드 카드 숫자는 같은 기준: 이상한 항목이 섞여도 안 읽은 알림 수가 같음', stats({ notices: raw }, T(9)).unread === ns.filter((n) => !n.read).length && ns.filter((n) => !n.read).length === 4);
+  check('알림 파일이 목록이 아니어도 멈추지 않음', notices('엉터리').length === 0 && notices(undefined).length === 0 && notices({ a: 1 }).length === 0);
+  check('시각 글자: 오늘이면 "14:03", 다른 날이면 "10/6 14:03", 자정 직후는 0 채움, 이상하면 빈 글자',
+    when(iso(14, 3, 7), T(20)) === '14:03' && when(iso(14, 3, 6), T(9)) === '10/6 14:03' && when(iso(0, 5, 7), T(23, 59)) === '00:05' && when('x', T(9)) === '' && when(undefined, T(9)) === '');
+  check('전체 시각 글자: "2026-10-07 14:03", 이상하면 빈 글자', full(iso(14, 3, 7)) === '2026-10-07 14:03' && full('x') === '');
+  check('언제 글자: 매일·매주·한 번·N분마다·N시간마다, 모르는 모양은 안 터지고 "모름"',
+    scheduleText({ 종류: 'daily', 시각: '08:30' }) === '매일 08:30' && scheduleText({ 종류: 'weekly', 요일: '월', 시각: '09:00' }) === '매주 월 09:00'
+    && scheduleText({ 종류: 'once', 날짜: '2026-10-08', 시각: '15:00' }) === '2026-10-08 15:00 한 번' && scheduleText({ 종류: 'every', 분: 30 }) === '30분마다'
+    && scheduleText({ 종류: 'every', 분: 120 }) === '2시간마다' && scheduleText({ 종류: 'every', 분: 90 }) === '90분마다' && [null, 'x', {}, { 종류: 'monthly' }, []].every((w) => scheduleText(w) === '(언제인지 모름)'));
+
+  const html = await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text();
+  check('메인 화면: 위쪽 🔔 단추(안 읽은 수 배지)·알림 목록·"모두 읽음"·결과 전체 창이 있고 inbox.js 를 불러옴',
+    ['src="/m/inbox.js"', 'id="bell"', 'id="bellN"', 'id="bellPanel"', 'id="noticeModal"', 'id="nmBody"', '모두 읽음', 'aria-expanded'].every((w) => html.includes(w)));
+  check('메인 화면: 채팅 왼쪽에 "예약" 칸(켬/끔 스위치·▶ 지금 실행·✕ 삭제·삭제 전 확인)과 기억 칸이 함께 있음',
+    ['id="sch"', 'id="schN"', 'type="checkbox"', 'data-run', 'data-del', '이 예약을 지울까요?', 'id="mem"'].every((w) => html.includes(w)));
+  check('메인 화면: 대시보드 "안 읽은 알림" 카드와 🔔 는 같은 자료(noticeRaw)를 쓰고(대시보드가 따로 받지 않음), 카드·메뉴의 #알림 을 누르면 같은 목록이 열림',
+    html.includes('notices: noticeRaw') && /DASH_DATA = \['events', 'projects', 'tasks'\]/.test(html) && html.includes(`closest('a[href="#알림"]')`) && html.includes('<a class="stat" href="#알림">'));
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다

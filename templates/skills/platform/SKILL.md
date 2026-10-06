@@ -54,7 +54,7 @@ description: 일정(events)·할 일(tasks)·프로젝트(projects) 같은 업�
 
 ### 알림 — `data/db/notices.json` (읽기만 한다. 아직 직접 고치지 않는다)
 
-`id`, `title`, `body`, `level`(`안내` · `주의`), `at`(만든 시각), `read`(읽었으면 `true`).
+`id`, `title`, `body`, `level`(`안내` · `주의`), `at`(만든 시각), `read`(읽었으면 `true`), `detail`(선택: 눌렀을 때 보이는 결과 전체. 예약 결과 알림에만 있다).
 
 ### WBS 공정표 — `data/wbs/<프로젝트 id>.json`
 
