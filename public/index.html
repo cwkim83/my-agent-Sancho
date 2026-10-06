@@ -266,8 +266,11 @@
   async function send() {
     const ta = $('input'), text = ta.value.trim();
     if (!text || busy) return;
+    if (!chatId) { // 첫 말이면 대화부터 만든다. 실패하면 쓴 글을 지우지 않고 알려 준다
+      try { chatId = (await (await api('/api/chats', { method: 'POST' })).json()).id; }
+      catch { alert('서버에 연결할 수 없습니다. 서버(start.bat)가 켜져 있는지 확인해 주세요.'); return; }
+    }
     ta.value = ''; ta.style.height = 'auto';
-    if (!chatId) chatId = (await (await api('/api/chats', { method: 'POST' })).json()).id;
     if ($('thread').querySelector('.empty')) $('thread').innerHTML = '';
     $('thread').insertAdjacentHTML('beforeend', bubble('user', esc(text)) + bubble('assistant', '<span class="typing">…</span>', 'md'));
     const out = $('thread').lastElementChild.firstElementChild;

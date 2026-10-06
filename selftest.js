@@ -24,6 +24,12 @@ async function run() {
   check('로그인 전 /api/me 는 401', (await fetch(BASE + '/api/me')).status === 401);
   check('로그인 전 / 는 로그인 화면', (await (await fetch(BASE + '/')).text()).includes('id="form"'));
   check('계정이 없을 때 status.hasUsers=false', (await (await fetch(BASE + '/api/auth/status')).json()).hasUsers === false);
+  // 다른 웹사이트가 내 브라우저를 거쳐 계정을 먼저 만들지 못해야 한다
+  const evil = (url, body) => fetch(BASE + url, { method: 'POST', headers: { 'Content-Type': 'text/plain', Origin: 'https://evil.example' }, body: JSON.stringify(body) });
+  check('다른 사이트에서 온 계정 만들기는 403', (await evil('/api/auth/setup', { name: '해커', username: 'evil', password: 'evil-password' })).status === 403
+    && (await (await fetch(BASE + '/api/auth/status')).json()).hasUsers === false);
+  check('다른 사이트에서 온 로그인 시도는 403(잠금 걸기도 못 함)', (await evil('/api/auth/login', { username: 'tester', password: 'x' })).status === 403);
+  check('이름에 줄바꿈 같은 특수 문자는 거절', (await post('/api/auth/setup', { name: '가\u0000나', username: 'abc', password: PW })).status === 400);
   check('짧은 비밀번호(7자)는 거절', (await post('/api/auth/setup', { name: '가', username: 'abc', password: '1234567' })).status === 400);
   const setup = await post('/api/auth/setup', { name: '테스트', username: 'Tester', password: PW });
   check('관리자 계정 만들기 성공', setup.status === 200);
@@ -41,6 +47,10 @@ async function run() {
   const ck = cookieOf(login);
   check('로그인 후 /api/me 가능', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 200);
   check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="who"'));
+  check('같은 사이트(Origin 이 우리 주소)에서 온 로그인은 정상', (await fetch(BASE + '/api/auth/login', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: BASE }, body: JSON.stringify({ username: 'tester', password: PW }) })).status === 200);
+  for (const u of ['/', '/index.html', '/Index.html', '/INDEX.HTML', '/index.html.', '/index.html%20'])
+    check(`로그인 없이 ${u} 로는 메인 화면이 안 열림`, !(await (await fetch(BASE + u)).text()).includes('id="who"'));
   // 대화 (진짜 claude 대신 test/fake-claude.js 로 두뇌 연결 방식을 검사)
   const H = { 'Content-Type': 'application/json', Cookie: ck };
   const ask = async (id, content) => { const r = await fetch(`${BASE}/api/chats/${id}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content }) }); return { r, sse: await r.text() }; };
@@ -70,6 +80,17 @@ async function run() {
   check('사용 한도면 쉬운 한국어로 안내', textOf(lim.sse).includes('사용 한도에 닿았습니다'));
   check('/md 확인용 장치는 없어짐', !textOf((await ask(chatB, '/md')).sse).includes('화면 확인용 예시'));
   check('없는 대화는 404', (await fetch(`${BASE}/api/chats/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`, { headers: H })).status === 404);
+  // 로그인 없이는 어떤 API 도 안 열려야 한다 (진짜 있는 대화 번호로도)
+  const guarded = [['GET', '/api/me'], ['GET', '/api/chats'], ['POST', '/api/chats'], ['GET', `/api/chats/${chatId}`],
+    ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete']];
+  for (const [m, u] of guarded)
+    check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
+  check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
+  // claude 가 결과 없이 죽어도 화면이 멈추지 않아야 한다
+  const crashId = (await (await fetch(BASE + '/api/chats', { method: 'POST', headers: H })).json()).id;
+  const crash = await ask(crashId, '/crash');
+  check('claude 가 중간에 죽으면 안내 문구와 함께 답이 끝남(done)', crash.sse.includes('event: done') && textOf(crash.sse).includes('⚠ Claude 가 오류로 끝났습니다') && textOf(crash.sse).includes('boom'));
+  check('죽은 뒤에도 같은 대화에 바로 다시 보낼 수 있음', (await ask(crashId, '다시')).r.status === 200);
   check('빈 메시지는 400', (await fetch(`${BASE}/api/chats/${chatId}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content: '  ' }) })).status === 400);
   // 성격 · 기억
   const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
@@ -120,10 +141,47 @@ async function run() {
   check('잠기면 맞는 비밀번호도 429', (await post('/api/auth/login', { username: 'tester', password: PW })).status === 429);
 }
 
-const srv = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-  env: { ...process.env, SANCHO_PORT: String(PORT), SANCHO_DATA: dir, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid' }, stdio: ['ignore', 'pipe', 'inherit'] });
-srv.stdout.once('data', async () => {
-  try { await run(); } catch (e) { check('점검 중 예외: ' + e.message, false); }
+// 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
+function startServer(port, dataDir, env) {
+  const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+    env: { ...env, SANCHO_PORT: String(port), SANCHO_DATA: dataDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+  s.log = '';
+  s.ready = new Promise((ok) => {
+    const add = (d) => { s.log += d; if (s.log.includes('실행 중')) ok(); };
+    s.stdout.on('data', add); s.stderr.on('data', add);
+  });
+  return s;
+}
+const filesUnder = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(path.join(d, e.name)) : [path.join(d, e.name)]));
+
+// claude 프로그램이 아예 없는 PC 를 흉내: PATH 를 빈 폴더로 바꾼 서버를 하나 더 켠다
+async function runNoClaude() {
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-'));
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-empty-'));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k) && k !== 'SANCHO_BRAIN_SCRIPT'));
+  const s2 = startServer(8792, dir2, { ...env, PATH: empty });
+  await s2.ready;
+  const B2 = 'http://127.0.0.1:8792';
+  const r = await fetch(B2 + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '둘', username: 'two', password: PW }) });
+  const H2 = { 'Content-Type': 'application/json', Cookie: cookieOf(r) };
+  const id = (await (await fetch(B2 + '/api/chats', { method: 'POST', headers: H2 })).json()).id;
+  const t0 = Date.now();
+  const sse = await (await fetch(`${B2}/api/chats/${id}/messages`, { method: 'POST', headers: H2, body: JSON.stringify({ content: '안녕' }), signal: AbortSignal.timeout(15000) })).text();
+  check('claude 가 없는 PC 에서는 바로 쉬운 안내와 함께 끝남(멈추지 않음)', sse.includes('claude 프로그램을 찾을 수 없습니다') && sse.includes('event: done') && Date.now() - t0 < 10000);
+  s2.kill();
+  fs.rmSync(dir2, { recursive: true, force: true }); fs.rmSync(empty, { recursive: true, force: true });
+}
+
+const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid' });
+srv.ready.then(async () => {
+  try {
+    await run();
+    await runNoClaude();
+    // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
+    check('서버 로그에 비밀번호 평문이 없음', !srv.log.includes(PW));
+    const leaked = filesUnder(dir).filter((f) => fs.readFileSync(f, 'utf8').includes(PW));
+    check('data/ 의 어떤 파일에도 비밀번호 평문이 없음', leaked.length === 0);
+  } catch (e) { check('점검 중 예외: ' + e.message, false); }
   srv.kill();
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(`\n${pass}개 통과, ${failed}개 실패`);

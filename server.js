@@ -104,10 +104,12 @@ function readBody(req) {
     req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString() || '{}')); } catch { reject(new Error('bad json')); } });
   });
 }
+// public/ 에 실제로 있는 파일 이름과 글자 하나까지(대소문자 포함) 똑같을 때만 내보낸다.
+// 윈도우는 대소문자를 안 가려서 /Index.html 로 로그인 화면을 건너뛸 수 있었다.
 function serveFile(res, urlPath) {
-  const rel = urlPath === '/' ? '/index.html' : urlPath;
-  const file = path.join(PUBLIC_DIR, path.normalize(rel));
-  if (!file.startsWith(PUBLIC_DIR + path.sep)) return send(res, 403, '접근할 수 없습니다.');
+  const name = urlPath.slice(1);
+  if (!fs.readdirSync(PUBLIC_DIR).includes(name)) return send(res, 404, '없는 페이지입니다.');
+  const file = path.join(PUBLIC_DIR, name);
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, '없는 페이지입니다.');
     res.writeHead(200, { 'Content-Type': (TYPES[path.extname(file)] || 'application/octet-stream') + '; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -146,7 +148,8 @@ const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
   // 이 PC 의 전역 설정(~/.claude/settings.json)이 다른 주소·토큰으로 연결을 바꿔 버리는 것을 막는다
   '--setting-sources', 'project,local',
-  '--allowedTools', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebFetch', // 명령 실행은 아직 안 준다
+  // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 아직 안 준다
+  '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch',
   '--disallowedTools', 'Bash', 'PowerShell', ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
   ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)),
   '--append-system-prompt-file', SYSTEM_FILE,
@@ -182,8 +185,7 @@ function streamReply(res, chat, content, user) {
   const today = new Date();
   const ctx = `주인 이름: ${user.name}. 오늘 날짜: ${today.toLocaleDateString('sv-SE')} (${today.toLocaleDateString('ko-KR', { weekday: 'long' })}).`;
   const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS, '--append-system-prompt', ctx];
-  const child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: brainEnv(), windowsHide: true });
-  let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null;
+  let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null, cap = null, child = null;
   let finished = false, aborted = false, timedOut = false;
 
   const emit = (text) => {
@@ -240,7 +242,9 @@ function streamReply(res, chat, content, user) {
     if (!res.destroyed) { res.write('event: done\ndata: {}\n\n'); res.end(); }
   }
 
-  const cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
+  // 실행 자체가 그 자리에서 실패해도 화면이 ■ 에 멈추지 않게 바로 마무리한다
+  try { child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return finish(); }
+  cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
   child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
   child.stderr.on('data', (d) => { if (errText.length < 2000) errText += d; });
   child.stdin.on('error', () => {});
@@ -255,6 +259,9 @@ async function handle(req, res) {
   // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다
   const okHosts = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
   if (!okHosts.includes(req.headers.host)) return send(res, 403, '허용되지 않은 주소입니다.');
+  // 다른 웹사이트가 내 브라우저를 거쳐 보내는 요청(계정 만들기·로그인·채팅)을 막는다. 브라우저는 이런 요청에 Origin 을 붙인다
+  const origin = req.headers.origin;
+  if (req.method !== 'GET' && origin && !okHosts.some((h) => origin === `http://${h}`)) return send(res, 403, { error: '다른 사이트에서 온 요청은 받지 않습니다.' });
 
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
@@ -271,7 +278,7 @@ async function handle(req, res) {
       const name = String(b.name || '').trim();
       const username = String(b.username || '').trim().toLowerCase();
       const password = String(b.password || '');
-      if (!name || name.length > 50) return send(res, 400, { error: '이름을 1~50자로 적어 주세요.' });
+      if (!name || name.length > 50 || /[\u0000-\u001f\u007f]/.test(name)) return send(res, 400, { error: '이름을 1~50자로 적어 주세요. (줄바꿈 같은 특수 문자는 안 됩니다)' });
       if (!/^[a-z0-9_.-]{3,32}$/.test(username)) return send(res, 400, { error: '아이디는 영문 소문자·숫자·_ . - 로 3~32자여야 합니다.' });
       if (password.length < 8) return send(res, 400, { error: '비밀번호는 8자 이상이어야 합니다.' });
       const u = { id: crypto.randomUUID(), name, username, role: 'admin', password: hashPassword(password), createdAt: new Date().toISOString() };
