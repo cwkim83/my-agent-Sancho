@@ -3,6 +3,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 
 const PORT = 8791;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -82,7 +83,8 @@ async function run() {
   check('없는 대화는 404', (await fetch(`${BASE}/api/chats/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`, { headers: H })).status === 404);
   // 로그인 없이는 어떤 API 도 안 열려야 한다 (진짜 있는 대화 번호로도)
   const guarded = [['GET', '/api/me'], ['GET', '/api/chats'], ['POST', '/api/chats'], ['GET', `/api/chats/${chatId}`],
-    ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete']];
+    ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete'],
+    ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -129,6 +131,7 @@ async function run() {
     require('http').get({ host: '127.0.0.1', port: PORT, path: '/', headers: { Host: 'evil.example' } }, (r) => { r.resume(); ok(r.statusCode === 403); });
   }));
   check('public 밖의 파일은 못 가져감', (await fetch(BASE + '/..%2Fserver.js')).status !== 200);
+  await runDb(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -139,6 +142,96 @@ async function run() {
   check('그 다음 시도는 429(잠금)', (await post('/api/auth/login', { username: 'lockme', password: 'nope' })).status === 429);
   for (let i = 0; i < 11; i++) await post('/api/auth/login', { username: 'tester', password: 'wrong' });
   check('잠기면 맞는 비밀번호도 429', (await post('/api/auth/login', { username: 'tester', password: PW })).status === 429);
+}
+
+// 업무 자료 저장소: data/db/<이름>.json 저장·수정·삭제·바뀜 알림, 화면용 도우미 public/m/db.js
+async function runDb(ck) {
+  const H = { 'Content-Type': 'application/json', Cookie: ck };
+  const api = (method, url, body) => fetch(BASE + url, { method, headers: H, body: body === undefined ? undefined : JSON.stringify(body) });
+  const getList = async (name) => (await api('GET', `/api/db/${name}`)).json();
+  const dbDir = path.join(dir, 'db');
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+  // 바뀜 알림 통로(/api/events)를 열어 두고, 오는 글을 heard 에 모은다
+  const ac = new AbortController();
+  const stream = await fetch(BASE + '/api/events', { headers: { Cookie: ck }, signal: ac.signal });
+  check('/api/events 는 SSE 로 열림', (stream.headers.get('content-type') || '').startsWith('text/event-stream'));
+  let heard = ''; const dec = new TextDecoder(); const rd = stream.body.getReader();
+  (async () => { for (;;) { const r = await rd.read().catch(() => ({ done: true })); if (r.done) return; heard += dec.decode(r.value); } })();
+  const changed = async (name) => { // "<이름> 이 바뀜" 알림이 올 때까지 최대 3초
+    const re = new RegExp(`^event: db\\ndata: \\{"name":"${name}"\\}$`, 'm');
+    for (let i = 0; i < 100 && !re.test(heard); i++) await sleep(30);
+    const ok = re.test(heard); heard = ''; return ok;
+  };
+  const quiet = async () => { await sleep(200); heard = ''; }; // 앞선 알림이 다 올 때까지 기다렸다가 비운다
+
+  check('처음에는 빈 목록([])', JSON.stringify(await getList('events')) === '[]');
+  const put1 = await api('PUT', '/api/db/events/e1', { title: '회의', date: '2026-10-07' });
+  check('저장(PUT): 새 항목이 id 와 함께 돌아옴', put1.status === 200 && (await put1.json()).id === 'e1');
+  check('저장하면 알림: events 가 바뀜', await changed('events'));
+  const file = JSON.parse(fs.readFileSync(path.join(dbDir, 'events.json'), 'utf8'));
+  check('data/db/events.json 에 [{id, …}] 배열로 저장됨', Array.isArray(file) && file.length === 1 && file[0].id === 'e1' && file[0].title === '회의');
+  await api('PUT', '/api/db/events/e1', { title: '회의(수정)', id: 'other' });
+  await api('PUT', '/api/db/events/e2', { title: '점검' });
+  const list = await getList('events');
+  check('수정(같은 id 로 PUT): 개수는 그대로, 내용은 통째로 바뀜, 본문의 다른 id 는 무시',
+    list.length === 2 && list[0].id === 'e1' && list[0].title === '회의(수정)' && !('date' in list[0]) && list[1].id === 'e2');
+  check('저장 뒤 임시 파일(.tmp)이 안 남음', !fs.readdirSync(dbDir).some((f) => f.endsWith('.tmp')));
+  await quiet();
+  check('삭제(DELETE)', (await api('DELETE', '/api/db/events/e1')).status === 200 && (await getList('events')).map((x) => x.id).join() === 'e2');
+  check('삭제하면 알림: events 가 바뀜', await changed('events'));
+  check('없는 항목을 지우면 404', (await api('DELETE', '/api/db/events/e1')).status === 404);
+  for (const u of ['/api/db/Events/a', '/api/db/..%2Fusers/a', '/api/db/events/a.b', '/api/db/events/a%2Fb'])
+    check(`이상한 이름·id 는 저장 거절: PUT ${u}`, (await api('PUT', u, { x: 1 })).status === 404);
+  check('내용이 객체가 아니면 400', (await api('PUT', '/api/db/events/e3', [1])).status === 400
+    && (await fetch(BASE + '/api/db/events/e3', { method: 'PUT', headers: H, body: '{깨짐' })).status === 400);
+  check('다른 사이트에서 온 저장 요청은 403', (await fetch(BASE + '/api/db/events/e3', { method: 'PUT', headers: { ...H, Origin: 'https://evil.example' }, body: '{}' })).status === 403
+    && (await getList('events')).length === 1);
+
+  // AI 가 파일을 직접 고쳐도 화면이 따라 바뀐다
+  await quiet();
+  fs.writeFileSync(path.join(dbDir, 'tasks.json'), JSON.stringify([{ id: 't1', title: 'AI 가 직접 적음' }]));
+  check('파일을 직접 고쳐도 알림: tasks 가 바뀜', await changed('tasks'));
+  check('직접 고친 내용이 목록에 보임', (await getList('tasks'))[0].title === 'AI 가 직접 적음');
+  await quiet();
+  fs.writeFileSync(path.join(dbDir, 'zz.json.tmp'), 'x'); await sleep(250);
+  check('임시 파일(.tmp)이 생겨도 알리지 않음', !heard.includes('event: db'));
+  ac.abort();
+
+  // 깨진 파일은 알려 주기만 하고 덮어쓰지 않는다
+  fs.writeFileSync(path.join(dbDir, 'broken.json'), '{ 깨진 파일');
+  check('깨진 파일은 500 으로 알리고, 저장해도 덮어쓰지 않음', (await api('GET', '/api/db/broken')).status === 500
+    && (await api('PUT', '/api/db/broken/a', {})).status === 500 && fs.readFileSync(path.join(dbDir, 'broken.json'), 'utf8') === '{ 깨진 파일');
+  fs.writeFileSync(path.join(dbDir, 'bom.json'), '﻿[{"id":"b"}]');
+  check('메모장이 붙이는 BOM 이 있어도 읽힘', (await getList('bom'))[0].id === 'b');
+
+  // 화면용 도우미 public/m/db.js (브라우저 대신 vm 에서 실행, EventSource 는 가짜로 대신해 서버 쪽 흉내)
+  check('/m/db.js 는 로그인해야 받을 수 있음', (await fetch(BASE + '/m/db.js')).status === 401);
+  const jsRes = await fetch(BASE + '/m/db.js', { headers: H });
+  check('로그인하면 /m/db.js 가 자바스크립트로 내려옴', jsRes.status === 200 && (jsRes.headers.get('content-type') || '').startsWith('text/javascript'));
+  check('폴더 주소(/m/)나 대문자(/M/db.js)로는 안 열림', (await fetch(BASE + '/m/', { headers: H })).status === 404 && (await fetch(BASE + '/M/db.js', { headers: H })).status === 404);
+  const esList = [];
+  class FakeES { constructor(u) { this.u = u; this.h = {}; esList.push(this); } addEventListener(t, f) { this.h[t] = f; } }
+  const box = { window: {}, EventSource: FakeES, fetch: (u, o = {}) => fetch(BASE + u, { ...o, headers: { ...o.headers, Cookie: ck } }) };
+  vm.runInNewContext(await jsRes.text(), box);
+  const d = box.window.db;
+  await d.save('notices', 'n1', { text: '안녕' });
+  check('db.js: save 한 것이 list 에 보임', (await d.list('notices'))[0].text === '안녕');
+  await d.save('notices', 'n1', { text: '바뀜' });
+  const nl = await d.list('notices');
+  check('db.js: 같은 id 로 save 하면 수정', nl.length === 1 && nl[0].text === '바뀜');
+  await d.remove('notices', 'n1');
+  check('db.js: remove 하면 목록에서 사라짐', (await d.list('notices')).length === 0);
+  check('db.js: 서버가 거절하면 그 이유 문구로 오류를 던짐', await d.remove('notices', 'n1').then(() => false, (e) => e.message === '없는 항목입니다.'));
+  const got = [];
+  const stop = d.watch('events', () => got.push('e')); d.watch('tasks', () => got.push('t'));
+  const es = esList[0];
+  es.h.db({ data: '{"name":"events"}' });
+  check('db.js: watch 는 /api/events 연결 하나를 나눠 쓰고, 이름이 같은 함수만 부름', esList.length === 1 && es.u === '/api/events' && got.join() === 'e');
+  es.onopen(); es.onopen();
+  check('db.js: 맨 처음 연결은 넘기고, 끊겼다 다시 이어지면 모두에게 알림', got.join() === 'e,e,t');
+  stop(); es.h.db({ data: '{"name":"events"}' });
+  check('db.js: watch 가 돌려준 함수로 끄면 더 안 불림', got.join() === 'e,e,t');
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다

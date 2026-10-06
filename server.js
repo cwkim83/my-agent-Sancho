@@ -97,19 +97,21 @@ function send(res, status, body, headers = {}) {
   });
   res.end(isObj ? JSON.stringify(body) : body);
 }
-function readBody(req) {
+function readBody(req, max = 10_000) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', (c) => { size += c.length; if (size > 10_000) { reject(new Error('too big')); req.destroy(); } else chunks.push(c); });
+    req.on('data', (c) => { size += c.length; if (size > max) { reject(new Error('too big')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString() || '{}')); } catch { reject(new Error('bad json')); } });
   });
 }
-// public/ 에 실제로 있는 파일 이름과 글자 하나까지(대소문자 포함) 똑같을 때만 내보낸다.
+// public/ (그 아래 폴더 포함)에 실제로 있는 파일 이름과 글자 하나까지(대소문자 포함) 똑같을 때만 내보낸다.
 // 윈도우는 대소문자를 안 가려서 /Index.html 로 로그인 화면을 건너뛸 수 있었다.
 function serveFile(res, urlPath) {
-  const name = urlPath.slice(1);
-  if (!fs.readdirSync(PUBLIC_DIR).includes(name)) return send(res, 404, '없는 페이지입니다.');
-  const file = path.join(PUBLIC_DIR, name);
+  let file = PUBLIC_DIR;
+  for (const seg of urlPath.slice(1).split('/')) { // 폴더를 한 칸씩 내려가며 이름이 정확히 있는지 본다
+    if (!fs.statSync(file).isDirectory() || !fs.readdirSync(file).includes(seg)) return send(res, 404, '없는 페이지입니다.');
+    file = path.join(file, seg);
+  }
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, '없는 페이지입니다.');
     res.writeHead(200, { 'Content-Type': (TYPES[path.extname(file)] || 'application/octet-stream') + '; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -134,6 +136,29 @@ function listChats(userId) {
     .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
+
+// ---------- 업무 자료 저장소 (data/db/<이름>.json 한 파일 = 한 묶음, 안에는 [{id, ...}, ...] 배열) ----------
+const DB_DIR = path.join(DATA_DIR, 'db');
+fs.mkdirSync(DB_DIR, { recursive: true });
+const dbFile = (name) => path.join(DB_DIR, `${name}.json`);
+function loadCollection(name) { // 파일이 없으면 빈 목록, 깨져 있으면 예외 (모르고 덮어써서 자료를 잃지 않게)
+  let raw;
+  try { raw = fs.readFileSync(dbFile(name), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+  const v = JSON.parse(raw.replace(/^﻿/, '')); // 메모장이 붙이는 BOM 은 무시
+  if (!Array.isArray(v)) throw new Error('not an array');
+  return v;
+}
+// 파일이 바뀌면(우리가 썼든 AI 가 직접 고쳤든) 열려 있는 화면(/api/events)에 "<이름> 이 바뀜"을 알린다
+const streams = new Set();
+const pending = new Map(); // 한 번 쓸 때 이벤트가 여러 번 오므로 50ms 안의 것은 하나로 합친다
+fs.watch(DB_DIR, (_, file) => {
+  const m = /^([a-z][a-z0-9_-]*)\.json$/.exec(file || ''); // 쓰는 중인 임시 파일(.tmp)은 무시
+  if (!m || pending.has(m[1])) return;
+  pending.set(m[1], setTimeout(() => {
+    pending.delete(m[1]);
+    for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name: m[1] })}\n\n`);
+  }, 50));
+}).on('error', (e) => console.error('data/db 감시 실패:', e.message));
 
 function readMemory() { try { return fs.readFileSync(MEMORY_FILE, 'utf8').split(/\r?\n/); } catch { return []; } }
 
@@ -303,6 +328,36 @@ async function handle(req, res) {
     if (!user) return send(res, 401, { error: '로그인이 필요합니다.' });
     if (p === '/api/me' && req.method === 'GET') return send(res, 200, { name: user.name, username: user.username });
 
+    if (p === '/api/events' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      res.write(': 연결됨\n\n');
+      streams.add(res); res.on('close', () => streams.delete(res));
+      return;
+    }
+    const dm = p.match(/^\/api\/db\/([a-z][a-z0-9_-]{0,39})(?:\/([A-Za-z0-9_-]{1,64}))?$/);
+    if (dm) {
+      const [, name, id] = dm;
+      let items; try { items = loadCollection(name); } catch { return send(res, 500, { error: `data/db/${name}.json 이 올바른 목록(JSON 배열)이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
+      const at = () => items.findIndex((x) => x && String(x.id) === id);
+      if (!id && req.method === 'GET') return send(res, 200, items);
+      if (id && req.method === 'PUT') { // 같은 id 가 있으면 통째로 바꾸고, 없으면 추가
+        let b; try { b = await readBody(req, 200_000); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+        if (!b || typeof b !== 'object' || Array.isArray(b)) return send(res, 400, { error: '저장할 내용은 JSON 객체여야 합니다.' });
+        const item = { id, ...b }; item.id = id; // 주소의 id 가 항상 이긴다
+        const i = at();
+        if (i < 0) items.push(item); else items[i] = item;
+        writeJson(dbFile(name), items);
+        return send(res, 200, item);
+      }
+      if (id && req.method === 'DELETE') {
+        const i = at();
+        if (i < 0) return send(res, 404, { error: '없는 항목입니다.' });
+        items.splice(i, 1);
+        writeJson(dbFile(name), items);
+        return send(res, 200, { ok: true });
+      }
+    }
+
     if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory().map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });
     if (p === '/api/memory/delete' && req.method === 'POST') {
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
@@ -337,6 +392,7 @@ async function handle(req, res) {
 
   if (req.method !== 'GET') return send(res, 405, '허용되지 않는 요청입니다.');
   if (p === '/' || PROTECTED_PAGES.has(p)) return serveFile(res, user ? '/index.html' : '/login.html');
+  if (p.startsWith('/m/') && !user) return send(res, 401, '로그인이 필요합니다.'); // 업무 화면(public/m/)은 로그인한 사람만
   return serveFile(res, p);
 }
 
