@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const zlib = require('zlib');
 
 const PORT = 8791;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -91,7 +92,7 @@ async function run() {
     ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
     ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share'],
     ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['POST', '/api/schedule/x/phone'], ['DELETE', '/api/schedule/x'],
-    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions'], ['GET', '/api/mail/status'], ['POST', '/api/mail/organize'], ['POST', '/api/mail/draft']];
+    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions'], ['GET', '/api/mail/status'], ['POST', '/api/mail/organize'], ['POST', '/api/mail/draft'], ['POST', '/api/uploads'], ['GET', '/api/files/uploads/x'], ['POST', '/api/files/open']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -164,6 +165,7 @@ async function run() {
   await runInbox(ck);
   await runPerms(ck);
   await runMail(ck);
+  await runFiles(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -1526,6 +1528,160 @@ async function runMail(ck) {
   check('메인 화면: 왼쪽 메뉴에 "메일정리"가 있고 /m/mail.html 을 띄움, 로그인 없이는 화면(/m/mail.html)이 401', idx.includes("'메일', '메일정리', '메신저'") && idx.includes('/m/mail.html') && (await fetch(BASE + '/m/mail.html')).status === 401);
 }
 
+// 최소 zip 파일 만들기 (점검용): 이름→글자. 진짜 워드·엑셀 파일처럼 파일 목록(중앙 디렉터리)이 있다. deflate 면 압축해서 넣는다
+function zipOf(entries, deflate = false) {
+  const parts = [], central = []; let off = 0;
+  for (const [name, content] of Object.entries(entries)) {
+    const nb = Buffer.from(name), raw = Buffer.isBuffer(content) ? content : Buffer.from(content), data = deflate ? zlib.deflateRawSync(raw) : raw, crc = zlib.crc32(raw), method = deflate ? 8 : 0;
+    const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(method, 8); lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(nb.length, 26);
+    parts.push(lh, nb, data);
+    const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(method, 10); ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(nb.length, 28); ch.writeUInt32LE(off, 42);
+    central.push(ch, nb); off += 30 + nb.length + data.length;
+  }
+  const cd = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(central.length / 2, 8); end.writeUInt16LE(central.length / 2, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
+  return Buffer.concat([...parts, cd, end]);
+}
+
+// 파일 첨부(＋·끌어다 놓기·붙여넣기) · 비서가 만든 문서(파일함)와 파일 카드 · 보기(미리보기)·열기·받기 · office-docs 스킬 · 화면
+// (진짜 워드·엑셀을 띄우지 않는다: "열기"는 가짜 프로그램이 경로만 기록하고, 문서는 점검 안에서 만든 최소 zip 으로 흉내 낸다)
+async function runFiles(ck) {
+  const HC = { Cookie: ck }, H = { 'Content-Type': 'application/json', ...HC };
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const up = (name, body, extra) => fetch(`${BASE}/api/uploads?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...HC, ...extra }, body });
+  const get = (u, extra) => fetch(BASE + u, { headers: { ...HC, ...extra } });
+  const newChat = async () => (await (await fetch(BASE + '/api/chats', { method: 'POST', headers: H })).json()).id;
+  const say = async (id, content, attachments) => { const r = await fetch(`${BASE}/api/chats/${id}/messages`, { method: 'POST', headers: H, body: JSON.stringify(attachments === undefined ? { content } : { content, attachments }) }); const sse = await r.text(); return { r, sse, text: [...sse.matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join('') }; };
+  const filesOf = (sse) => { const m = /event: files\ndata: (.*)\n\n/.exec(sse); return m ? JSON.parse(m[1]) : null; };
+  const U = path.join(dir, 'uploads'), B = path.join(dir, '파일함'), enc = encodeURIComponent;
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+  // 로그인·다른 사이트
+  check('첨부 올리기·파일 가져오기·열기는 로그인 없이 401', (await fetch(`${BASE}/api/uploads?name=a.txt`, { method: 'POST', body: 'x' })).status === 401 && (await fetch(BASE + '/api/files/uploads/x')).status === 401
+    && (await fetch(BASE + '/api/files/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status === 401);
+  check('폴더 자리(data/uploads·data/파일함)가 서버를 켜면 만들어져 있음', fs.statSync(U).isDirectory() && fs.statSync(B).isDirectory());
+  const before = fs.readdirSync(U).length;
+  check('다른 사이트에서 온 올리기·열기 요청은 403 이고 아무것도 저장되지 않음', (await up('a.txt', 'x', { Origin: 'https://evil.example' })).status === 403 && fs.readdirSync(U).length === before
+    && (await fetch(BASE + '/api/files/open', { method: 'POST', headers: { ...H, Origin: 'https://evil.example' }, body: '{}' })).status === 403);
+
+  // 올리기: 저장 이름·이름 정리·막는 형식·크기 한도
+  const r1 = await up('캡처 화면.png', PNG), j1 = await r1.json();
+  check('이미지를 올리면 data/uploads/ 에 "날짜-시각-무작위_원래이름" 으로 그대로 저장되고 { file, name, size, type } 이 옴',
+    r1.status === 200 && /^\d{8}-\d{6}-[0-9a-f]{4}_캡처 화면\.png$/.test(j1.file) && j1.name === '캡처 화면.png' && j1.size === PNG.length && j1.type === 'image/png' && fs.readFileSync(path.join(U, j1.file)).equals(PNG));
+  const jt = await (await up('../../evil/..\\x.txt', 'hi')).json(), jd = await (await up('a<b>:c?*.txt', 'x')).json(), jn = await (await up('...', 'x')).json(), jl = await (await up('가'.repeat(300) + '.csv', 'x')).json();
+  check('이름에 폴더 부분(../../·\\)·이상한 글자·점만 있는 이름·너무 긴 이름이 있어도 data/uploads/ 안에 안전한 이름으로만 저장됨',
+    jt.name === 'x.txt' && fs.existsSync(path.join(U, jt.file)) && !fs.existsSync(path.join(dir, 'evil')) && jd.name === 'a_b__c__.txt' && jn.name === '파일' && jl.name.length <= 100 && jl.name.endsWith('.csv'));
+  const n0 = fs.readdirSync(U).length;
+  const blocked = await Promise.all(['악성.exe', 'run.BAT', 'x.ps1', 'a.vbs', 'b.msi', 'c.lnk'].map((n) => up(n, 'MZ')));
+  check('실행 파일 같은 형식(.exe .bat .ps1 .vbs .msi .lnk)은 400 으로 막고 저장하지 않음', blocked.every((r) => r.status === 400) && (await blocked[0].json()).error.includes('실행 파일') && fs.readdirSync(U).length === n0);
+  check('빈 파일은 400, 크기 한도(점검 서버는 1MB)를 넘으면 413 이고 저장되지 않음. 한도 안(정확히 1MB)은 저장됨',
+    (await up('empty.txt', '')).status === 400 && (await up('big.bin', Buffer.alloc(1024 * 1024 + 1))).status === 413 && fs.readdirSync(U).length === n0 && (await up('edge.bin', Buffer.alloc(1024 * 1024))).status === 200);
+
+  // 가져오기: 그 자리 보기는 안전한 형식만, 나머지는 내려받기
+  const g1 = await get(`/api/files/uploads/${enc(j1.file)}`), g1b = Buffer.from(await g1.arrayBuffer());
+  check('이미지는 그 자리에서 보임(inline·image/png·nosniff)', g1.status === 200 && g1.headers.get('content-type') === 'image/png' && g1.headers.get('x-content-type-options') === 'nosniff' && /^inline/.test(g1.headers.get('content-disposition')) && g1b.equals(PNG));
+  const g1d = await get(`/api/files/uploads/${enc(j1.file)}?dl=1`);
+  check('?dl=1 이면 내려받기(attachment)이고 파일 이름은 날짜 접두어를 뗀 원래 이름(한글 UTF-8 인코딩)', /^attachment/.test(g1d.headers.get('content-disposition')) && g1d.headers.get('content-disposition').includes(`filename*=UTF-8''${enc('캡처 화면.png')}`) && !g1d.headers.get('content-disposition').includes(j1.file.slice(0, 8) + '-'));
+  const ht = await (await up('page.html', '<script>alert(1)</script>')).json(), sv = await (await up('x.svg', '<svg onload=alert(1)/>')).json(), cs = await (await up('t.csv', 'a,b')).json();
+  const gh = await get(`/api/files/uploads/${enc(ht.file)}`), gs = await get(`/api/files/uploads/${enc(sv.file)}`), gc = await get(`/api/files/uploads/${enc(cs.file)}`);
+  check('html·svg(우리 사이트 권한으로 돌 수 있는 것)와 csv·문서는 늘 내려받기(attachment)로만, 종류 추측 금지(nosniff)',
+    [gh, gs, gc].every((g) => /^attachment/.test(g.headers.get('content-disposition')) && g.headers.get('x-content-type-options') === 'nosniff') && gh.headers.get('content-type') === 'application/octet-stream' && gc.headers.get('content-type') === 'text/csv');
+  fs.writeFileSync(path.join(U, '.숨김'), 'x'); fs.mkdirSync(path.join(U, 'dir1'), { recursive: true });
+  const bad404 = ['nonexistent', '..%2Fusers.json', '%2e%2e%2f%2e%2e%2fusers.json', '.%EC%88%A8%EA%B9%80', 'dir1'];
+  const st404 = await Promise.all([...bad404.map((n) => get(`/api/files/uploads/${n}`)), get('/api/files/nobox/x'), get('/api/files/constructor/x'), get('/api/files/파일함/..%2Fusers.json'), get('/api/files/uploads/..%5Cusers.json')]);
+  check('없는 파일·폴더 밖으로 나가는 이름(../ ..\\ %2e)·숨김 파일·폴더·모르는 보관함은 모두 404, 이상한 % 글자는 400',
+    st404.every((r) => r.status === 404) && (await get('/api/files/uploads/%E0%A4%A')).status === 400);
+
+  // 말에 첨부 붙이기: 비서에게는 경로가, 대화에는 구조가 저장됨
+  const cid = await newChat(), m1 = await say(cid, '이 파일 읽어', [j1.file]);
+  check('첨부를 붙여 보내면 비서에게 간 글에 "이 파일을 읽어" 안내와 경로(uploads/<저장 이름>)·원래 이름·office-docs 스킬 안내가 붙음',
+    m1.r.status === 200 && ['이 파일 읽어', '[첨부한 파일]', 'Read', `uploads/${j1.file}`, '원래 이름: 캡처 화면.png', 'office-docs'].every((w) => m1.text.includes(w)));
+  const chat1 = await (await get(`/api/chats/${cid}`)).json();
+  check('대화에는 사용자가 쓴 글만 저장되고 첨부는 { file, name, size, type } 로 따로 저장됨(말풍선에 미리보기를 다시 그릴 수 있게). 제목은 쓴 글',
+    chat1.messages[0].content === '이 파일 읽어' && same(chat1.messages[0].attachments, [{ file: j1.file, name: '캡처 화면.png', size: PNG.length, type: 'image/png' }]) && chat1.title === '이 파일 읽어' && !('attachments' in chat1.messages[1]));
+  const cid2 = await newChat(), m2 = await say(cid2, '', [j1.file, j1.file]), chat2 = await (await get(`/api/chats/${cid2}`)).json();
+  check('글 없이 첨부만 보내면 "첨부한 파일을 읽어 줘." 로 보내고, 같은 파일을 두 번 넣어도 한 번만 붙음', chat2.messages[0].content === '첨부한 파일을 읽어 줘.' && chat2.messages[0].attachments.length === 1 && m2.text.split(`uploads/${j1.file}`).length === 2);
+  const cid3 = await newChat();
+  const bads = await Promise.all([['x'.repeat(3)], ['nonexistent.png'], ['../users.json'], 'x', Array.from({ length: 11 }, () => j1.file), [5]].map((a) => say(cid3, '읽어', a)));
+  check('없는 첨부·폴더 밖 이름·배열이 아닌 값·11개 이상은 400 이고 대화에 아무것도 남지 않으며, 바로 이어서 보낼 수 있음',
+    bads.every((b) => b.r.status === 400) && bads[1].sse.includes('첨부한 파일을 찾지 못했어요') && (await (await get(`/api/chats/${cid3}`)).json()).messages.length === 0 && (await say(cid3, '이제 보내', [j1.file])).r.status === 200);
+  check('글도 첨부도 없으면 400(빈 첨부 목록 포함)', (await say(await newChat(), '  ', [])).r.status === 400);
+
+  // 비서가 만든 문서: 파일함의 새 파일만 카드로
+  const cd = await newChat(), d1 = await say(cd, '/make-doc 열교환기_보고.docx'), f1 = filesOf(d1.sse);
+  check('비서가 파일함에 문서를 만들면 응답 끝(done 앞)에 "event: files" 로 파일 카드 정보가 오고, 임시(~$)·숨김(.)·.tmp 파일은 빠짐',
+    f1 && f1.length === 1 && same(f1[0], { box: '파일함', file: '열교환기_보고.docx', name: '열교환기_보고.docx', size: Buffer.byteLength('DOC:열교환기_보고.docx'), ext: 'docx' }) && d1.sse.indexOf('event: files') < d1.sse.indexOf('event: done'));
+  const chatD = await (await get(`/api/chats/${cd}`)).json();
+  check('카드 정보는 대화에도 저장돼서 나중에 대화를 다시 열어도 카드가 보임(비서의 말에 files)', same(chatD.messages[1].files, f1) && !('files' in chatD.messages[0]));
+  const d2 = await say(cd, '/make-doc 두번째.xlsx');
+  check('이미 있던 파일은 다시 카드로 안 나오고 이번에 새로 생긴 파일만 나옴', same(filesOf(d2.sse).map((f) => f.name), ['두번째.xlsx']));
+  await sleep(40);
+  const d3 = await say(cd, '/make-doc 두번째.xlsx');
+  check('같은 이름으로 다시 만들어 바뀐 파일도 카드로 나옴(덮어쓴 것을 알 수 있게)', same(filesOf(d3.sse).map((f) => f.name), ['두번째.xlsx']));
+  check('문서를 안 만든 대화에는 파일 카드 정보가 없음', filesOf((await say(cd, '그냥 인사')).sse) === null);
+
+  // 파일 보기(미리보기): 서버가 글·표로 풀어 줌
+  const view = async (box, name) => (await get(`/api/files/${enc(box)}/${enc(name)}?view=1`)).json();
+  const DOCX = zipOf({ 'word/document.xml': '<w:document><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>지연 작업 보고</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">기준일: </w:t></w:r><w:r><w:t>2026-10-07 &amp; 확인</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>코드</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>작업명</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>3.2</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>튜브 &lt;확관&gt;</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>끝</w:t></w:r></w:p><w:p></w:p></w:body></w:document>' });
+  const XLSX = zipOf({
+    'xl/workbook.xml': '<workbook><sheets><sheet name="공정표" sheetId="1" r:id="rId1"/><sheet name="요약" sheetId="2" r:id="rId2"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Type="x" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="x" Target="/xl/worksheets/sheet2.xml"/></Relationships>',
+    'xl/sharedStrings.xml': '<sst><si><t>코드</t></si><si><r><t>작업</t></r><r><t xml:space="preserve">명</t></r></si></sst>',
+    'xl/worksheets/sheet1.xml': '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="inlineStr"><is><t>진도</t></is></c></row><row r="2"><c r="A2"><v>3.2</v></c><c r="C2"><v>70</v></c><c r="D2" t="b"><v>1</v></c></row><row r="3"><c r="A3"><f>SUM(C2:C2)</f></c><c r="B3" s="1"/></row></sheetData></worksheet>',
+    'xl/worksheets/sheet2.xml': '<worksheet><sheetData><row r="1"><c r="AA1" t="str"><v>멀리</v></c></row></sheetData></worksheet>' }, true); // 압축(deflate)해서 넣어 진짜 파일처럼
+  const PPTX = zipOf({ 'ppt/slides/slide10.xml': '<p:sld><a:p><a:r><a:t>열 번째</a:t></a:r></a:p></p:sld>', 'ppt/slides/slide2.xml': '<p:sld><a:p><a:r><a:t>둘째 제목</a:t></a:r></a:p><a:p><a:r><a:t>항목 &amp; 하나</a:t></a:r></a:p></p:sld>', 'ppt/slides/slide1.xml': '<p:sld><a:p><a:r><a:t>첫째</a:t></a:r></a:p></p:sld>' });
+  fs.writeFileSync(path.join(B, '보고.docx'), DOCX); fs.writeFileSync(path.join(B, '표.xlsx'), XLSX); fs.writeFileSync(path.join(B, '발표.pptx'), PPTX);
+  fs.writeFileSync(path.join(B, '공정표.csv'), '﻿코드,작업명,메모\r\n="1.1","튜브, 삽입","큰 ""따옴표"" 줄\r\n바꿈"\r\n3,끝,\r\n');
+  fs.writeFileSync(path.join(B, '옛엑셀.csv'), Buffer.from([0xb0, 0xa1, 0x2c, 0x62, 0x0a])); // 한국어 EUC-KR 로 저장된 "가,b"
+  fs.writeFileSync(path.join(B, '메모.txt'), '﻿' + '가'.repeat(210_000)); fs.writeFileSync(path.join(B, '깨짐.docx'), 'zip 이 아닌 글자'); fs.writeFileSync(path.join(B, '이상.bin'), 'x');
+  fs.writeFileSync(path.join(B, '폭탄.docx'), zipOf({ 'word/document.xml': Buffer.alloc(25 * 1024 * 1024) }, true)); fs.writeFileSync(path.join(B, '문서.pdf'), '%PDF-1.4');
+  const vd = await view('파일함', '보고.docx');
+  check('보기(워드): 제목 줄·문단(&amp; 풀기)·표(행/칸)·빈 문단 건너뜀을 순서대로 뽑음', same(vd, { kind: 'doc', blocks: [{ t: 'h', level: 2, text: '지연 작업 보고' }, { t: 'p', text: '기준일: 2026-10-07 & 확인' }, { t: 'table', rows: [['코드', '작업명'], ['3.2', '튜브 <확관>']] }, { t: 'h', level: 1, text: '끝' }] }));
+  const vx = await view('파일함', '표.xlsx');
+  check('보기(엑셀, 압축된 xlsx): 시트 이름·공유 문자열(여러 조각 이어 붙임)·직접 쓴 글·숫자·참/거짓·수식 글자·AA 같은 먼 칸까지 표로',
+    vx.kind === 'sheet' && same(vx.sheets[0], { name: '공정표', rows: [['코드', '작업명', '진도', ''], ['3.2', '', '70', 'TRUE'], ['=SUM(C2:C2)', '', '', '']], more: false }) && vx.sheets[1].name === '요약' && vx.sheets[1].rows[0][26] === '멀리' && vx.sheets[1].rows[0].length === 27);
+  const vp = await view('파일함', '발표.pptx');
+  check('보기(PPT): 슬라이드를 번호 순(2 다음 10)으로, 문단마다 글을 뽑음', same(vp, { kind: 'slides', slides: [{ n: 1, texts: ['첫째'] }, { n: 2, texts: ['둘째 제목', '항목 & 하나'] }, { n: 3, texts: ['열 번째'] }] }));
+  const vc = await view('파일함', '공정표.csv');
+  check('보기(CSV): 맨 앞 BOM 무시·큰따옴표 안의 쉼표와 줄바꿈·"" 처리·엑셀용 ="1.1" 은 1.1 로', same(vc.sheets[0].rows, [['코드', '작업명', '메모'], ['1.1', '튜브, 삽입', '큰 "따옴표" 줄\r\n바꿈'], ['3', '끝', '']]));
+  const ve = await view('파일함', '옛엑셀.csv'), vt = await view('파일함', '메모.txt');
+  check('보기: UTF-8 이 아닌 옛 한국어 CSV(EUC-KR)도 읽고, 긴 텍스트는 앞부분(20만 자)만 + "더 있음" 표시', same(ve.sheets[0].rows, [['가', 'b']]) && vt.kind === 'text' && vt.text.length === 200_000 && vt.more === true && !vt.text.startsWith('﻿'));
+  const vi = await view('uploads', j1.file), vpd = await view('파일함', '문서.pdf');
+  check('보기: 이미지·PDF 는 종류와 파일 주소만(화면이 그 주소로 직접 보여 줌)', vi.kind === 'image' && vi.url === `/api/files/uploads/${enc(j1.file)}` && vpd.kind === 'pdf' && vpd.url === `/api/files/${enc('파일함')}/${enc('문서.pdf')}`);
+  const bad = await Promise.all([view('파일함', '깨짐.docx'), view('파일함', '폭탄.docx'), view('파일함', '이상.bin')]);
+  check('보기: 깨진 문서·압축을 풀면 폭발하는 문서(zip 폭탄)·모르는 형식은 멈추지 않고 "미리보기 없음" + 쉬운 이유', bad.every((v) => v.kind === 'none' && v.error.includes('미리보기') || v.error.includes('받기')) && bad.every((v) => v.kind === 'none'));
+  const dl = await get(`/api/files/${enc('파일함')}/${enc('보고.docx')}`), dlb = Buffer.from(await dl.arrayBuffer());
+  check('받기: 워드 문서는 그냥 눌러도 내려받기(attachment)로, 올바른 종류(docx)와 같은 내용·한글 이름', /^attachment/.test(dl.headers.get('content-disposition')) && dl.headers.get('content-type').includes('wordprocessingml') && dlb.equals(DOCX) && dl.headers.get('content-disposition').includes(`filename*=UTF-8''${enc('보고.docx')}`));
+
+  // 열기: 진짜 프로그램 대신 가짜가 경로만 기록
+  const olog = path.join(dir, 'open.log'), open = (b, extra) => fetch(BASE + '/api/files/open', { method: 'POST', headers: { ...H, ...extra }, body: JSON.stringify(b) });
+  const o1 = await open({ box: '파일함', name: '보고.docx' });
+  let logged = ''; for (let i = 0; i < 50 && !logged.includes('보고.docx'); i++) { await sleep(100); try { logged = fs.readFileSync(olog, 'utf8'); } catch { /* 아직 */ } }
+  check('열기: 파일함의 문서는 이 PC 프로그램에 그 전체 경로로 맡김(200)', o1.status === 200 && logged.includes(path.join(B, '보고.docx')));
+  const oo = await Promise.all([open({ box: '파일함', name: '이상.bin' }), open({ box: '파일함', name: '없음.docx' }), open({ box: '파일함', name: '../users.json' }), open({ box: 'uploads', name: '../users.json' }), open({}), open({ box: 'nobox', name: 'a' })]);
+  check('열기: 문서·그림이 아닌 형식은 400, 없는 파일·폴더 밖 이름·빈 요청·모르는 보관함은 404 (아무것도 열리지 않음)', oo[0].status === 400 && oo.slice(1).every((r) => r.status === 404) && !fs.readFileSync(olog, 'utf8').includes('이상.bin') && !fs.readFileSync(olog, 'utf8').includes('users.json'));
+  const o2 = await open({ box: 'uploads', name: j1.file });
+  check('열기: 올린 이미지(uploads)도 열 수 있음', o2.status === 200);
+
+  // officeview.js 단독 (zip 읽기 오류·CSV 모서리)
+  const ov = require('./officeview.js');
+  check('officeview: zip 이 아니면 쉬운 오류, 큰따옴표가 안 닫힌 CSV·빈 CSV 도 멈추지 않음', (() => { try { ov.unzip(Buffer.from('zip 아님'), () => true); return false; } catch (e) { return e.message.includes('zip'); } })()
+    && same(ov.csvParse('a,"b').rows, [['a', 'b']]) && same(ov.csvParse('').rows, []) && same(ov.csvParse('x\r\ny').rows, [['x'], ['y']]));
+
+  // office-docs 스킬 · 비서 지침 · 화면
+  const sk = fs.readFileSync(path.join(dir, '.claude', 'skills', 'office-docs', 'SKILL.md'), 'utf8'), sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('office-docs 스킬이 data/.claude/skills/office-docs/SKILL.md 로 복사됨: python 으로 실행(python3 는 멈춤)·openpyxl·python-docx·python-pptx 는 없음·마음대로 설치 금지(설치 방법만)·파일함/ 저장·덮어쓰지 않음·명령 실행 권한·utf-8-sig·한글 글꼴',
+    /^---\r?\nname: office-docs\r?\n/.test(sk) && ['python3', '멈추', 'openpyxl', 'python-docx', 'python-pptx', '이 PC 에는 없다', '마음대로 설치하지 않는다', 'python -m pip install python-pptx', '파일함/', '덮어쓰지 않는다', '명령 실행', 'utf-8-sig', '맑은 고딕', '`python`'].every((w) => sk.includes(w)));
+  check('.system.md: 첨부·파일함 안내(uploads/ 읽기·office-docs 스킬 먼저·파일함에 저장하면 카드는 화면이·명령 실행 권한·설치 금지)가 정확히 한 번 더해짐',
+    sys.split('<!-- 지침:파일 -->').length === 2 && ['uploads/', 'office-docs 스킬', '파일함/', '파일 카드', '"명령 실행" 권한', '설치하지 않고'].every((w) => sys.includes(w)));
+  const html = await (await get('/', {})).text();
+  check('메인 화면: 입력창에 ＋ 단추·숨은 파일 선택·첨부 칩 줄(이미지 미리보기)이 있고, 붙여넣기(Ctrl+V 캡처)·끌어다 놓기(dragover·drop)로도 올림',
+    ['id="plus"', 'id="fileIn"', 'multiple', 'id="tray"', 'api/uploads', "addEventListener('paste'", "'dragover'", "'drop'", '캡처-', 'URL.createObjectURL', 'data-rm', '여기에 놓으면 첨부돼요', 'class="plus"'].every((w) => html.includes(w)));
+  check('메인 화면: 보낼 때 올려 둔 첨부의 저장 이름을 같이 보내고(올리는 중이면 기다리라고 안내), 말풍선에 첨부 미리보기, 비서 말 끝에 파일 카드(보기·열기·⬇ 받기)와 보기 창이 있음',
+    ['attachments: atts.map', '올리는 중이에요', 'attsHtml(m.attachments)', 'filesHtml(m.files)', "event: files", 'class="fcard"', 'data-fview', 'data-fopen', '⬇ 받기', 'id="viewer"', 'id="vBody"', "'?view=1'", '/api/files/open', 'IMG_TYPE'].every((w) => html.includes(w)));
+  check('메인 화면: 파일 이름·표 칸·글은 모두 esc 로 감싸고(미리보기가 화면을 깨지 못함), 파일 주소는 encodeURIComponent 로 만듦', html.includes('const cell = (c) => esc(String(c ?? \'\'))') && html.includes('encodeURIComponent(box)') && html.includes('encodeURIComponent(file)'));
+}
+
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
 function startServer(port, dataDir, env) {
   const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
@@ -1661,7 +1817,7 @@ const tgServer = require('http').createServer((req, res) => {
   });
 });
 tgServer.listen(8793, '127.0.0.1');
-const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793' }); // 예약 시계를 30초 대신 0.2초마다
+const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793', SANCHO_UPLOAD_MAX: String(1024 * 1024), SANCHO_OPEN_SCRIPT: path.join(__dirname, 'test', 'fake-open.js'), SANCHO_OPEN_LOG: path.join(dir, 'open.log') }); // 예약 시계를 30초 대신 0.2초마다, 올리기 한도 1MB, "열기"는 가짜 프로그램
 srv.ready.then(async () => {
   try {
     await run();

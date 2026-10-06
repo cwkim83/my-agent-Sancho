@@ -141,6 +141,47 @@
   #send:disabled { background: #98a2b3; cursor: default; }
   #send.stop { background: #475467; }
   .hint { max-width: 760px; margin: 6px auto 0; color: var(--sub); font-size: 12px; text-align: center; }
+  /* 첨부: ＋ 단추 · 올린 파일 칩(이미지는 미리보기) · 끌어다 놓는 자리 표시 */
+  .pane { position: relative; }
+  .pane.drag::after { content: '여기에 놓으면 첨부돼요'; position: absolute; inset: 8px; z-index: 5; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--blue); border-radius: 14px;
+    background: rgba(234, 241, 255, .9); color: var(--blue); font-size: 18px; font-weight: 600; pointer-events: none; }
+  .plus { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: #f2f4f7; color: #475467; font-size: 22px; line-height: 1; }
+  .plus:hover { background: var(--blue-bg); color: var(--blue); }
+  .tray { max-width: 760px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .tray[hidden] { display: none; }
+  .att { display: flex; align-items: center; gap: 8px; max-width: 250px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .att img, .att .ic { flex: none; width: 44px; height: 44px; border-radius: 6px; }
+  .att img { object-fit: cover; }
+  .att .ic { display: flex; align-items: center; justify-content: center; background: #f2f4f7; font-size: 22px; }
+  .att .nm { min-width: 0; flex: 1; display: flex; flex-direction: column; font-size: 13px; line-height: 1.35; }
+  .att .nm .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .att .nm small { color: var(--sub); font-size: 11px; }
+  .att.up { opacity: .6; } .att.err { border-color: #fecdca; background: #fef3f2; } .att.err .nm small { color: #b42318; }
+  .att .x { flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: none; color: var(--sub); }
+  .att .x:hover { background: #fee4e2; color: #b42318; }
+  /* 말풍선 안의 첨부(이미지 미리보기·파일 이름)와 비서가 만든 파일 카드 */
+  .atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .athumb img { display: block; max-width: 200px; max-height: 150px; border-radius: 8px; }
+  .afile { padding: 4px 10px; border-radius: 8px; background: rgba(255, 255, 255, .22); color: #fff; font-size: 13px; text-decoration: none; overflow-wrap: anywhere; }
+  .fcard { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
+  .fcard .ic { flex: none; font-size: 26px; }
+  .fcard .fi { flex: 1; min-width: 0; } .fcard .fi b { display: block; overflow-wrap: anywhere; } .fcard .fi small { color: var(--sub); }
+  .fcard .fa { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  .fcard .fa button, .fcard .fa a { padding: 5px 10px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font-size: 13px; text-decoration: none; }
+  .fcard .fa button:hover, .fcard .fa a:hover { background: #f2f4f7; }
+  /* 파일 보기 창 */
+  #viewer .mcard { width: min(960px, 100%); max-height: 90vh; }
+  #vBody .soft { color: var(--sub); }
+  #vBody h4 { margin: 14px 0 6px; font-size: 14px; }
+  #vBody .vt { overflow: auto; }
+  #vBody table { border-collapse: collapse; font-size: 13px; }
+  #vBody th, #vBody td { padding: 4px 9px; border: 1px solid var(--line); text-align: left; vertical-align: top; white-space: pre-wrap; }
+  #vBody th { background: #f2f4f7; }
+  #vBody .vimg { max-width: 100%; display: block; margin: 0 auto; }
+  #vBody .vpdf { width: 100%; height: 70vh; border: 0; }
+  #vBody pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.6 Consolas, "Malgun Gothic", monospace; }
+  #vBody .vdoc p { margin: 0 0 .6em; white-space: pre-wrap; }
+  #vBody .slide { margin: 0 0 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; }
   /* 입력창 왼쪽: 지금 켜진 권한 (모두 꺼져 있으면 🔒) */
   .perm { flex: none; display: flex; flex-direction: column; gap: 2px; align-self: center; padding: 0 2px 0 6px; }
   .perm span { padding: 1px 7px; border-radius: 999px; background: var(--blue-bg); color: var(--blue); font-size: 11px; line-height: 16px; white-space: nowrap; }
@@ -269,6 +310,12 @@
       <div class="mbody md" id="nmBody"></div>
     </div>
   </div>
+  <div class="modal" id="viewer" hidden>
+    <div class="mcard" role="dialog" aria-modal="true" aria-labelledby="vTitle">
+      <div class="mhead"><div class="mt"><h2 id="vTitle"></h2><div class="meta" id="vMeta"></div></div><button id="vClose" aria-label="닫기">✕</button></div>
+      <div class="mbody" id="vBody"></div>
+    </div>
+  </div>
   <div class="body">
     <nav id="nav"></nav>
     <main id="main"></main>
@@ -391,8 +438,9 @@
           <div id="msgs"><div class="wrap" id="thread"></div></div>
           <div class="composer">
             <div class="quick">${QUICK.map(([label, text]) => `<button data-text="${esc(text || label)}">${esc(label)}</button>`).join('')}</div>
-            <div class="box"><div class="perm" id="permBadge"></div><textarea id="input" rows="1" placeholder="무엇을 도와드릴까요?"></textarea><button id="send" aria-label="보내기">➤</button></div>
-            <div class="hint">Enter 로 보내기 · Shift+Enter 로 줄바꿈</div>
+            <div class="tray" id="tray" hidden></div>
+            <div class="box"><button class="plus" id="plus" type="button" title="파일 첨부 (끌어다 놓거나 Ctrl+V 로 붙여넣어도 돼요)" aria-label="파일 첨부">＋</button><input type="file" id="fileIn" multiple hidden><div class="perm" id="permBadge"></div><textarea id="input" rows="1" placeholder="무엇을 도와드릴까요?"></textarea><button id="send" aria-label="보내기">➤</button></div>
+            <div class="hint">Enter 로 보내기 · Shift+Enter 로 줄바꿈 · 파일은 ＋ · 끌어다 놓기 · Ctrl+V</div>
           </div>
         </div>
       </section>
@@ -407,6 +455,7 @@
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!busy) send(); }
     });
+    wireAttach(ta);
     setBusy(busy);
     loadPerm();
     loadMemory();
@@ -447,10 +496,100 @@
     loadList();
   }
 
+  // ---------- 첨부(＋·끌어다 놓기·붙여넣기)와 파일 카드(비서가 만든 문서) ----------
+  // 첨부는 고르는 즉시 POST /api/uploads 로 data/uploads/ 에 올리고, 말을 보낼 때 저장 이름만 같이 보낸다. 비서가 만든 문서는 서버가 data/파일함/ 의 새 파일을 찾아 카드로 알려 준다
+  const IMG_TYPE = /^image[/](png|jpe?g|gif|webp)$/;
+  const FICON = { docx: '📄', doc: '📄', xlsx: '📊', xls: '📊', csv: '📊', pptx: '📽️', ppt: '📽️', pdf: '📕', png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', txt: '📝', md: '📝' };
+  const fmtSize = (n) => (n < 1024 ? `${n}B` : n < 1048576 ? `${Math.round(n / 1024)}KB` : `${(n / 1048576).toFixed(1)}MB`);
+  const furl = (box, file, q = '') => `/api/files/${encodeURIComponent(box)}/${encodeURIComponent(file)}${q}`;
+  let pend = []; // 보내기 전에 올려 둔 첨부: { name, size, type, state: 'up'|'ok'|'err', file(저장 이름), thumb(이미지 미리보기 주소), err }
+
+  function renderTray() {
+    const el = $('tray'); if (!el) return;
+    el.innerHTML = pend.map((p, i) => `<div class="att ${p.state}" title="${esc(String(p.err || p.name))}">${p.thumb ? `<img src="${esc(p.thumb)}" alt="">` : '<span class="ic">📎</span>'}<span class="nm"><span class="t">${esc(String(p.name))}</span><small>${p.state === 'up' ? '올리는 중…' : p.state === 'err' ? esc(String(p.err)) : fmtSize(p.size)}</small></span><button class="x" type="button" data-rm="${i}" aria-label="첨부 빼기">✕</button></div>`).join('');
+    el.hidden = !pend.length;
+  }
+  async function upload(f, p) {
+    try {
+      const r = await api('/api/uploads?name=' + encodeURIComponent(p.name), { method: 'POST', headers: { 'Content-Type': p.type }, body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || '올리지 못했어요.');
+      Object.assign(p, { file: j.file, name: j.name, size: j.size, type: j.type, state: 'ok' });
+    } catch (e) { if (e.message === 'login') return; p.state = 'err'; p.err = e.message === 'Failed to fetch' ? '서버에 연결할 수 없어요.' : e.message; }
+    renderTray();
+  }
+  function addFiles(list) {
+    for (const f of [...list]) {
+      if (!f || typeof f.size !== 'number') continue;
+      if (pend.length >= 10) { alert('첨부는 한 번에 10개까지예요.'); break; }
+      const p = { name: f.name || '파일', size: f.size, type: f.type || 'application/octet-stream', state: 'up', thumb: IMG_TYPE.test(f.type) ? URL.createObjectURL(f) : '' };
+      pend.push(p); renderTray(); upload(f, p);
+    }
+  }
+  function wireAttach(ta) { // showChat 이 입력창을 새로 그릴 때마다 한 번
+    renderTray();
+    $('plus').onclick = () => $('fileIn').click();
+    $('fileIn').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+    $('tray').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { pend.splice(Number(b.dataset.rm), 1); renderTray(); } };
+    ta.addEventListener('paste', (e) => { // Ctrl+V: 파일·화면 캡처 그림이면 첨부로. 글이 같이 있으면(워드에서 복사 등) 그냥 글로 붙인다
+      const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+      if (!files.length || (e.clipboardData.getData('text/plain') || '').trim()) return;
+      e.preventDefault();
+      const stamp = new Date().toLocaleString('sv-SE').replace(/[-: ]/g, '').replace(/^([0-9]{8})([0-9]{6})$/, '$1-$2');
+      addFiles(files.map((f) => (f.name && f.name !== 'image.png' ? f : new File([f], `캡처-${stamp}.png`, { type: f.type }))));
+    });
+    const pane = document.querySelector('#chat .pane'); let n = 0;
+    const has = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes('Files');
+    pane.addEventListener('dragenter', (e) => { if (has(e)) { e.preventDefault(); n++; pane.classList.add('drag'); } });
+    pane.addEventListener('dragover', (e) => { if (has(e)) e.preventDefault(); });
+    pane.addEventListener('dragleave', () => { if (--n <= 0) { n = 0; pane.classList.remove('drag'); } });
+    pane.addEventListener('drop', (e) => { if (!has(e)) return; e.preventDefault(); n = 0; pane.classList.remove('drag'); addFiles(e.dataTransfer.files); });
+    $('thread').onclick = (e) => { // 파일 카드의 보기·열기
+      const c = e.target.closest('.fcard'); if (!c) return;
+      if (e.target.closest('[data-fview]')) openViewer(c.dataset);
+      else if (e.target.closest('[data-fopen]')) openFile(c.dataset, e.target.closest('button'));
+    };
+  }
+  const attsHtml = (list) => (Array.isArray(list) && list.length ? `<div class="atts">${list.map((a) => (IMG_TYPE.test(a.type)
+    ? `<a class="athumb" href="${furl('uploads', a.file)}" target="_blank" rel="noopener"><img src="${furl('uploads', a.file)}" alt="${esc(String(a.name))}"></a>`
+    : `<a class="afile" href="${furl('uploads', a.file, '?dl=1')}" download title="${esc(String(a.name))}">📎 ${esc(String(a.name))}</a>`)).join('')}</div>` : '');
+  const filesHtml = (list) => (Array.isArray(list) ? list.map((f) => `<div class="fcard" data-box="${esc(String(f.box))}" data-file="${esc(String(f.file))}" data-name="${esc(String(f.name))}"><span class="ic">${FICON[f.ext] || '📎'}</span><div class="fi"><b>${esc(String(f.name))}</b><small>${esc(String(f.ext || '').toUpperCase())} · ${fmtSize(Number(f.size) || 0)} · 파일함</small></div><div class="fa"><button type="button" data-fview>보기</button><button type="button" data-fopen>열기</button><a href="${furl(f.box, f.file, '?dl=1')}" download>⬇ 받기</a></div></div>`).join('') : '');
+
+  // 파일 보기 창: 서버가 글·표로 풀어 준 것(워드·엑셀·PPT·CSV·텍스트)과 그림·PDF 를 그 자리에서 보여 준다
+  const cell = (c) => esc(String(c ?? ''));
+  const tableHtml = (rows, more) => `<div class="vt"><table>${rows.map((r, i) => `<tr>${r.map((c) => (i === 0 ? `<th>${cell(c)}</th>` : `<td>${cell(c)}</td>`)).join('')}</tr>`).join('')}</table></div>${more ? '<p class="soft">앞부분만 보여 줘요. 전체는 열기나 ⬇ 받기로 보세요.</p>' : ''}`;
+  function viewHtml(v) {
+    if (v.kind === 'image') return `<img class="vimg" src="${esc(v.url)}" alt="">`;
+    if (v.kind === 'pdf') return `<iframe class="vpdf" src="${esc(v.url)}" title="PDF"></iframe>`;
+    if (v.kind === 'text') return `<pre>${cell(v.text)}</pre>${v.more ? '<p class="soft">앞부분만 보여 줘요.</p>' : ''}`;
+    if (v.kind === 'doc') return `<div class="vdoc">${v.blocks.map((b) => (b.t === 'table' ? tableHtml(b.rows, false) : b.t === 'h' ? `<h${b.level + 1}>${cell(b.text)}</h${b.level + 1}>` : `<p>${cell(b.text)}</p>`)).join('')}</div>`;
+    if (v.kind === 'sheet') return v.sheets.map((s) => `<h4>${cell(s.name)}</h4>${s.rows.length ? tableHtml(s.rows, s.more) : '<p class="soft">비어 있어요.</p>'}`).join('');
+    if (v.kind === 'slides') return v.slides.map((s) => `<div class="slide"><b>슬라이드 ${s.n}</b>${s.texts.length ? `<ul>${s.texts.map((t) => `<li>${cell(t)}</li>`).join('')}</ul>` : '<p class="soft">글이 없어요.</p>'}</div>`).join('');
+    return `<p class="soft">${cell(v.error || '이 형식은 미리보기가 없어요.')}</p>`;
+  }
+  async function openViewer(d) {
+    $('vTitle').textContent = d.name || d.file; $('vMeta').textContent = '글과 표만 보여 줘요 (서식·그림은 "열기"로 진짜 프로그램에서)';
+    $('vBody').innerHTML = '<p class="soft">불러오는 중…</p>'; $('viewer').hidden = false; $('vClose').focus();
+    try { $('vBody').innerHTML = viewHtml(await (await api(furl(d.box, d.file, '?view=1'))).json()); }
+    catch (e) { if (e.message !== 'login') $('vBody').innerHTML = '<p class="soft">미리보기를 불러오지 못했어요.</p>'; }
+  }
+  async function openFile(d, btn) { // 이 PC 에 설치된 프로그램(워드·엑셀 등)으로 연다
+    const old = btn.textContent; btn.disabled = true; btn.textContent = '여는 중…';
+    try {
+      const r = await api('/api/files/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ box: d.box, name: d.file }) });
+      if (!r.ok) alert((await r.json().catch(() => ({}))).error || '열지 못했어요.');
+    } catch (e) { if (e.message !== 'login') alert('서버에 연결할 수 없습니다.'); }
+    btn.disabled = false; btn.textContent = old;
+  }
+  const closeViewer = () => { $('viewer').hidden = true; $('vBody').innerHTML = ''; };
+  $('vClose').onclick = closeViewer;
+  $('viewer').onclick = (e) => { if (e.target === $('viewer')) closeViewer(); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('viewer').hidden) closeViewer(); });
+
   const bubble = (role, html, cls = '') => `<div class="row ${role}"><div class="bubble ${cls}">${html}</div></div>`;
   function renderThread(messages) {
     $('thread').innerHTML = messages.length
-      ? messages.map((m) => m.role === 'user' ? bubble('user', esc(m.content)) : bubble('assistant', md(m.content), 'md')).join('')
+      ? messages.map((m) => m.role === 'user' ? bubble('user', attsHtml(m.attachments) + esc(m.content)) : bubble('assistant', md(m.content) + filesHtml(m.files), 'md')).join('')
       : '<div class="empty"><h2>무엇을 도와드릴까요?</h2><p>아래 입력창에 말을 걸어 보세요.</p></div>';
     scrollDown(true);
   }
@@ -466,21 +605,25 @@
 
   async function send() {
     const ta = $('input'), text = ta.value.trim();
-    if (!text || busy) return;
+    if (busy) return;
+    if (pend.some((p) => p.state === 'up')) { alert('파일을 올리는 중이에요. 다 올라간 뒤에 보내 주세요.'); return; }
+    const atts = pend.filter((p) => p.state === 'ok').map((p) => ({ file: p.file, name: p.name, size: p.size, type: p.type }));
+    if (!text && !atts.length) return;
     if (!chatId) { // 첫 말이면 대화부터 만든다. 실패하면 쓴 글을 지우지 않고 알려 준다
       try { chatId = (await (await api('/api/chats', { method: 'POST' })).json()).id; }
       catch { alert('서버에 연결할 수 없습니다. 서버(start.bat)가 켜져 있는지 확인해 주세요.'); return; }
     }
     ta.value = ''; ta.style.height = 'auto';
     if ($('thread').querySelector('.empty')) $('thread').innerHTML = '';
-    $('thread').insertAdjacentHTML('beforeend', bubble('user', esc(text)) + bubble('assistant', '<span class="typing">…</span>', 'md'));
+    $('thread').insertAdjacentHTML('beforeend', bubble('user', attsHtml(atts) + esc(text || '첨부한 파일을 읽어 줘.')) + bubble('assistant', '<span class="typing">…</span>', 'md'));
     const out = $('thread').lastElementChild.firstElementChild;
+    pend = []; renderTray();
     scrollDown(true);
     aborter = new AbortController(); setBusy(true);
-    let got = '';
+    let got = '', cards = '';
     try {
       const r = await api(`/api/chats/${chatId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text }), signal: aborter.signal });
+        body: JSON.stringify({ content: text, attachments: atts.map((a) => a.file) }), signal: aborter.signal });
       if (!r.ok) { const j = await r.json().catch(() => ({})); out.innerHTML = md("⚠ " + (j.error || "보내지 못했습니다.")); throw new Error("rejected"); }
       const reader = r.body.getReader(), dec = new TextDecoder();
       let buf = '';
@@ -493,8 +636,10 @@
           const ev = buf.slice(0, k); buf = buf.slice(k + 2);
           const d = ev.split('\n').find((x) => x.startsWith('data: '));
           if (!ev.startsWith('event:') && d) { got += JSON.parse(d.slice(6)).t; out.innerHTML = md(got); scrollDown(false); }
+          else if (ev.startsWith('event: files') && d) cards = filesHtml(JSON.parse(d.slice(6))); // 비서가 이번에 만든 문서: 글이 끝난 뒤 카드로
         }
       }
+      if (cards) { out.insertAdjacentHTML('beforeend', cards); scrollDown(true); }
     } catch (e) {
       if (e.name !== 'AbortError' && e.message !== 'login' && e.message !== 'rejected') out.innerHTML = md(got) + '<p class="typing">(연결이 끊어졌습니다.)</p>';
     }
@@ -663,7 +808,7 @@
   // [서버의 칸 이름, 제목, 입력창 표시, 설명, 켤 때 되묻는 말(위험한 것만)]
   const PERMS = [
     ['연결된앱', '연결된 앱 (Gmail · 캘린더 · 드라이브)', '🔌 앱', '비서가 메일·일정·문서를 읽고, 메일 초안과 일정·문서를 만들 수 있어요. 메일은 보내기 전에 꼭 "보낼까요?" 하고 묻고, 내가 "네" 해야만 갑니다. 지우기·공유는 못 해요.'],
-    ['명령실행', '명령 실행', '⌨ 명령', '비서가 이 컴퓨터에서 명령(프로그램)을 실행할 수 있어요. 파일 지우기·설치까지 가능해서 위험할 수 있으니, 꼭 필요할 때만 켜고 끝나면 꺼 두세요.',
+    ['명령실행', '명령 실행', '⌨ 명령', '비서가 이 컴퓨터에서 명령(프로그램)을 실행할 수 있어요. 엑셀·워드 문서를 만들 때도 필요해요. 파일 지우기·설치까지 가능해서 위험할 수 있으니, 꼭 필요할 때만 켜고 끝나면 꺼 두세요.',
       '명령 실행을 켤까요?\n\n비서가 이 컴퓨터에서 프로그램을 실행할 수 있게 됩니다. 파일 지우기·설치도 가능해서 위험할 수 있어요.\n꼭 필요할 때만 켜고, 끝나면 꺼 두세요.'],
     ['홈폴더', '내 홈 폴더 읽기', '📁 홈', '비서가 내 사용자 폴더(문서·바탕화면 등)의 파일을 읽을 수 있어요. 고치거나 지우지는 못해요. 로그인 열쇠가 있는 폴더(.ssh 등)는 늘 막혀 있어요.'],
   ];

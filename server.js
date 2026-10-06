@@ -468,7 +468,7 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
 // 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
-const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
+const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
 const brainCtx = (name, d = new Date()) => `주인 이름: ${name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${SKILL_HINT}`;
 
 // 두뇌가 실패했을 때 이유를 쉬운 한국어로 — 대화(streamReply)와 예약(askBrainOnce)이 같이 쓴다
@@ -489,11 +489,95 @@ function explainBrain({ spawnErr, timedOut, result, errText, limit }) {
   return `Claude 가 오류로 끝났습니다. ${raw.trim().slice(0, 200)}`;
 }
 
-function streamReply(res, chat, content, user) {
+// ---------- 파일: 첨부(data/uploads/) · 비서가 만든 문서(data/파일함/) ----------
+// 첨부: 화면의 ＋·끌어다 놓기·붙여넣기가 POST /api/uploads 로 올리면 data/uploads/ 에 저장하고, 말을 보낼 때 그 경로를 비서에게 넘긴다 (이미지·PDF·CSV 는 Read 로 읽힌다).
+// 문서: 비서가 엑셀·워드·PPT 를 만들어 data/파일함/ 에 저장하면, 서버가 대화 전후의 폴더를 비교해 새로 생긴 파일을 채팅에 파일 카드(보기·열기·받기)로 알린다.
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads'), BOX_DIR = path.join(DATA_DIR, '파일함'), BOXES = { uploads: UPLOADS_DIR, 파일함: BOX_DIR };
+for (const d of Object.values(BOXES)) fs.mkdirSync(d, { recursive: true });
+const officeview = require('./officeview.js');
+const UPLOAD_MAX = Number(process.env.SANCHO_UPLOAD_MAX) || 25 * 1024 * 1024; // 점검에서만 줄인다
+const BLOCKED_EXT = /\.(exe|bat|cmd|com|msi|scr|ps1|psm1|vbs|vbe|wsf|lnk|reg|dll|jar|hta|cpl)$/i; // 더블클릭하면 실행되는 것은 올리지 못하게
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain', md: 'text/markdown', json: 'application/json',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
+const INLINE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf']); // 브라우저가 그 자리에서 보여 줘도 안전한 것만. html·svg 는 우리 사이트 권한으로 돌 수 있어 늘 내려받기로만
+const OPEN_EXT = new Set(['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'csv', 'pdf', 'txt', 'md', 'png', 'jpg', 'jpeg', 'gif', 'webp']); // "열기"로 이 PC 의 프로그램에 맡겨도 되는 것 (실행 파일은 안 됨)
+const OPEN_CMD = process.env.SANCHO_OPEN_SCRIPT ? [process.execPath, process.env.SANCHO_OPEN_SCRIPT] : process.platform === 'win32' ? ['explorer.exe'] : process.platform === 'darwin' ? ['open'] : ['xdg-open'];
+const extOf = (n) => path.extname(n).slice(1).toLowerCase();
+const shownName = (f) => f.replace(/^\d{8}-\d{6}-[0-9a-f]{4}_/, ''); // 저장할 때 붙인 "날짜-시각-무작위_" 를 뗀 원래 이름
+const mimeOf = (n) => MIME[extOf(n)] || 'application/octet-stream';
+function safeName(raw) { // 폴더 부분·이상한 글자·너무 긴 이름을 걷어 낸 파일 이름
+  let n = String(raw || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/\s+/g, ' ').trim().replace(/^\.+/, '').replace(/[. ]+$/, '');
+  if (!n) n = '파일';
+  if (n.length > 100) { const e = path.extname(n).slice(0, 12); n = n.slice(0, 100 - e.length) + e; }
+  return n;
+}
+function boxFile(box, name) { // 그 폴더에 정확히 그 이름의 파일이 있을 때만 전체 경로를 돌려준다 (폴더 밖으로 못 나가고 숨김 파일은 없는 것으로)
+  const dir = Object.hasOwn(BOXES, box) ? BOXES[box] : null;
+  if (!dir || !name || name.startsWith('.') || /[\\/]/.test(name)) return null;
+  try { if (!fs.readdirSync(dir).includes(name)) return null; const full = path.join(dir, name); return fs.statSync(full).isFile() ? full : null; } catch { return null; }
+}
+const fileInfo = (box, file) => ({ box, file, name: shownName(file), size: fs.statSync(path.join(BOXES[box], file)).size, ext: extOf(file) });
+// 파일함의 지문 { 이름 → 수정시각:크기 }: 대화 전후로 비교해 "이번 대화에서 새로 생기거나 바뀐" 파일을 찾는다
+// ponytail: 같은 시간에 다른 대화·예약이 만든 파일도 함께 잡힌다. 문제가 되면 대화마다 하위 폴더를 둔다
+function boxSnap() {
+  const m = new Map();
+  try { for (const f of fs.readdirSync(BOX_DIR, { withFileTypes: true })) if (f.isFile() && !f.name.startsWith('.') && !f.name.startsWith('~$') && !f.name.endsWith('.tmp')) { const s = fs.statSync(path.join(BOX_DIR, f.name)); m.set(f.name, `${s.mtimeMs}:${s.size}`); } } catch { /* 폴더를 못 읽으면 없는 것으로 */ }
+  return m;
+}
+const boxNew = (before) => [...boxSnap()].filter(([n, sig]) => before.get(n) !== sig).map(([n]) => fileInfo('파일함', n));
+function readRaw(req, max) { // 파일 내용 그대로 받기. 한도를 넘으면 끝까지 흘려보내고(연결이 끊기지 않게) null
+  return new Promise((resolve, reject) => {
+    let size = 0, big = false; const chunks = [];
+    req.on('data', (c) => { size += c.length; if (size > max) big = true; else if (!big) chunks.push(c); });
+    req.on('end', () => resolve(big ? null : Buffer.concat(chunks))).on('error', reject);
+  });
+}
+// POST /api/uploads?name=<파일이름> (본문은 파일 내용 그대로) → { file, name, size, type }. file 이 data/uploads/ 안의 저장 이름이고 대화에 붙일 때 쓴다
+async function uploadApi(req, res) {
+  if (req.method !== 'POST') return false;
+  const name = safeName(new URL(req.url, 'http://x').searchParams.get('name'));
+  const buf = await readRaw(req, UPLOAD_MAX).catch(() => undefined);
+  if (buf === undefined) return send(res, 400, { error: '파일을 받지 못했어요. 다시 시도해 주세요.' }), true;
+  if (buf === null) return send(res, 413, { error: `파일이 너무 커요. ${Math.floor(UPLOAD_MAX / 1048576) || '1 미만의 '}MB 까지 올릴 수 있어요.` }), true;
+  if (BLOCKED_EXT.test(name)) return send(res, 400, { error: '실행 파일 같은 종류는 첨부할 수 없어요.' }), true;
+  if (!buf.length) return send(res, 400, { error: '빈 파일이에요.' }), true;
+  const now = new Date(), file = `${now.toLocaleDateString('sv-SE').replace(/-/g, '')}-${now.toTimeString().slice(0, 8).replace(/:/g, '')}-${crypto.randomBytes(2).toString('hex')}_${name}`;
+  fs.writeFileSync(path.join(UPLOADS_DIR, file), buf);
+  return send(res, 200, { file, name, size: buf.length, type: mimeOf(name) }), true;
+}
+// GET /api/files/<uploads|파일함>/<이름>[?dl=1 | ?view=1] — 로그인한 사람만. 기본은 그 자리에서 보기(이미지·PDF 만), 나머지는 내려받기, view=1 은 미리보기용 글·표
+function fileApi(res, box, name, q) {
+  const full = boxFile(box, name);
+  if (!full) return send(res, 404, { error: '없는 파일이에요.' });
+  const ext = extOf(name);
+  if (q.get('view')) {
+    let v; try { v = officeview.viewFile(full, ext); } catch { v = { kind: 'none', error: '이 파일은 미리보기를 만들지 못했어요. ⬇ 받기나 열기를 써 주세요.' }; }
+    if (v.kind === 'image' || v.kind === 'pdf') v.url = `/api/files/${encodeURIComponent(box)}/${encodeURIComponent(name)}`;
+    return send(res, 200, v);
+  }
+  const disp = shownName(name), attach = !!q.get('dl') || !INLINE_EXT.has(ext);
+  res.writeHead(200, { 'Content-Type': mimeOf(name), 'Content-Length': fs.statSync(full).size, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
+    'Content-Disposition': `${attach ? 'attachment' : 'inline'}; filename="${disp.replace(/[^\x20-\x7e]|["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(disp)}` });
+  fs.createReadStream(full).pipe(res);
+}
+// POST /api/files/open { box, name } — 이 PC 에 설치된 프로그램(워드·엑셀 등)으로 연다. 폴더 안의 문서·그림 형식만 (실행 파일은 안 됨)
+async function openApi(req, res) {
+  let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+  const full = boxFile(String(b.box || ''), String(b.name || ''));
+  if (!full) return send(res, 404, { error: '없는 파일이에요.' });
+  if (!OPEN_EXT.has(extOf(full))) return send(res, 400, { error: '이 형식은 열 수 없어요. ⬇ 받기를 써 주세요.' });
+  const [cmd, ...a] = OPEN_CMD;
+  const err = await new Promise((ok) => { try { const c = spawn(cmd, [...a, full], { detached: true, stdio: 'ignore' }); c.once('error', ok); c.once('spawn', () => { c.unref(); ok(null); }); } catch (e) { ok(e); } });
+  return err ? send(res, 500, { error: '이 PC 에서 파일을 열지 못했어요. ⬇ 받기로 내려받아 열어 주세요.' }) : send(res, 200, { ok: true });
+}
+const ATTACH_NOTE = (atts) => `\n\n[첨부한 파일] 아래 파일을 도구로 읽고 답한다 (경로는 작업 폴더 기준). 이미지·PDF·텍스트·CSV 는 Read 로 바로 읽힌다. 엑셀·워드는 office-docs 스킬(.claude/skills/office-docs/SKILL.md)의 방법으로 읽는다.\n${atts.map((a) => `- uploads/${a.file} (원래 이름: ${a.name})`).join('\n')}`;
+
+function streamReply(res, chat, content, user, atts = []) {
   if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
   running.add(chat.id);
   const mailOk = mailConfirmed(chat, content); // 새 말을 대화에 넣기 전에 본다: 바로 앞이 비서의 "보낼까요?" 였는지
-  chat.messages.push({ role: 'user', content, at: nowIso() });
+  const boxBefore = boxSnap();
+  chat.messages.push({ role: 'user', content, at: nowIso(), ...(atts.length ? { attachments: atts } : {}) });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
   saveChat(chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -537,10 +621,11 @@ function streamReply(res, chat, content, user) {
       else emit(`${gap()}⚠ ${explain()}`);
     }
     if (!sent.trim()) sent = '(중지했습니다.)';
-    chat.messages.push({ role: 'assistant', content: sent, at: nowIso() }); // 중지해도 지금까지 받은 만큼 저장
+    let files = []; try { files = boxNew(boxBefore); } catch { /* 파일함을 못 읽으면 카드만 없다 */ }
+    chat.messages.push({ role: 'assistant', content: sent, at: nowIso(), ...(files.length ? { files } : {}) }); // 중지해도 지금까지 받은 만큼 저장
     saveChat(chat);
     running.delete(chat.id);
-    if (!res.destroyed) { res.write('event: done\ndata: {}\n\n'); res.end(); }
+    if (!res.destroyed) { if (files.length) res.write(`event: files\ndata: ${JSON.stringify(files)}\n\n`); res.write('event: done\ndata: {}\n\n'); res.end(); }
   }
 
   // 실행 자체가 그 자리에서 실패해도 화면이 ■ 에 멈추지 않게 바로 마무리한다
@@ -552,7 +637,7 @@ function streamReply(res, chat, content, user) {
   child.stdin.on('error', () => {});
   child.on('error', (e) => { spawnErr = e; finish(); });
   child.on('close', finish);
-  child.stdin.end(content); // 사용자 말은 명령줄이 아니라 표준입력으로
+  child.stdin.end(atts.length ? content + ATTACH_NOTE(atts) : content); // 사용자 말은 명령줄이 아니라 표준입력으로 (첨부가 있으면 파일 경로를 덧붙여)
   res.on('close', () => { if (!finished) { aborted = true; killTree(child); } }); // ■ 중지 → claude 끄기
 }
 
@@ -960,6 +1045,13 @@ async function handle(req, res) {
     if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
     const mm = p.match(/^\/api\/mail\/(organize|draft|status)$/);
     if (mm && await mailApi(req, res, mm[1], user)) return;
+    if (p === '/api/uploads' && await uploadApi(req, res)) return;
+    if (p === '/api/files/open' && req.method === 'POST') return openApi(req, res);
+    const fm = p.match(/^\/api\/files\/([^/]+)\/([^/]+)$/);
+    if (fm && req.method === 'GET') {
+      let box, name; try { box = decodeURIComponent(fm[1]); name = decodeURIComponent(fm[2]); } catch { return send(res, 400, { error: '주소가 올바르지 않습니다.' }); }
+      return fileApi(res, box, name, url.searchParams);
+    }
 
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
@@ -1004,9 +1096,19 @@ async function handle(req, res) {
       if (!isMsg && req.method === 'GET') return send(res, 200, chat);
       if (isMsg && req.method === 'POST') {
         let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
-        const content = String(b.content || '').trim();
-        if (!content) return send(res, 400, { error: '내용이 비어 있습니다.' });
-        return streamReply(res, chat, content, user);
+        const atts = []; // 첨부: 먼저 올려 둔 파일(data/uploads/ 의 저장 이름)만. 없는 이름·이상한 이름은 거절한다
+        if (b.attachments !== undefined) {
+          if (!Array.isArray(b.attachments) || b.attachments.length > 10) return send(res, 400, { error: '첨부는 10개까지 보낼 수 있어요.' });
+          for (const f of new Set(b.attachments.map(String))) {
+            const full = boxFile('uploads', f);
+            if (!full) return send(res, 400, { error: '첨부한 파일을 찾지 못했어요. 다시 첨부해 주세요.' });
+            atts.push({ file: f, name: shownName(f), size: fs.statSync(full).size, type: mimeOf(f) });
+          }
+        }
+        let content = String(b.content || '').trim();
+        if (!content && !atts.length) return send(res, 400, { error: '내용이 비어 있습니다.' });
+        if (!content) content = '첨부한 파일을 읽어 줘.';
+        return streamReply(res, chat, content, user, atts);
       }
     }
     return send(res, 404, { error: '없는 API 입니다.' });

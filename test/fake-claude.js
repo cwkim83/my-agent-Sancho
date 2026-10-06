@@ -44,6 +44,12 @@ async function mail(msg) {
 async function run(msg) {
   out({ type: 'system', subtype: 'init' });
   if (msg.startsWith('[메일 정리]') || msg.startsWith('[답장 초안]')) return mail(msg);
+  if (msg.startsWith('/make-doc')) { // 문서 만들기 흉내: 파일함에 문서를 두고(+ 카드에 안 나와야 하는 임시·숨김 파일), 글로 알린다
+    const fs = require('fs'), name = msg.slice(9).trim() || '보고서.docx';
+    fs.mkdirSync('파일함', { recursive: true });
+    fs.writeFileSync('파일함/' + name, 'DOC:' + name); fs.writeFileSync('파일함/~$' + name, 'tmp'); fs.writeFileSync('파일함/.숨김', 'x'); fs.writeFileSync('파일함/작업중.tmp', 'x');
+    const t = '문서를 만들었어요: ' + name; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return;
+  }
   if (msg === '/login') { out({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }); process.exit(1); }
   if (msg === '/limit') {
     out({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
