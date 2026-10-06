@@ -78,6 +78,7 @@
   .md blockquote { margin: 0 0 .7em; padding: 2px 12px; border-left: 3px solid #d0d5dd; color: var(--sub); }
   .md table { margin-bottom: .7em; border-collapse: collapse; display: block; overflow-x: auto; }
   .md th, .md td { padding: 6px 12px; border: 1px solid var(--line); text-align: left; }
+  .md .toolline { color: var(--sub); font-size: 13px; } .md .warnline { color: #b42318; }
   .md th { background: #f9fafb; } .md a { color: var(--blue); } .md hr { border: 0; border-top: 1px solid var(--line); }
 
   /* 휴대폰 */
@@ -148,7 +149,7 @@
       }
       const b = [];
       while (i < L.length && L[i].trim() && !special(L[i]) && !(L[i].includes('|') && isTableSep(L[i + 1]))) b.push(inline(L[i++]));
-      out.push('<p>' + b.join('<br>') + '</p>');
+      out.push((/^(⏺|⚠) /.test(b[0]) ? '<p class="' + (b[0][0] === '⏺' ? 'toolline' : 'warnline') + '">' : '<p>') + b.join('<br>') + '</p>');
     }
     return out.join('');
   }
@@ -249,6 +250,7 @@
     try {
       const r = await api(`/api/chats/${chatId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text }), signal: aborter.signal });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); out.innerHTML = md("⚠ " + (j.error || "보내지 못했습니다.")); throw new Error("rejected"); }
       const reader = r.body.getReader(), dec = new TextDecoder();
       let buf = '';
       for (;;) {
@@ -263,9 +265,9 @@
         }
       }
     } catch (e) {
-      if (e.name !== 'AbortError' && e.message !== 'login') out.innerHTML = md(got) + '<p class="typing">(연결이 끊어졌습니다.)</p>';
+      if (e.name !== 'AbortError' && e.message !== 'login' && e.message !== 'rejected') out.innerHTML = md(got) + '<p class="typing">(연결이 끊어졌습니다.)</p>';
     }
-    if (!got && !out.querySelector('p')) out.innerHTML = '<span class="typing">(중지했습니다.)</span>';
+    if (!got && !out.querySelector('p') && !out.querySelector('.warnline')) out.innerHTML = '<span class="typing">(중지했습니다.)</span>';
     setBusy(false); aborter = null;
     loadList();
     if ($('input')) $('input').focus();

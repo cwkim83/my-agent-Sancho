@@ -3,6 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 const PORT = Number(process.env.SANCHO_PORT) || 8790;
 const HOST = '127.0.0.1'; // 이 PC 에서만 접속 가능
@@ -132,29 +133,113 @@ function listChats(userId) {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-// ---------- 가짜 답 (두뇌 연결 전). 한 글자씩 SSE 로 흘려보낸다 ----------
-const MD_SAMPLE = '## 화면 확인용 예시\n\n**굵게**, *기울임*, `코드` 도 보입니다.\n\n- 첫째 항목\n- 둘째 항목\n\n1. 하나\n2. 둘\n\n| 이름 | 상태 |\n|---|---|\n| 일정 | 준비 중 |\n| 메일 | 준비 중 |\n\n```js\nconsole.log("안녕");\n```\n\n> 인용문도 됩니다.';
-const FAKE_REPLY = '준비 중입니다. (아직 두뇌가 연결되지 않았습니다.)';
-const CHAR_DELAY_MS = 40;
+// ---------- 두뇌: 이 PC 에 설치된 Claude Code (내 구독 로그인, API 키 없음) ----------
+const PERSONA = '너는 "나의 AI 비서 Sancho" 이다. 사용자는 코드를 모르는 업무 담당자이니 쉬운 한국어로, 결론부터 답한다. '
+  + '작업 폴더(data/)의 파일만 읽고 고친다. 파일을 지우거나, 메일을 보내거나, 회사 자료를 외부로 보내는 일은 하지 않는다.';
+const PRIVATE_FILES = ['users.json', 'sessions.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
+const BRAIN_ARGS = [
+  '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
+  // 이 PC 의 전역 설정(~/.claude/settings.json)이 다른 주소·토큰으로 연결을 바꿔 버리는 것을 막는다
+  '--setting-sources', 'project,local',
+  '--allowedTools', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebFetch', // 명령 실행은 아직 안 준다
+  '--disallowedTools', 'Bash', 'PowerShell', ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
+  '--append-system-prompt', PERSONA,
+];
+// 테스트에서는 진짜 claude 대신 가짜 스크립트를 쓴다
+const BRAIN_CMD = process.env.SANCHO_BRAIN_SCRIPT ? [process.execPath, process.env.SANCHO_BRAIN_SCRIPT] : ['claude'];
+const TOOL_LABELS = { Read: '파일 읽는 중', Glob: '파일 찾는 중', Grep: '내용 검색 중', Edit: '파일 고치는 중', Write: '파일 쓰는 중',
+  WebSearch: '웹 검색 중', WebFetch: '웹 페이지 읽는 중' };
+const BRAIN_MAX_MS = 10 * 60 * 1000;
+const running = new Set(); // 지금 답하는 중인 대화
+
+// CLAUDE 로 시작하는 환경변수와 접속 주소·토큰을 지운다 (Claude Code 안에서 서버를 켜도 "로그인 안 됨"이 나지 않게)
+function brainEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('CLAUDE') || ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'].includes(k)) delete env[k];
+  }
+  return env;
+}
+function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 끈다
+  if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  else child.kill();
+}
+
 function streamReply(res, chat, content) {
-  const text = content === '/md' ? MD_SAMPLE : FAKE_REPLY; // '/md' 는 마크다운 표시 확인용
+  if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
+  running.add(chat.id);
   chat.messages.push({ role: 'user', content, at: nowIso() });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
   saveChat(chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-  const chars = Array.from(text);
-  let i = 0, sent = '';
-  const finish = () => { // 끝났든 중지했든 지금까지 받은 만큼 저장
-    clearInterval(timer);
-    chat.messages.push({ role: 'assistant', content: sent, at: nowIso() });
-    saveChat(chat);
+
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS];
+  const child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: brainEnv(), windowsHide: true });
+  let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null;
+  let finished = false, aborted = false, timedOut = false;
+
+  const emit = (text) => {
+    if (!text) return;
+    sent += text;
+    if (!res.destroyed) res.write(`data: ${JSON.stringify({ t: text })}\n\n`);
   };
-  const timer = setInterval(() => {
-    if (i >= chars.length) { finish(); res.write('event: done\ndata: {}\n\n'); res.end(); return; }
-    sent += chars[i++];
-    res.write(`data: ${JSON.stringify({ t: chars[i - 1] })}\n\n`);
-  }, CHAR_DELAY_MS);
-  res.on('close', () => { if (!res.writableFinished && i < chars.length) { i = chars.length; finish(); } });
+  const gap = () => (!sent || sent.endsWith('\n\n') ? '' : sent.endsWith('\n') ? '\n' : '\n\n');
+
+  function onLine(line) {
+    let ev; try { ev = JSON.parse(line); } catch { return; }
+    if (ev.session_id && (ev.type === 'system' || ev.type === 'result') && ev.session_id !== chat.sessionId) {
+      chat.sessionId = ev.session_id; saveChat(chat); // 다음 말에 --resume 으로 이어가려고 저장
+    }
+    if (ev.type === 'stream_event' && !ev.parent_tool_use_id) {
+      const e = ev.event || {};
+      if (e.type === 'content_block_start' && e.content_block && e.content_block.type === 'tool_use') {
+        emit(`${gap()}⏺ ${TOOL_LABELS[e.content_block.name] || '도구 쓰는 중'}\n\n`);
+      } else if (e.type === 'content_block_delta' && e.delta && e.delta.type === 'text_delta') emit(e.delta.text);
+    } else if (ev.type === 'rate_limit_event' && ev.rate_limit_info && ev.rate_limit_info.status === 'rejected') limit = ev.rate_limit_info;
+    else if (ev.type === 'result') result = ev;
+  }
+
+  function explain() { // 실패 이유를 쉬운 한국어로
+    if (spawnErr) return spawnErr.code === 'ENOENT'
+      ? '이 PC 에서 claude 프로그램을 찾을 수 없습니다. Claude Code 가 설치되어 있는지 확인해 주세요.'
+      : `claude 를 실행하지 못했습니다. (${spawnErr.message})`;
+    if (timedOut) return '답이 너무 오래 걸려 중단했습니다. 질문을 나눠서 다시 해 보세요.';
+    const raw = `${(result && result.result) || ''} ${errText}`;
+    if (limit || /usage limit|rate limit|hit your limit|limit reached|too many requests|overloaded/i.test(raw)) {
+      const when = limit && limit.resetsAt ? `${new Date(limit.resetsAt * 1000).toLocaleString('ko-KR')} 쯤` : '잠시 뒤';
+      return `Claude 사용 한도에 닿았습니다. ${when} 다시 시도해 주세요.`;
+    }
+    if (/not logged in|\/login|authenticat|unauthorized|invalid api key|credentials/i.test(raw))
+      return 'Claude Code 에 로그인되어 있지 않습니다. 명령 창에서 claude 를 한 번 실행해 로그인한 뒤 다시 시도해 주세요.';
+    if (/no conversation found/i.test(raw)) {
+      chat.sessionId = null;
+      return '이전 대화의 기억을 찾지 못했습니다. 같은 말을 한 번 더 보내시면 새 기억으로 시작합니다.';
+    }
+    return `Claude 가 오류로 끝났습니다. ${raw.trim().slice(0, 200)}`;
+  }
+
+  function finish() {
+    if (finished) return; finished = true; clearTimeout(cap);
+    if (buf.trim()) onLine(buf);
+    if (!aborted) {
+      if (result && !result.is_error) { if (!sent.trim() && result.result) emit(result.result); }
+      else emit(`${gap()}⚠ ${explain()}`);
+    }
+    if (!sent.trim()) sent = '(중지했습니다.)';
+    chat.messages.push({ role: 'assistant', content: sent, at: nowIso() }); // 중지해도 지금까지 받은 만큼 저장
+    saveChat(chat);
+    running.delete(chat.id);
+    if (!res.destroyed) { res.write('event: done\ndata: {}\n\n'); res.end(); }
+  }
+
+  const cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
+  child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
+  child.stderr.on('data', (d) => { if (errText.length < 2000) errText += d; });
+  child.stdin.on('error', () => {});
+  child.on('error', (e) => { spawnErr = e; finish(); });
+  child.on('close', finish);
+  child.stdin.end(content); // 사용자 말은 명령줄이 아니라 표준입력으로
+  res.on('close', () => { if (!finished) { aborted = true; killTree(child); } }); // ■ 중지 → claude 끄기
 }
 
 // ---------- 요청 처리 ----------

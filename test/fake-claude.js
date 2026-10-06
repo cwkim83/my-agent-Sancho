@@ -1,0 +1,24 @@
+// 점검용 가짜 claude: 진짜 Claude Code 와 같은 모양(stream-json)의 줄을 흉내 낸다. 서버 점검(selftest.js)에서만 쓴다.
+let input = '';
+process.stdin.on('data', (d) => (input += d)).on('end', () => run(input.trim()));
+const a = process.argv;
+const ri = a.indexOf('--resume');
+const sid = ri >= 0 ? a[ri + 1] : 'fake-' + Date.now();
+const out = (o) => process.stdout.write(JSON.stringify({ session_id: sid, ...o }) + '\n');
+const delta = (text) => out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function run(msg) {
+  out({ type: 'system', subtype: 'init' });
+  if (msg === '/login') { out({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }); process.exit(1); }
+  if (msg === '/limit') {
+    out({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
+    out({ type: 'result', is_error: true, result: 'Claude AI usage limit reached' }); process.exit(1);
+  }
+  if (msg === '/slow') { for (let i = 0; i < 300; i++) { delta('느림 '); await sleep(100); } }
+  if (msg.includes('파일')) out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'Read', id: 't1' } } });
+  const leak = (process.env.CLAUDECODE || process.env.ANTHROPIC_BASE_URL) ? 'LEAK' : 'clean';
+  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok`;
+  for (let i = 0; i < reply.length; i += 4) { delta(reply.slice(i, i + 4)); await sleep(5); }
+  out({ type: 'result', subtype: 'success', is_error: false, result: reply });
+}
