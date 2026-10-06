@@ -149,6 +149,7 @@ async function run() {
   await runCal(ck);
   await runProjects(ck);
   await runWbs(ck);
+  runSkills();
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -314,7 +315,8 @@ async function runSeed(ck) {
   const logDays = Object.keys(wdoc.actualLog).sort();
   check('예시 공정표에는 S-곡선용 과거 기록이 주 단위로 쌓여 있고(8개 이상), 줄어들지 않음', logDays.length >= 8 && logDays.every((d, i) => i === 0 || wdoc.actualLog[d] >= wdoc.actualLog[logDays[i - 1]]));
   const wkeys = new Set([...Object.keys(wdoc), ...wdoc.items.flatMap(Object.keys)]);
-  check('스킬 문서에 공정표 파일의 모든 필드가 적혀 있음', [...wkeys].every((k) => skillText.includes('`' + k + '`')) && skillText.includes('data/wbs/<프로젝트 id>.json'));
+  const wbsSkillText = fs.readFileSync(path.join(dir, '.claude', 'skills', 'wbs', 'SKILL.md'), 'utf8');
+  check('wbs 스킬 문서에 공정표 파일의 모든 필드가 적혀 있음', [...wkeys].every((k) => wbsSkillText.includes('`' + k + '`')) && wbsSkillText.includes('data/wbs/<프로젝트 id>.json'));
 
   const before = snapshot();
   const r2 = await seed(), j2 = await r2.json();
@@ -774,6 +776,46 @@ async function runWbs(ck) {
   check('만료된 링크는 열리지 않음(404)', (await anon(`/api/share/${tok3}`)).status === 404 && (await anon(`/s/${tok3}`)).status === 404 && (await (await api('GET', '/api/wbs/r1/share')).json()).active === false);
 }
 
+// 비서의 스킬(templates/skills → data/.claude/skills)과 행동 지침(.system.md)에 WBS 규칙이 들어갔는지
+function runSkills() {
+  const wbsCalc = require('./public/m/wbs-calc.js');
+  const read = (...p) => fs.readFileSync(path.join(...p), 'utf8');
+  const names = fs.readdirSync(path.join(__dirname, 'templates', 'skills'));
+  check('templates/skills 의 스킬 폴더(platform·wbs)가 모두 data/.claude/skills/<이름>/SKILL.md 로 똑같이 복사됨(옛 내용은 새 내용으로 바뀜)',
+    names.includes('platform') && names.includes('wbs') && names.every((n) => read(dir, '.claude', 'skills', n, 'SKILL.md') === read(__dirname, 'templates', 'skills', n, 'SKILL.md')));
+  const sk = read(dir, '.claude', 'skills', 'wbs', 'SKILL.md'), plat = read(dir, '.claude', 'skills', 'platform', 'SKILL.md');
+  check('wbs 스킬: 이름 wbs, 설명에 "WBS 짜 줘"(만들기)·진도율(고치기)이 있어 요청이 오면 이 문서를 고르게 함', /^---\r?\nname: wbs\r?\ndescription: .*WBS 짜 줘.*진도율/.test(sk));
+  check('wbs 스킬: 코드 붙이는 법(1, 1.1, 빈틈없이)·가중치(형제끼리 합 100)·기간(프로젝트 기간 안)·새로 만들 때 진도율 0 규칙이 있음',
+    ['`1`, `1.1`, `1.1.1`', '1 부터 빈틈없이', '같은 부모 아래 형제끼리 합이 100', '프로젝트 기간 안', '새로 만들 때는 **0**'].every((x) => sk.includes(x)));
+  check('wbs 스킬: "WBS 짜 줘" 절차(프로젝트 목록 맨 끝에 추가·이미 있는 공정표는 덮어쓰지 않고 먼저 물음·다시 읽어 확인)가 있음',
+    ['프로젝트 목록 **맨 끝에**', '이미 있으면 덮어쓰지 않는다', '파일을 다시 읽어 확인한다', 'data/db/projects.json'].every((x) => sk.includes(x)));
+  check('wbs 스킬: "진도율 60%로" 절차(같은 이름 프로젝트는 공정표가 있는 쪽·"용접의 첫 작업"=N.1·대단락은 직접 못 바꿈·숫자 하나만)가 있음',
+    ['그중 `data/wbs/<id>.json` 이 있는 것을 쓴다', '`○○의 첫 작업` = 대단락 `○○` 의 첫 하위(`N.1`)', '대단락은 진도율을 직접 못 바꾼다', '숫자 하나만'].every((x) => sk.includes(x)));
+  check('platform 스킬에는 WBS 형식 대신 wbs 스킬로 가라는 안내만 있음(같은 내용이 두 군데 있어 어긋나지 않게)', plat.includes('wbs 스킬') && !plat.includes('`actualLog`') && !plat.includes('_history'));
+
+  // 스킬 안의 "작성 예"가 스킬 자신의 규칙을 지키는지 (예가 틀리면 비서가 틀린 걸 배운다)
+  const ex = JSON.parse(/```json\r?\n([\s\S]*?)```/.exec(sk)[1]);
+  const [, from, to] = /예시 프로젝트 기간: (\d{4}-\d\d-\d\d) ~ (\d{4}-\d\d-\d\d)/.exec(sk);
+  const calc = wbsCalc.compute(ex, '2026-05-01'), leaves = calc.rows.filter((r) => r.leaf);
+  check('작성 예: 파일 검증을 통과하고(코드·날짜·진도), 형식 경고가 없고, 상태 계산이 됨', wbsCalc.validate(ex) === '' && calc.problems.length === 0 && ex.bac === null && ex.ac === null && Object.keys(ex.actualLog).length === 0);
+  const sums = {};
+  for (const it of ex.items) { const p = wbsCalc.parentOf(it.code); sums[p] = (sums[p] || 0) + it.weight; }
+  check('작성 예: 같은 부모 아래 가중치 합이 모두 100 (대단락끼리·각 대단락 안 작업끼리)', Object.values(sums).length === 4 && Object.values(sums).every((v) => v === 100));
+  check('작성 예: 새로 만든 작업의 진도율은 모두 0, 대단락에는 시작·완료·진도율이 없음', leaves.length === 8 && ex.items.filter((i) => i.type === '작업').every((i) => i.progress === 0)
+    && ex.items.filter((i) => i.type === '대단락').every((i) => !('start' in i) && !('end' in i) && !('progress' in i)));
+  check('작성 예: 모든 작업이 프로젝트 기간(2026-04-01 ~ 2026-06-29) 안이고, 첫 작업은 시작일에서 시작해 끊김·겹침 없이 이어져 종료일에 끝남',
+    leaves.every((r) => r.start >= from && r.end <= to && r.start <= r.end) && leaves[0].start === from && leaves.at(-1).end === to
+    && leaves.every((r, i) => i === 0 || r.start === wbsCalc.addDays(leaves[i - 1].end, 1)));
+  const rec = JSON.parse(/`(\{ "id": "[a-z0-9]{8}".*?\})`/.exec(sk)[1]);
+  check('프로젝트 목록에 넣는 예: platform 스킬의 프로젝트 필드 그대로(id 8자·계획·진도 0)이고 공정표 예와 같은 기간',
+    Object.keys(rec).join() === 'id,name,client,status,progress,start,due,owner' && rec.status === '계획' && rec.progress === 0 && rec.start === from && rec.due === to);
+
+  // .system.md: 주인이 손본 줄은 그대로 두고, 새 WBS 안내만 맨 끝에 한 번 더해짐
+  const sys = read(dir, '.system.md');
+  check('.system.md: 주인이 손으로 덧붙인 줄과 원래 규칙(기억·업무 데이터)은 그대로 남음', sys.includes('나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)') && sys.includes('## 기억 (data/memory.md)') && sys.includes('## 업무 데이터 (data/db/*.json)'));
+  check('.system.md: WBS 안내(wbs 스킬을 먼저 읽고 따름)가 맨 끝에 정확히 한 번 더해짐', sys.split('<!-- 지침:wbs -->').length === 2 && sys.includes('.claude/skills/wbs/SKILL.md') && sys.indexOf('<!-- 지침:wbs -->') > sys.indexOf('주인이 손으로 덧붙인 줄'));
+}
+
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
 function startServer(port, dataDir, env) {
   const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
@@ -808,6 +850,9 @@ async function runNoClaude() {
 // 옛 스킬 문서가 남아 있는 PC 를 흉내 낸다: 서버를 켜면 templates/ 의 새 내용으로 바뀌어야 한다 (새 규칙이 기존 설치에도 반영되게)
 fs.mkdirSync(path.join(dir, '.claude', 'skills', 'platform'), { recursive: true });
 fs.writeFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), '옛 스킬 문서');
+// 주인이 손본 .system.md 를 흉내 낸다 (옛 템플릿 + 손으로 덧붙인 줄): 서버를 켜도 그 줄은 지워지지 않고, 새 WBS 안내만 맨 끝에 한 번 더해져야 한다
+fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), path.join(dir, '.system.md'));
+fs.appendFileSync(path.join(dir, '.system.md'), '\n나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)\n');
 const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid' });
 srv.ready.then(async () => {
   try {

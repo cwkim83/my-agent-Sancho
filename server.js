@@ -357,13 +357,20 @@ const SYSTEM_FILE = path.join(DATA_DIR, '.system.md'); // 비서의 성격·기�
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.md'); // 비서의 기억 (한 줄에 사실 하나: "- 날짜 내용")
 if (!fs.existsSync(SYSTEM_FILE)) fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), SYSTEM_FILE);
 if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '# 기억\n');
-// 업무 데이터(data/db)의 파일 위치·필드 형식을 가르치는 스킬. 두뇌의 작업 폴더가 data/ 라서 data/.claude/skills/ 에 둔다
-const SKILL_FILE = path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md');
-const SKILL_SRC = path.join(__dirname, 'templates', 'skills', 'platform', 'SKILL.md');
-// 스킬 원본은 templates/ 쪽이다. 서버를 켤 때 내용이 다르면 새 규칙(예: WBS)이 반영되게 다시 복사한다 (비서는 이 파일을 못 고친다)
-if (!fs.existsSync(SKILL_FILE) || fs.readFileSync(SKILL_FILE, 'utf8') !== fs.readFileSync(SKILL_SRC, 'utf8')) {
-  fs.mkdirSync(path.dirname(SKILL_FILE), { recursive: true });
-  fs.copyFileSync(SKILL_SRC, SKILL_FILE);
+// 비서에게 업무 규칙을 가르치는 스킬들(platform: data/db 형식, wbs: 공정표). 두뇌의 작업 폴더가 data/ 라서 data/.claude/skills/<이름>/SKILL.md 에 둔다.
+// 원본은 templates/skills/ 쪽이다. 서버를 켤 때 내용이 다르거나 없으면 다시 복사해, 새 규칙(예: WBS)이 기존 설치에도 반영된다 (비서는 이 파일을 못 고친다)
+const SKILLS_SRC = path.join(__dirname, 'templates', 'skills');
+for (const name of fs.readdirSync(SKILLS_SRC)) {
+  const src = path.join(SKILLS_SRC, name, 'SKILL.md'), dst = path.join(DATA_DIR, '.claude', 'skills', name, 'SKILL.md');
+  if (!fs.existsSync(src)) continue;
+  if (!fs.existsSync(dst) || fs.readFileSync(dst, 'utf8') !== fs.readFileSync(src, 'utf8')) { fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(src, dst); }
+}
+// 새 기능의 행동 지침은 templates/system-add/*.md 에 둔다. 파일 첫 줄의 마커(<!-- … -->)가 .system.md 에 아직 없을 때만 맨 끝에 덧붙인다 —
+// 주인이 손본 .system.md(성격 등)는 지우지 않고 새 규칙만 더해진다
+const ADD_DIR = path.join(__dirname, 'templates', 'system-add');
+for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
+  const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
+  if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
 const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
 const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
