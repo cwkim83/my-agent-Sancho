@@ -35,8 +35,16 @@ async function run(msg) {
   // 개발용 지침·플러그인 훅·커넥터를 싣지 않고, 도구를 7개로 고정했는지 (4편 점검: 비서가 상위 폴더를 프로젝트로 착각하던 원인)
   const iso = arg('--setting-sources') === 'local' && a.includes('--strict-mcp-config') && a.includes('--disable-slash-commands')
     && arg('--tools') === 'Read,Glob,Grep,Edit,Write,WebSearch,WebFetch' ? 'ok' : 'none';
+  // 권한(설정 → 권한)이 명령줄에 어떻게 실렸는지: 플래그 하나가 받는 값들을 모은다
+  const vals = (flag) => { const i = a.indexOf(flag), o = []; if (i < 0) return o; for (let k = i + 1; k < a.length && !a[k].startsWith('--'); k++) o.push(a[k]); return o; };
+  const al = vals('--allowedTools'), dn = vals('--disallowedTools'), G = 'mcp__claude_ai_Gmail__', has = (l, t) => (l.includes(t) ? 'Y' : 'N');
+  const perm = [`apps=${has(al, G + 'search_threads')}`, `send=${has(al, G + 'send_message')}${has(al, G + 'reply')}${has(al, G + 'forward')}`, `sendDeny=${has(dn, G + 'send_message')}${has(dn, G + 'reply')}${has(dn, G + 'forward')}`,
+    `shell=${has(al, 'Bash')}${has(al, 'PowerShell')}`, `toolsShell=${has(vals('--tools')[0].split(','), 'Bash')}`, `home=${a.includes('--add-dir') ? a[a.indexOf('--add-dir') + 1] : 'off'}`,
+    `src=${arg('--setting-sources')}`, `strict=${a.includes('--strict-mcp-config') ? 'Y' : 'N'}`, `hooksOff=${a.includes('--settings') ? 'Y' : 'N'}`, `ts=${has(vals('--tools')[0].split(','), 'ToolSearch')}`].join(' ');
+  if (msg === '/perm') { const t = `PERM ${perm} | allow=${al.join(',')} | deny=${dn.join(',')}`; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 권한 점검용: 받은 허용·거절 목록을 그대로 돌려준다
+  if (msg.startsWith('/tool ')) { out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: msg.slice(6), id: 't9' } } }); delta('끝'); out({ type: 'result', subtype: 'success', is_error: false, result: '끝' }); return; } // 화면에 뜨는 도구 이름표 점검용
   if (msg.startsWith('기억해:')) fs.appendFileSync('memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내
-  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | ctx=${arg('--append-system-prompt')}`;
+  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
   for (let i = 0; i < reply.length; i += 20) { delta(reply.slice(i, i + 20)); await sleep(5); } // 여러 조각으로 흘려보낸다(윈도우는 5ms 가 실제 15ms 쯤이라 조각을 너무 잘게 하면 느려진다)
   out({ type: 'result', subtype: 'success', is_error: false, result: reply });
 }

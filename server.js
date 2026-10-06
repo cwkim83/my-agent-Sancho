@@ -1,6 +1,7 @@
 // Sancho 서버 — Node.js 내장 기능만 사용 (외부 패키지 없음)
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -380,23 +381,75 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
 const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰은 두뇌도 못 보게 막는다
 const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
 const BRAIN_TOOLS = ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebFetch'];
-const BRAIN_ARGS = [
-  '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
-  // 비서는 이 PC 의 Claude Code 를 그대로 쓰지만, 개발할 때의 것은 싣지 않는다 (4편 점검에서 찾음):
-  //  - 주인 PC 의 설정(user)·상위 폴더의 개발용 CLAUDE.md(project)·플러그인 훅·전역 스킬 → 'local' 만 읽는다. 상위 my-agent 를 "프로젝트"로 착각해 스킬 문서를 엉뚱한 곳에서 찾던 원인
-  //  - 메일·슬랙·드라이브 같은 커넥터(MCP) → 하나도 싣지 않는다 (밖으로 보내는 통로가 되지 않게)
-  //  - 쓸 수 있는 도구 자체를 아래 7개로 고정한다 (예약 만들기·알림 보내기 같은 Claude Code 기본 도구도 빼려고)
-  '--setting-sources', 'local', '--strict-mcp-config', '--disable-slash-commands', '--tools', BRAIN_TOOLS.join(','),
-  // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 아직 안 준다
-  '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch',
-  '--disallowedTools', 'Bash', 'PowerShell', ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
-  ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)),
-  '--append-system-prompt-file', SYSTEM_FILE,
-];
+
+// ---------- 권한 (설정 → 권한): data/settings.json 의 "권한". 기본은 전부 꺼짐 ----------
+// settings.json 은 두뇌가 못 읽는 파일(PRIVATE_FILES)이라 비서가 스스로 권한을 켤 수 없다. 켜고 끄는 건 주인이 설정 화면에서만
+const PERM_KEYS = ['연결된앱', '명령실행', '홈폴더'];
+const permsOf = (st) => Object.fromEntries(PERM_KEYS.map((k) => [k, !!(st && st.권한 && st.권한[k] === true)])); // { 연결된앱, 명령실행, 홈폴더 } 모두 true/false (true 가 아니면 꺼짐)
+function readPerms() { try { return permsOf(loadSettings()); } catch { return permsOf(null); } } // 파일이 없거나 깨졌으면 전부 꺼짐 (안전한 쪽)
+// 연결된 앱(Gmail·캘린더·드라이브)의 도구 이름. 이 PC 의 claude 2.1.291 이 시작할 때 알려 준 이름 그대로다 (mcp__claude_ai_<서버>__<도구>).
+// use: 켜면 바로 쓰는 것(읽기·초안·일정/문서 만들기·고치기) / send: 메일 보내기, 주인이 "보낼까요?"에 "네" 한 바로 그 차례에만 / block: 늘 막음(삭제·휴지통·공유·덮어쓰기·초대 응답·스팸·꼬리표)
+// 목록에 없는 새 도구는 허용 목록에 없으니 저절로 막힌다
+const APP_TOOLS = {
+  Gmail: {
+    use: ['search_threads', 'get_thread', 'get_message', 'list_labels', 'list_drafts', 'get_draft', 'create_draft', 'update_draft'],
+    send: ['send_message', 'reply', 'forward'],
+    block: ['apply_sensitive_message_label', 'apply_sensitive_thread_label', 'create_label', 'delete_draft', 'delete_label', 'label_message', 'label_thread', 'mark_message_spam',
+      'mark_thread_spam', 'trash_message', 'trash_thread', 'unlabel_message', 'unlabel_thread', 'unmark_message_spam', 'unmark_thread_spam', 'untrash_message', 'untrash_thread',
+      'update_label', 'update_message_labels'],
+  },
+  Google_Calendar: { use: ['list_calendars', 'list_events', 'get_event', 'search_events', 'suggest_time', 'create_event', 'update_event'], block: ['delete_event', 'respond_to_event'] },
+  Google_Drive: { use: ['search_files', 'list_recent_files', 'get_file_metadata', 'get_file_permissions', 'read_file_content', 'download_file_content', 'create_file', 'copy_file'],
+    block: ['share_file', 'trash_file', 'update_file'] },
+};
+const appNames = (kind) => Object.entries(APP_TOOLS).flatMap(([srv, g]) => (g[kind] || []).map((t) => `mcp__claude_ai_${srv}__${t}`));
+const SHELL_TOOLS = process.platform === 'win32' ? ['Bash', 'PowerShell'] : ['Bash'];
+const HOME_SECRETS = ['.ssh/**', '.aws/**', '.gnupg/**', '.claude/**', '.claude.json', 'AppData/**']; // 홈 폴더를 읽게 해도 로그인 열쇠가 있는 곳은 늘 막는다
+
+// 메일 보내기 문: 직전에 비서가 "보낼까요?" 라고 물었고, 주인이 "네"·"보내 줘" 처럼 짧게 답했을 때만 그 한 차례에 보내기 도구를 연다
+// ("네 근데 제목 바꿔" 처럼 다른 말이 섞이면 열지 않는다 — 비서가 고친 뒤 다시 묻는다)
+const MAIL_YES = /^(?:(?:네|넵|예|응|그래|좋아요?|오케이|ok|okay|yes|y)[\s,.!~]*)?(?:(?:보내|발송)(?:해)?\s*(?:줘|주세요|요|라|봐)?[\s,.!~]*)?$/i;
+function mailConfirmed(chat, content) {
+  const last = chat.messages[chat.messages.length - 1], s = content.trim();
+  return !!(last && last.role === 'assistant' && last.content.includes('보낼까요?') && s && MAIL_YES.test(s));
+}
+
+function brainArgs({ mailOk = false } = {}) { // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
+  const P = readPerms(), apps = P.연결된앱, sh = P.명령실행 ? SHELL_TOOLS : [];
+  return [
+    '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
+    // 비서는 이 PC 의 Claude Code 를 그대로 쓰지만, 개발할 때의 것은 싣지 않는다 (4편 점검에서 찾음):
+    //  - 주인 PC 의 설정(user)·상위 폴더의 개발용 CLAUDE.md(project)·플러그인 훅·전역 스킬 → 'local' 만 읽는다. 상위 my-agent 를 "프로젝트"로 착각해 스킬 문서를 엉뚱한 곳에서 찾던 원인
+    //  - 메일·슬랙·드라이브 같은 커넥터(MCP) → 하나도 싣지 않는다 (밖으로 보내는 통로가 되지 않게)
+    //  - 쓸 수 있는 도구 자체를 7개(+ 권한으로 켠 것)로 고정한다 (예약 만들기·알림 보내기 같은 Claude Code 기본 도구도 빼려고)
+    // 연결된 앱을 켜면 예외: 연결된 앱은 'user' 설정을 읽어야만 나타나고 --strict-mcp-config 는 그것까지 막는다 (이 PC 에서 직접 확인).
+    // 그래서 user 를 읽되 훅은 끄고(disableAllHooks), 허용 목록에 있는 도구만 쓰게 한다 — 나머지 커넥터·플러그인 도구는 허용 목록에 없어 거절된다
+    // 연결된 앱을 켜면 ToolSearch(도구 찾기, 읽기만)도 더한다: 다른 커넥터 도구 60여 개의 설명이 통째로 실려 대화 시작마다 토큰이 12배(6.6천 → 8만)로 늘던 것을, 이름만 싣고 필요할 때 찾아 쓰게 해서 1.2만으로 줄인다 (이 PC 에서 측정)
+    '--setting-sources', apps ? 'user,local' : 'local', '--disable-slash-commands', '--tools', [...BRAIN_TOOLS, ...(apps ? ['ToolSearch'] : []), ...sh].join(','),
+    ...(apps ? ['--settings', '{"disableAllHooks":true}'] : ['--strict-mcp-config']),
+    // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 권한을 켰을 때만
+    '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch', ...sh,
+    ...(P.홈폴더 ? ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/**)`) : []), // 홈 폴더는 읽기만 (고치기·쓰기는 ./** 밖이라 안 됨)
+    ...(apps ? [...appNames('use'), ...(mailOk ? appNames('send') : [])] : []),
+    '--disallowedTools', ...(P.명령실행 ? [] : ['Bash', 'PowerShell']), ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
+    ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)),
+    // 명령을 켜면 셸로 비밀 파일을 열거나 지침을 고칠 수 있다. 이름이 드러난 명령은 막는다 (ponytail: 이름을 돌려 쓰는 꼼수까지는 못 막는다 — 8편 안전장치에서 더 조인다)
+    ...sh.flatMap((t) => [...PRIVATE_FILES, '.system.md', '.claude'].map((f) => `${t}(*${f}*)`)),
+    ...(P.홈폴더 ? HOME_SECRETS.flatMap((f) => ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/${f})`)) : []),
+    ...(apps ? [...appNames('block'), ...(mailOk ? [] : appNames('send'))] : []),
+    ...(P.홈폴더 ? ['--add-dir', os.homedir()] : []),
+    '--append-system-prompt-file', SYSTEM_FILE,
+  ];
+}
 // 테스트에서는 진짜 claude 대신 가짜 스크립트를 쓴다
 const BRAIN_CMD = process.env.SANCHO_BRAIN_SCRIPT ? [process.execPath, process.env.SANCHO_BRAIN_SCRIPT] : ['claude'];
 const TOOL_LABELS = { Read: '파일 읽는 중', Glob: '파일 찾는 중', Grep: '내용 검색 중', Edit: '파일 고치는 중', Write: '파일 쓰는 중',
-  WebSearch: '웹 검색 중', WebFetch: '웹 페이지 읽는 중' };
+  WebSearch: '웹 검색 중', WebFetch: '웹 페이지 읽는 중', Bash: '명령 실행 중', PowerShell: '명령 실행 중' };
+const APP_LABELS = { Gmail: '메일 확인 중', Google_Calendar: '캘린더 확인 중', Google_Drive: '드라이브 확인 중' };
+function toolLabel(name) { // 연결된 앱은 어느 앱인지 보이게 (메일 보내기는 따로 눈에 띄게)
+  const m = /^mcp__claude_ai_(Gmail|Google_Calendar|Google_Drive)__(.+)$/.exec(name || '');
+  return m ? (appNames('send').includes(name) ? '메일 보내는 중' : APP_LABELS[m[1]]) : TOOL_LABELS[name] || '도구 쓰는 중';
+}
 const BRAIN_MAX_MS = Number(process.env.SANCHO_BRAIN_MAX_MS) || 10 * 60 * 1000; // 점검에서만 짧게 줄인다
 const running = new Set(); // 지금 답하는 중인 대화
 
@@ -439,12 +492,13 @@ function explainBrain({ spawnErr, timedOut, result, errText, limit }) {
 function streamReply(res, chat, content, user) {
   if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
   running.add(chat.id);
+  const mailOk = mailConfirmed(chat, content); // 새 말을 대화에 넣기 전에 본다: 바로 앞이 비서의 "보낼까요?" 였는지
   chat.messages.push({ role: 'user', content, at: nowIso() });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
   saveChat(chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
 
-  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS, '--append-system-prompt', brainCtx(user.name)];
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ mailOk }), '--append-system-prompt', brainCtx(user.name)];
   let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null, cap = null, child = null;
   let finished = false, aborted = false, timedOut = false;
 
@@ -463,7 +517,7 @@ function streamReply(res, chat, content, user) {
     if (ev.type === 'stream_event' && !ev.parent_tool_use_id) {
       const e = ev.event || {};
       if (e.type === 'content_block_start' && e.content_block && e.content_block.type === 'tool_use') {
-        emit(`${gap()}⏺ ${TOOL_LABELS[e.content_block.name] || '도구 쓰는 중'}\n\n`);
+        emit(`${gap()}⏺ ${toolLabel(e.content_block.name)}\n\n`);
       } else if (e.type === 'content_block_delta' && e.delta && e.delta.type === 'text_delta') emit(e.delta.text);
     } else if (ev.type === 'rate_limit_event' && ev.rate_limit_info && ev.rate_limit_info.status === 'rejected') limit = ev.rate_limit_info;
     else if (ev.type === 'result') result = ev;
@@ -533,7 +587,8 @@ function loadSchedule() { // 파일이 없으면 빈 목록, 깨져 있으면 �
   return v;
 }
 
-// 화면 없이 두뇌에 한 번 묻고 끝 결과만 받는다. 대화와 같은 두뇌·같은 도구 제한(BRAIN_ARGS), 새 세션(--resume 없음). 절대 reject 하지 않는다
+// 화면 없이 두뇌에 한 번 묻고 끝 결과만 받는다. 대화와 같은 두뇌·같은 도구 제한(brainArgs), 새 세션(--resume 없음). 절대 reject 하지 않는다
+// 주인이 없으니 메일 보내기는 늘 막힌다 (brainArgs 의 mailOk 가 꺼진 채로)
 // ponytail: 띄우고 줄 읽는 부분이 streamReply 와 닮았다. 대화는 점검이 촘촘해서 건드리지 않았다. 고칠 곳이 세 군데가 되면 spawnBrain 으로 합친다
 function askBrainOnce(prompt, ctx) {
   return new Promise((resolve) => {
@@ -548,7 +603,7 @@ function askBrainOnce(prompt, ctx) {
       if (buf.trim()) onLine(buf);
       resolve(result && !result.is_error ? { ok: true, text: String(result.result || '').trim() } : { ok: false, text: explainBrain({ spawnErr, timedOut, result, errText, limit }) });
     };
-    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...BRAIN_ARGS, '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
+    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...brainArgs(), '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
     cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
     child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
     child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
@@ -602,9 +657,10 @@ async function sendTelegram(text) { // { ok: true } | { ok: false, error: 쉬운
 // 폰 화면에 읽기 좋게: 마크다운 기호(굵게·제목·표 구분줄)를 걷어 내고 N자까지만
 const plainSummary = (t, max) => { const s = t.replace(/\*\*/g, '').replace(/^#{1,4}\s+/gm, '').replace(/^[\s|:-]*-{3,}[\s|:-]*$/gm, '').replace(/\n{3,}/g, '\n\n').trim(); return s.length > max ? `${s.slice(0, max)}…` : s; };
 
-// /api/settings[/telegram[/test]] — 설정 화면이 쓴다. 처리했으면 true
-//   GET /api/settings → { telegram: { token: "****"|"", chatId: "****"|"" } }  (값 자체는 절대 안 보낸다)
+// /api/settings[/telegram[/test]|/permissions] — 설정 화면이 쓴다. 처리했으면 true
+//   GET /api/settings → { telegram: { token: "****"|"", chatId: "****"|"" }, permissions: { 연결된앱, 명령실행, 홈폴더 } }  (텔레그램 값 자체는 절대 안 보낸다)
 //   PUT /api/settings/telegram { token?, chatId? } (비운 칸은 그대로 둠) · DELETE → 지움 · POST /test → 시험 메시지 한 통
+//   PUT /api/settings/permissions { 연결된앱?, 명령실행?, 홈폴더? } (true/false 만, 보낸 칸만 바뀜) → { permissions }
 async function settingsApi(req, res, sub, test) {
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
   let b = {};
@@ -612,7 +668,14 @@ async function settingsApi(req, res, sub, test) {
   // 여기부터는 await 없이: 읽기→고치기→쓰기를 한 번에
   let st; try { st = loadSettings(); } catch { return done(500, { error: 'data/settings.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
   const t = st.telegram && typeof st.telegram === 'object' ? st.telegram : {};
-  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' } }) : false;
+  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st) }) : false;
+  if (sub === 'permissions') {
+    if (M !== 'PUT' || test) return false;
+    const keys = b && typeof b === 'object' && !Array.isArray(b) ? Object.keys(b) : [];
+    if (!keys.length || !keys.every((k) => PERM_KEYS.includes(k) && typeof b[k] === 'boolean')) return done(400, { error: `바꿀 권한을 true/false 로 보내 주세요. (${PERM_KEYS.join('·')})` });
+    st.권한 = { ...permsOf(st), ...b }; writeJson(SETTINGS_FILE, st);
+    return done(200, { permissions: permsOf(st) });
+  }
   if (!test && M === 'PUT') {
     const token = typeof b.token === 'string' ? b.token.trim() : '', chatId = typeof b.chatId === 'string' ? b.chatId.trim() : '';
     if (!token && !chatId) return done(400, { error: '바꿀 값을 입력해 주세요.' });
@@ -804,7 +867,7 @@ async function handle(req, res) {
 
     const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|phone|run))?)?$/);
     if (qm && await scheduleApi(req, res, qm[1], qm[2])) return;
-    const gm = p.match(/^\/api\/settings(?:\/(telegram)(?:\/(test))?)?$/);
+    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions)(?:\/(test))?)?$/);
     if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
 
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"

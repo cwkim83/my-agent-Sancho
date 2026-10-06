@@ -91,7 +91,7 @@ async function run() {
     ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
     ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share'],
     ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['POST', '/api/schedule/x/phone'], ['DELETE', '/api/schedule/x'],
-    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test']];
+    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -162,6 +162,7 @@ async function run() {
   await runSchedApi(ck);
   await runTelegram(ck);
   await runInbox(ck);
+  await runPerms(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -1244,6 +1245,128 @@ async function runInbox(ck) {
       '@BotFather', '/newbot', '@userinfobot', '시작(Start)', '봇 토큰', '채팅 ID'].every((w) => html.includes(w)));
   check('설정 화면: 시험 보내기 전에 저장하지 않은 입력이 있으면 안내, 예약 칸에는 📱 체크(휴대폰으로도 보내기)와 "텔레그램 설정 필요" 표시가 있음',
     html.includes('아직 저장되지 않았어요') && html.includes('data-phone') && html.includes('휴대폰으로도 보내기') && html.includes('텔레그램 설정 필요'));
+}
+
+// 권한(설정 → 권한): 기본 전부 꺼짐 · 스위치 저장 · claude 명령줄에 실리는 모양 · 메일은 "보낼까요?" 에 "네" 한 차례에만 · 예약은 못 보냄 · 화면
+// (진짜 메일·일정은 건드리지 않는다. 가짜 claude 가 받은 명령줄의 허용·거절 목록만 본다)
+async function runPerms(ck) {
+  const { H, until, writeSched, mine, ago, mkE } = schedKit(ck);
+  const put = (b, extra) => fetch(BASE + '/api/settings/permissions', { method: 'PUT', headers: { ...H, ...extra }, body: JSON.stringify(b) });
+  const getP = async () => (await (await fetch(BASE + '/api/settings', { headers: H })).json()).permissions;
+  const newChat = async () => (await (await fetch(BASE + '/api/chats', { method: 'POST', headers: H })).json()).id;
+  const say = async (id, content) => { const r = await fetch(`${BASE}/api/chats/${id}/messages`, { method: 'POST', headers: H, body: JSON.stringify({ content }) }); return [...(await r.text()).matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join(''); };
+  const dump = async () => { const t = await say(await newChat(), '/perm'), m = /^PERM (.*) \| allow=(.*) \| deny=(.*)$/.exec(t) || []; return { flags: m[1], allow: (m[2] || '').split(','), deny: (m[3] || '').split(','), raw: t }; };
+  const send3 = (t) => (/ send=([YN]{3}) /.exec(t) || [])[1], deny3 = (t) => (/ sendDeny=([YN]{3}) /.exec(t) || [])[1];
+  const sfile = path.join(dir, 'settings.json'), saved = () => JSON.parse(fs.readFileSync(sfile, 'utf8')).권한;
+  const nothingSaved = () => !fs.existsSync(sfile) || saved() === undefined; // 텔레그램 점검이 settings.json 을 이미 만들어 뒀을 수 있다 — "권한" 칸이 아직 없다는 뜻
+  const P0 = { 연결된앱: false, 명령실행: false, 홈폴더: false }, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const win = process.platform === 'win32', SH = win ? ['Bash', 'PowerShell'] : ['Bash'], G = 'mcp__claude_ai_Gmail__';
+  const DEFAULT_FLAGS = 'apps=N send=NNN sendDeny=NNN shell=NN toolsShell=N home=off src=local strict=Y hooksOff=N ts=N';
+  const ask = async (asker, reply) => { const id = await newChat(); await say(id, asker); return await say(id, reply); }; // 비서가 asker 라고 말한 바로 다음에 주인이 reply 라고 답한 차례의 답
+
+  // 기본값과 저장
+  const d0 = await dump();
+  check('처음에는 권한이 전부 꺼져 있음(설정 API 의 permissions)', same(await getP(), P0));
+  check('전부 꺼진 채로는 지금까지와 똑같음: 설정은 local 만·커넥터(MCP) 안 싣고·명령 도구 거절·홈 폴더·연결된 앱 도구가 하나도 없음',
+    d0.flags === DEFAULT_FLAGS && d0.deny.includes('Bash') && d0.deny.includes('PowerShell') && !d0.allow.some((t) => t.startsWith('mcp__') || t.includes('~')) && !d0.deny.some((t) => t.startsWith('mcp__')));
+  const bads = [{ 연결된앱: 'true' }, { 연결된앱: 1 }, {}, { 모르는칸: true }, { 연결된앱: true, 모르는칸: true }, [true], null, '글'];
+  const badRes = await Promise.all(bads.map((b) => put(b)));
+  check('이상한 값(true/false 아님·빈 값·모르는 칸·배열·글자)은 400 이고, 아무것도 저장되지 않음', badRes.every((r) => r.status === 400) && (await badRes[0].json()).error.includes('true/false') && same(await getP(), P0) && nothingSaved());
+  check('로그인 없이는 권한을 못 바꾸고(401), 다른 사이트에서 온 요청은 403 이며, 어느 쪽도 저장되지 않음',
+    (await fetch(BASE + '/api/settings/permissions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"명령실행":true}' })).status === 401
+    && (await put({ 명령실행: true }, { Origin: 'https://evil.example' })).status === 403 && same(await getP(), P0) && nothingSaved());
+  check('권한 주소는 PUT 만 받음(다른 방식은 404)', (await fetch(BASE + '/api/settings/permissions', { method: 'DELETE', headers: H })).status === 404 && (await fetch(BASE + '/api/settings/permissions/test', { method: 'PUT', headers: H, body: '{}' })).status === 404);
+
+  // 연결된 앱
+  const on1 = await put({ 연결된앱: true }), j1 = await on1.json();
+  check('연결된 앱 스위치를 켜면 저장되고(settings.json 의 "권한"), 켠 칸만 바뀜', on1.status === 200 && same(j1.permissions, { ...P0, 연결된앱: true }) && same(saved(), { ...P0, 연결된앱: true }) && same(await getP(), j1.permissions));
+  const d1 = await dump(), names1 = [...d1.allow, ...d1.deny].filter((t) => t.startsWith('mcp__claude_ai_')), has = (l, t) => l.includes(t);
+  check('연결된 앱을 켜면: 연결된 앱을 보려고 user 설정을 읽되(훅은 끔) 커넥터 막이(strict)를 풀고, 도구 찾기(ToolSearch)를 더해 토큰을 아끼고, 명령·홈 폴더는 그대로 꺼짐',
+    d1.flags === 'apps=Y send=NNN sendDeny=YYY shell=NN toolsShell=N home=off src=user,local strict=N hooksOff=Y ts=Y' && has(d1.deny, 'Bash') && has(d1.deny, 'PowerShell'));
+  check('허용 목록에 Gmail·캘린더·드라이브의 읽기·초안·만들기 도구 이름(mcp__claude_ai_…)이 덧붙음',
+    ['search_threads', 'get_thread', 'get_message', 'create_draft', 'update_draft'].every((t) => has(d1.allow, G + t))
+    && ['list_events', 'get_event', 'search_events', 'create_event', 'update_event'].every((t) => has(d1.allow, `mcp__claude_ai_Google_Calendar__${t}`))
+    && ['search_files', 'read_file_content', 'download_file_content', 'create_file'].every((t) => has(d1.allow, `mcp__claude_ai_Google_Drive__${t}`)));
+  check('메일 보내기(send_message·reply·forward)는 허용 목록에 없고 거절 목록에 있음 — 평소에는 못 보냄', ['send_message', 'reply', 'forward'].every((t) => !has(d1.allow, G + t) && has(d1.deny, G + t)));
+  check('지우기·휴지통·공유·덮어쓰기·초대 응답은 늘 거절',
+    [G + 'trash_message', G + 'trash_thread', G + 'delete_draft', 'mcp__claude_ai_Google_Calendar__delete_event', 'mcp__claude_ai_Google_Calendar__respond_to_event',
+      'mcp__claude_ai_Google_Drive__share_file', 'mcp__claude_ai_Google_Drive__trash_file', 'mcp__claude_ai_Google_Drive__update_file'].every((t) => has(d1.deny, t) && !has(d1.allow, t)));
+  check('이 PC 에서 확인한 도구 50개(Gmail 30·캘린더 9·드라이브 11)가 하나도 빠짐·겹침 없이 허용 아니면 거절에 들어 있음',
+    names1.length === 50 && new Set(names1).size === 50 && names1.filter((t) => t.includes('_Gmail__')).length === 30 && names1.filter((t) => t.includes('_Google_Calendar__')).length === 9
+    && names1.filter((t) => t.includes('_Google_Drive__')).length === 11 && !d1.allow.some((t) => d1.deny.includes(t)));
+  check('파일 도구는 여전히 data/ 안(./**)으로만, 비밀번호·토큰 파일은 여전히 읽지도 못함', ['Read', 'Glob', 'Grep', 'Edit', 'Write'].every((t) => has(d1.allow, `${t}(./**)`)) && !has(d1.allow, 'Read') && has(d1.deny, 'Read(./settings.json)') && has(d1.deny, 'Edit(./.system.md)'));
+
+  // 메일 보내기: 직전에 비서가 "보낼까요?" 라고 물었고 주인이 짧게 "네" 한 그 차례에만
+  const yes = ['네', '네.', '네, 보내 주세요.', '보내 줘', '보내줘', '응', 'Yes', 'ok', '좋아요', '발송해 줘'];
+  const yesRes = []; for (const y of yes) yesRes.push(send3(await ask('초안입니다. 받는 사람: 가나다. 보낼까요?', y)));
+  check('"보낼까요?" 다음에 주인이 "네"·"보내 줘"·"응"·"Yes" 같은 짧은 말로만 답하면, 그 차례에만 보내기 도구가 허용됨', yesRes.every((r) => r === 'YYY'));
+  const no = ['아니', '보내지 마', '네 근데 제목 바꿔 줘', '네가 알아서 해', '잠깐', '수신자를 바꿔 줘', '네 그런데 보내지는 말고 초안만'];
+  const noRes = []; for (const n of no) noRes.push(send3(await ask('초안입니다. 보낼까요?', n)));
+  check('"아니"·"보내지 마"·"네 근데 제목 바꿔" 처럼 다른 말이 섞이면 허용되지 않음(비서가 고친 뒤 다시 물음)', noRes.every((r) => r === 'NNN'));
+  const idNo = await newChat();
+  check('비서가 "보낼까요?" 라고 묻지 않았으면 "네" 라고만 해도 안 열림(첫 말·다른 말 뒤)', send3(await say(idNo, '네')) === 'NNN' && send3(await say(idNo, '네')) === 'NNN');
+  const idStale = await newChat(); await say(idStale, '초안입니다. 보낼까요?'); await say(idStale, '음 잠깐');
+  check('바로 앞 차례가 "보낼까요?" 가 아니면(그 사이에 다른 말이 오갔으면) 안 열림', send3(await say(idStale, '네')) === 'NNN');
+  const idOnce = await newChat(); await say(idOnce, '초안입니다. 보낼까요?');
+  const okTurn = await say(idOnce, '네');
+  check('열리는 건 그 한 차례뿐: 그 차례의 허용 목록엔 보내기 도구가 있고 거절엔 없고, 바로 다음 차례에는 다시 닫힘',
+    send3(okTurn) === 'YYY' && deny3(okTurn) === 'NNN' && send3(await say(idOnce, '네')) === 'NNN' && deny3(await say(idOnce, '고마워')) === 'YYY');
+
+  // 예약은 주인이 없으니 연결된 앱이 켜져 있어도 메일을 못 보낸다
+  writeSched([mkE('perm0001', '권한 점검', { 종류: 'every', 분: 600 }, '/perm', { 마지막실행: ago(1) })]);
+  await fetch(BASE + '/api/schedule/perm0001/run', { method: 'POST', headers: H });
+  await until(async () => (await mine(/^예약 결과: 권한 점검$/)).length === 1);
+  const sn = (await mine(/^예약 결과: 권한 점검$/))[0] || {};
+  check('예약 실행에도 지금 권한이 실리되(연결된 앱 켜짐) 메일 보내기는 늘 거절', String(sn.detail).includes('apps=Y send=NNN sendDeny=YYY'));
+  if (sn.id) await fetch(`${BASE}/api/db/notices/${sn.id}`, { method: 'DELETE', headers: H });
+  writeSched([]);
+
+  // 명령 실행
+  check('연결된 앱을 끄고 명령 실행을 켬', (await put({ 연결된앱: false, 명령실행: true })).status === 200 && same(await getP(), { ...P0, 명령실행: true }));
+  const d2 = await dump();
+  check(`명령 실행을 켜면 Bash${win ? '·PowerShell' : ''} 이 도구 목록·허용 목록에 들어가고 거절 목록에서는 빠짐(연결된 앱은 다시 꺼짐)`,
+    d2.flags === `apps=N send=NNN sendDeny=NNN shell=${win ? 'YY' : 'YN'} toolsShell=Y home=off src=local strict=Y hooksOff=N ts=N` && SH.every((t) => has(d2.allow, t)) && (win ? true : has(d2.deny, 'PowerShell')) && SH.every((t) => !has(d2.deny, t)));
+  check('명령을 켜도 비밀번호·로그인 기록·공유 링크·토큰 파일(users·sessions·share·settings.json)과 지침(.system.md)·스킬(.claude) 이름이 든 명령은 거절',
+    SH.every((t) => ['users.json', 'sessions.json', 'share.json', 'settings.json', '.system.md', '.claude'].every((f) => has(d2.deny, `${t}(*${f}*)`))));
+
+  // 홈 폴더 읽기
+  check('명령을 끄고 홈 폴더 읽기를 켬', (await put({ 명령실행: false, 홈폴더: true })).status === 200 && same(await getP(), { ...P0, 홈폴더: true }));
+  const d3 = await dump();
+  check('홈 폴더 읽기를 켜면 --add-dir 로 홈 폴더를 더하고 읽기·찾기·검색만 허용(고치기·쓰기는 data/ 안뿐)',
+    d3.flags === `apps=N send=NNN sendDeny=NNN shell=NN toolsShell=N home=${os.homedir()} src=local strict=Y hooksOff=N ts=N` && ['Read', 'Glob', 'Grep'].every((t) => has(d3.allow, `${t}(~/**)`))
+    && !d3.allow.some((t) => /^(Edit|Write)\(~/.test(t)) && has(d3.deny, 'Bash'));
+  check('홈 폴더를 읽게 해도 로그인 열쇠가 있는 곳(.ssh·.aws·.gnupg·.claude·.claude.json·AppData)은 늘 거절, 앱의 비밀 파일(settings.json 등)도 그대로 거절',
+    ['.ssh/**', '.aws/**', '.gnupg/**', '.claude/**', '.claude.json', 'AppData/**'].every((f) => ['Read', 'Glob', 'Grep'].every((t) => has(d3.deny, `${t}(~/${f})`))) && has(d3.deny, 'Read(./settings.json)') && has(d3.deny, 'Read(./users.json)'));
+
+  // 전부 켜기 → 전부 끄기
+  const allOn = await put({ 연결된앱: true, 명령실행: true, 홈폴더: true }), dAll = await dump();
+  check('세 스위치를 한꺼번에 켜면 각각의 효과가 함께 적용됨(서로 겹치는 허용·거절은 없음)', allOn.status === 200 && dAll.flags.startsWith('apps=Y send=NNN sendDeny=YYY') && dAll.flags.includes('toolsShell=Y') && dAll.flags.includes(`home=${os.homedir()}`)
+    && !dAll.allow.some((t) => dAll.deny.includes(t)));
+  check('세 스위치를 모두 끄면 맨 처음과 명령줄이 글자 하나까지 같음', (await put({ 연결된앱: false, 명령실행: false, 홈폴더: false })).status === 200 && same(await getP(), P0) && (await dump()).raw === d0.raw);
+
+  // 텔레그램 설정과 같은 파일을 쓰지만 서로 지우지 않는다
+  const TG = '123456:PERMTEST_fake_token_for_tests_0001';
+  await fetch(BASE + '/api/settings/telegram', { method: 'PUT', headers: H, body: JSON.stringify({ token: TG, chatId: '4242' }) });
+  await put({ 홈폴더: true });
+  const gs = await (await fetch(BASE + '/api/settings', { headers: H })).json();
+  check('권한을 바꿔도 텔레그램 설정은 그대로, 텔레그램 설정을 지워도 권한은 그대로', gs.telegram.token === '****' && gs.permissions.홈폴더 === true
+    && (await fetch(BASE + '/api/settings/telegram', { method: 'DELETE', headers: H })).status === 200 && same(await getP(), { ...P0, 홈폴더: true }) && same(saved(), { ...P0, 홈폴더: true }));
+  await put({ 홈폴더: false });
+  check('화면용 API 는 권한 값만 주고 텔레그램 값은 안 실음', !JSON.stringify(gs).includes('PERMTEST'));
+
+  // 화면에 뜨는 이름표
+  const tl = async (n) => await say(await newChat(), '/tool ' + n);
+  check('채팅에 뜨는 도구 이름표: 메일·캘린더·드라이브는 어느 앱인지, 메일 보내기와 명령은 눈에 띄게, 모르는 도구는 일반 문구',
+    (await tl(G + 'search_threads')).includes('⏺ 메일 확인 중') && (await tl('mcp__claude_ai_Google_Calendar__list_events')).includes('⏺ 캘린더 확인 중') && (await tl('mcp__claude_ai_Google_Drive__search_files')).includes('⏺ 드라이브 확인 중')
+    && (await tl(G + 'send_message')).includes('⏺ 메일 보내는 중') && (await tl('Bash')).includes('⏺ 명령 실행 중') && (await tl('PowerShell')).includes('⏺ 명령 실행 중') && (await tl('mcp__other__thing')).includes('⏺ 도구 쓰는 중'));
+
+  // 비서의 행동 지침 · 화면
+  const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('.system.md: 권한 안내(꺼져 있으면 켜는 법만 안내·메일은 전체를 보여 주고 "보낼까요?"·그 한 통만·예약에서는 초안만·지우기 안 함·읽은 내용은 기억에 안 적음)가 정확히 한 번 더해짐',
+    sys.split('<!-- 지침:권한 -->').length === 2 && ['스스로 켜려고 하지 않는다', '"보낼까요?"', '그 한 통만', '초안만 만들고', '하지 않는다', '읽은 메일·일정·문서 내용을 기억'].every((w) => sys.includes(w)));
+  const html = await (await fetch(BASE + '/', { headers: H })).text();
+  check('메인 화면: 설정에 "권한" 칸(연결된 앱·명령 실행·내 홈 폴더 읽기 스위치, 기본 꺼짐, 명령 실행은 켜기 전에 되묻기)과 채팅 입력창 왼쪽의 켜진 권한 표시(없으면 🔒)',
+    ['id="permBadge"', 'data-perm', '연결된 앱 (Gmail · 캘린더 · 드라이브)', '명령 실행', '내 홈 폴더 읽기', '/api/settings/permissions', 'showPerm', '🔒', '기본은 전부 꺼짐', '명령 실행을 켤까요?', 'id="permMsg"', '지금 켜진 권한'].every((w) => html.includes(w)));
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
