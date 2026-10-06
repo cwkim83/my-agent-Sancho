@@ -646,6 +646,7 @@
     if (!got && !out.querySelector('p') && !out.querySelector('.warnline')) out.innerHTML = '<span class="typing">(중지했습니다.)</span>';
     setBusy(false); aborter = null;
     loadList(); loadMemory(); // 비서가 방금 기억을 적었을 수 있다
+    loadPerm(); // 다른 곳(설정 화면·다른 탭)에서 바뀐 권한이 입력창 왼쪽 표시에 남지 않게
     if ($('input')) $('input').focus();
   }
 
