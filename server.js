@@ -409,6 +409,27 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
   else child.kill();
 }
 
+// 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
+const brainCtx = (name, d = new Date()) => `주인 이름: ${name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}.`;
+
+// 두뇌가 실패했을 때 이유를 쉬운 한국어로 — 대화(streamReply)와 예약(askBrainOnce)이 같이 쓴다
+const STALE_SESSION_MSG = '이전 대화의 기억을 찾지 못했습니다. 같은 말을 한 번 더 보내시면 새 기억으로 시작합니다.';
+function explainBrain({ spawnErr, timedOut, result, errText, limit }) {
+  if (spawnErr) return spawnErr.code === 'ENOENT'
+    ? '이 PC 에서 claude 프로그램을 찾을 수 없습니다. Claude Code 가 설치되어 있는지 확인해 주세요.'
+    : `claude 를 실행하지 못했습니다. (${spawnErr.message})`;
+  if (timedOut) return '답이 너무 오래 걸려 중단했습니다. 질문을 나눠서 다시 해 보세요.';
+  const raw = `${(result && result.result) || ''} ${errText}`;
+  if (limit || /usage limit|rate limit|hit your limit|limit reached|too many requests|overloaded/i.test(raw)) {
+    const when = limit && limit.resetsAt ? `${new Date(limit.resetsAt * 1000).toLocaleString('ko-KR')} 쯤` : '잠시 뒤';
+    return `Claude 사용 한도에 닿았습니다. ${when} 다시 시도해 주세요.`;
+  }
+  if (/not logged in|\/login|authenticat|unauthorized|invalid api key|credentials/i.test(raw))
+    return 'Claude Code 에 로그인되어 있지 않습니다. 명령 창에서 claude 를 한 번 실행해 로그인한 뒤 다시 시도해 주세요.';
+  if (/no conversation found/i.test(raw)) return STALE_SESSION_MSG;
+  return `Claude 가 오류로 끝났습니다. ${raw.trim().slice(0, 200)}`;
+}
+
 function streamReply(res, chat, content, user) {
   if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
   running.add(chat.id);
@@ -417,9 +438,7 @@ function streamReply(res, chat, content, user) {
   saveChat(chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
 
-  const today = new Date();
-  const ctx = `주인 이름: ${user.name}. 오늘 날짜: ${today.toLocaleDateString('sv-SE')} (${today.toLocaleDateString('ko-KR', { weekday: 'long' })}).`;
-  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS, '--append-system-prompt', ctx];
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...BRAIN_ARGS, '--append-system-prompt', brainCtx(user.name)];
   let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null, cap = null, child = null;
   let finished = false, aborted = false, timedOut = false;
 
@@ -444,23 +463,10 @@ function streamReply(res, chat, content, user) {
     else if (ev.type === 'result') result = ev;
   }
 
-  function explain() { // 실패 이유를 쉬운 한국어로
-    if (spawnErr) return spawnErr.code === 'ENOENT'
-      ? '이 PC 에서 claude 프로그램을 찾을 수 없습니다. Claude Code 가 설치되어 있는지 확인해 주세요.'
-      : `claude 를 실행하지 못했습니다. (${spawnErr.message})`;
-    if (timedOut) return '답이 너무 오래 걸려 중단했습니다. 질문을 나눠서 다시 해 보세요.';
-    const raw = `${(result && result.result) || ''} ${errText}`;
-    if (limit || /usage limit|rate limit|hit your limit|limit reached|too many requests|overloaded/i.test(raw)) {
-      const when = limit && limit.resetsAt ? `${new Date(limit.resetsAt * 1000).toLocaleString('ko-KR')} 쯤` : '잠시 뒤';
-      return `Claude 사용 한도에 닿았습니다. ${when} 다시 시도해 주세요.`;
-    }
-    if (/not logged in|\/login|authenticat|unauthorized|invalid api key|credentials/i.test(raw))
-      return 'Claude Code 에 로그인되어 있지 않습니다. 명령 창에서 claude 를 한 번 실행해 로그인한 뒤 다시 시도해 주세요.';
-    if (/no conversation found/i.test(raw)) {
-      chat.sessionId = null;
-      return '이전 대화의 기억을 찾지 못했습니다. 같은 말을 한 번 더 보내시면 새 기억으로 시작합니다.';
-    }
-    return `Claude 가 오류로 끝났습니다. ${raw.trim().slice(0, 200)}`;
+  function explain() {
+    const why = explainBrain({ spawnErr, timedOut, result, errText, limit });
+    if (why === STALE_SESSION_MSG) chat.sessionId = null; // 다음 말은 새 기억으로 시작
+    return why;
   }
 
   function finish() {
@@ -487,6 +493,89 @@ function streamReply(res, chat, content, user) {
   child.on('close', finish);
   child.stdin.end(content); // 사용자 말은 명령줄이 아니라 표준입력으로
   res.on('close', () => { if (!finished) { aborted = true; killTree(child); } }); // ■ 중지 → claude 끄기
+}
+
+// ---------- 예약 (data/schedule.json): 30초마다 시계를 보고, 때가 된 예약의 지시문을 새 세션의 두뇌에 보낸다 ----------
+// 시각 계산·형식 검사는 scheduler.js. 여기는 파일 읽고 쓰기, 두뇌 실행, 일지(data/journal/<날짜>.md)·알림(notices) 쌓기만 한다.
+const sched = require('./scheduler.js');
+const SCHEDULE_FILE = path.join(DATA_DIR, 'schedule.json');
+const JOURNAL_DIR = path.join(DATA_DIR, 'journal');
+const TICK_MS = Number(process.env.SANCHO_TICK_MS) || 30_000; // 점검에서만 짧게 줄인다
+const schedRunning = new Set(); // 지금 도는 예약 id — 같은 예약이 겹쳐 돌지 않게
+const warned = new Set(); // 이미 알림으로 알린 문제 (30초마다 같은 알림이 쌓이지 않게)
+
+function addNotice(title, body, level) { // 알림(data/db/notices.json)에 한 줄 — 열려 있는 대시보드는 파일 감시로 바로 따라 바뀐다
+  let items; try { items = loadCollection('notices'); } catch { return console.error('data/db/notices.json 이 올바른 목록이 아니라 알림을 넣지 못했어요. (덮어쓰지 않았어요)'); }
+  items.push({ id: crypto.randomBytes(4).toString('hex'), title, body, level, at: nowIso(), read: false });
+  writeJson(dbFile('notices'), items);
+}
+function warnOnce(key, title, body) { if (!warned.has(key)) { warned.add(key); addNotice(title, body, '주의'); } }
+
+function loadSchedule() { // 파일이 없으면 빈 목록, 깨져 있으면 예외 (모르고 덮어써서 예약을 잃지 않게)
+  let raw; try { raw = fs.readFileSync(SCHEDULE_FILE, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+  const v = JSON.parse(raw.replace(/^﻿/, ''));
+  if (!Array.isArray(v)) throw new Error('not an array');
+  return v;
+}
+
+// 화면 없이 두뇌에 한 번 묻고 끝 결과만 받는다. 대화와 같은 두뇌·같은 도구 제한(BRAIN_ARGS), 새 세션(--resume 없음). 절대 reject 하지 않는다
+// ponytail: 띄우고 줄 읽는 부분이 streamReply 와 닮았다. 대화는 점검이 촘촘해서 건드리지 않았다. 고칠 곳이 세 군데가 되면 spawnBrain 으로 합친다
+function askBrainOnce(prompt, ctx) {
+  return new Promise((resolve) => {
+    let buf = '', errText = '', result = null, limit = null, spawnErr = null, timedOut = false, child = null, cap = null, settled = false;
+    const onLine = (line) => {
+      let ev; try { ev = JSON.parse(line); } catch { return; }
+      if (ev.type === 'result') result = ev;
+      else if (ev.type === 'rate_limit_event' && ev.rate_limit_info && ev.rate_limit_info.status === 'rejected') limit = ev.rate_limit_info;
+    };
+    const end = () => {
+      if (settled) return; settled = true; clearTimeout(cap);
+      if (buf.trim()) onLine(buf);
+      resolve(result && !result.is_error ? { ok: true, text: String(result.result || '').trim() } : { ok: false, text: explainBrain({ spawnErr, timedOut, result, errText, limit }) });
+    };
+    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...BRAIN_ARGS, '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
+    cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
+    child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
+    child.stderr.on('data', (d) => { if (errText.length < 2000) errText += d; });
+    child.stdin.on('error', () => {});
+    child.on('error', (e) => { spawnErr = e; end(); });
+    child.on('close', end);
+    child.stdin.end(prompt);
+  });
+}
+
+async function runScheduled(e) {
+  schedRunning.add(e.id); // 첫 await 전에 넣는다 (다음 점검이 끼어들기 전에)
+  const name = String(e.이름 || e.id), t0 = new Date(), owner = readJson(USERS_FILE, [])[0];
+  let r;
+  try {
+    r = await askBrainOnce(e.지시문, `${brainCtx(owner ? owner.name : '주인', t0)} 이 실행은 예약("${name}")이 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 요약한다.`);
+  } catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
+  finally { schedRunning.delete(e.id); }
+  try {
+    const day = t0.toLocaleDateString('sv-SE'), file = path.join(JOURNAL_DIR, `${day}.md`), text = r.text || '(결과 글이 없어요)';
+    fs.mkdirSync(JOURNAL_DIR, { recursive: true });
+    fs.appendFileSync(file, `${fs.existsSync(file) ? '' : `# ${day} 일지\n\n`}## ${t0.toTimeString().slice(0, 5)} ${r.ok ? '' : '⚠ '}${name}\n\n지시: ${e.지시문.replace(/\s+/g, ' ')}\n\n${text}\n\n`);
+    addNotice(`${r.ok ? '예약 결과' : '예약 실패'}: ${name}`, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의');
+  } catch (err) { console.error('예약 결과를 적지 못했어요:', err.message); }
+}
+
+function scheduleTick() {
+  let list; try { list = loadSchedule(); warned.delete('file'); } catch { return warnOnce('file', '예약 파일을 읽지 못했어요', 'data/schedule.json 이 올바른 JSON 목록이 아니에요. 고칠 때까지 예약이 멈춰 있어요. (파일은 덮어쓰지 않았어요)'); }
+  const now = new Date(); let dirty = false;
+  for (const e of list) {
+    const why = sched.check(e);
+    if (why) { warnOnce(`${e && e.id}:${why}`, '예약 하나를 건너뛰었어요', `"${(e && (e.이름 || e.id)) || '이름 없음'}": ${why} data/schedule.json 에서 고쳐 주세요.`); continue; }
+    if (e.켬 === false) continue;
+    // 처음 보는 예약(마지막실행 없음)은 지금부터 센다 — 아침 9시 예약을 오후 3시에 만들었다고 바로 돌지 않게. 한 번만 하는 예약(once)은 시각이 지났으면 바로 돈다
+    if (!e.마지막실행 && e.언제.종류 !== 'once') { e.마지막실행 = now.toISOString(); dirty = true; continue; }
+    if (schedRunning.has(e.id) || !sched.isDue(e, now)) continue; // 실행 중이면 건너뛴다
+    // 이번 회차는 "시작한 것"으로 지금 적는다 — 도중에 서버가 꺼지거나 실패해도 되풀이해 돌지 않는다 (실패는 알림으로 알린다)
+    // ponytail: 여러 예약이 한꺼번에 때가 되면 claude 가 동시에 여러 개 뜬다. 한도에 자주 닿으면 한 줄로 세운다
+    e.마지막실행 = now.toISOString(); dirty = true;
+    runScheduled(e); // 끝나기를 기다리지 않는다
+  }
+  if (dirty) writeJson(SCHEDULE_FILE, list); // 읽기→쓰기 사이에 기다림이 없어서 비서가 고친 내용을 덮어쓸 틈이 거의 없다
 }
 
 // ---------- 요청 처리 ----------
@@ -656,4 +745,9 @@ async function handle(req, res) {
 const server = http.createServer((req, res) => {
   handle(req, res).catch((e) => { console.error(e); if (!res.headersSent) send(res, 500, { error: '서버 오류' }); });
 });
-server.listen(PORT, HOST, () => console.log(`Sancho 서버 실행 중: http://${HOST}:${PORT}`));
+server.listen(PORT, HOST, () => {
+  console.log(`Sancho 서버 실행 중: http://${HOST}:${PORT}`);
+  const tick = () => { try { scheduleTick(); } catch (e) { console.error('예약 점검 오류:', e); } }; // 오류가 나도 서버가 죽지 않게
+  tick(); // 켜자마자 한 번: 꺼져 있는 동안 놓친 예약은 여기서 한 번 돈다
+  setInterval(tick, TICK_MS);
+});

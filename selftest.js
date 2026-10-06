@@ -150,6 +150,8 @@ async function run() {
   await runProjects(ck);
   await runWbs(ck);
   runSkills();
+  runScheduleCalc();
+  await runSchedule(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -852,6 +854,149 @@ function runSkills() {
   check('.system.md: WBS 안내(wbs 스킬을 먼저 읽고 따름)가 맨 끝에 정확히 한 번 더해짐', sys.split('<!-- 지침:wbs -->').length === 2 && sys.includes('.claude/skills/wbs/SKILL.md') && sys.indexOf('<!-- 지침:wbs -->') > sys.indexOf('주인이 손으로 덧붙인 줄'));
 }
 
+// 예약의 시각 계산(scheduler.js): 시계를 바꿔 가며 직접 불러 본다 (서버·진짜 시계 없이)
+function runScheduleCalc() {
+  const S = require('./scheduler.js');
+  const D = (m, d, h = 0, mi = 0, s = 0) => new Date(2026, m - 1, d, h, mi, s); // 2026년 m월 d일 (이 PC 의 지역 시각)
+  const f = (d) => (d ? d.toLocaleString('sv-SE') : null); // '2026-10-07 09:00:00'
+  const mk = (언제, last = null, extra = {}) => ({ id: 'x', 지시문: '지시', 켬: true, 언제, 마지막실행: last && last.toISOString(), ...extra });
+  const daily = { 종류: 'daily', 시각: '09:00' }, weekly = { 종류: 'weekly', 요일: '월', 시각: '09:00' };
+  check('기준 날짜 확인: 2026-10-07 은 수요일, 10-05 는 월요일', D(10, 7).getDay() === 3 && D(10, 5).getDay() === 1);
+
+  // daily
+  check('daily: 아직 안 된 시각이면 어제의 그 시각이 가장 최근', f(S.lastDue(daily, D(10, 7, 8, 30))) === '2026-10-06 09:00:00');
+  check('daily: 정각이면 오늘 그 시각, 지난 뒤에도 오늘 그 시각', f(S.lastDue(daily, D(10, 7, 9, 0))) === '2026-10-07 09:00:00' && f(S.lastDue(daily, D(10, 7, 23, 59))) === '2026-10-07 09:00:00');
+  check('daily: 어제 돌았으면 오늘 09:00 전에는 안 돌고 09:00 에 돈다', !S.isDue(mk(daily, D(10, 6, 9, 0, 5)), D(10, 7, 8, 59)) && S.isDue(mk(daily, D(10, 6, 9, 0, 5)), D(10, 7, 9, 0)));
+  check('daily: 오늘 09:00 에 돌았으면 하루 종일 다시 안 돈다(정각 직후·오후)', !S.isDue(mk(daily, D(10, 7, 9, 0, 10)), D(10, 7, 9, 0, 30)) && !S.isDue(mk(daily, D(10, 7, 9, 0, 10)), D(10, 7, 15, 0)));
+  check('daily: 월말·월초를 넘어도 어제를 맞게 계산(10월 1일 08:00 → 9월 30일 09:00)', f(S.lastDue(daily, D(10, 1, 8, 0))) === '2026-09-30 09:00:00');
+
+  // weekly
+  check('weekly(월 09:00): 수요일이면 이번 주 월요일', f(S.lastDue(weekly, D(10, 7, 8, 30))) === '2026-10-05 09:00:00');
+  check('weekly: 월요일 09:00 전이면 지난주 월요일, 정각이면 오늘', f(S.lastDue(weekly, D(10, 5, 8, 59))) === '2026-09-28 09:00:00' && f(S.lastDue(weekly, D(10, 5, 9, 0))) === '2026-10-05 09:00:00');
+  check('weekly: 일요일 밤에도 그 주 월요일, 다음 월요일 정각에 바뀜', f(S.lastDue(weekly, D(10, 11, 23, 0))) === '2026-10-05 09:00:00' && f(S.lastDue(weekly, D(10, 12, 9, 0))) === '2026-10-12 09:00:00');
+  check('weekly(일 09:00): 일요일이 getDay 0 이라도 맞게(수요일 → 10월 4일)', f(S.lastDue({ 종류: 'weekly', 요일: '일', 시각: '09:00' }, D(10, 7, 12, 0))) === '2026-10-04 09:00:00');
+  check('weekly: 이번 주 월요일에 돌았으면 이번 주엔 다시 안 돌고 다음 월요일에 돈다', !S.isDue(mk(weekly, D(10, 5, 9, 0, 5)), D(10, 11, 23, 0)) && S.isDue(mk(weekly, D(10, 5, 9, 0, 5)), D(10, 12, 9, 0)));
+
+  // once
+  const once = { 종류: 'once', 날짜: '2026-10-08', 시각: '15:00' };
+  check('once: 시각 전에는 아직(정해진 시각 없음·안 돈다)', S.lastDue(once, D(10, 7, 12)) === null && !S.isDue(mk(once), D(10, 8, 14, 59)));
+  check('once: 정해진 시각이 되면 돈다', S.isDue(mk(once), D(10, 8, 15, 0)));
+  check('once: 한 번 돌았으면 그 뒤로는 다시 안 돈다(다음 날도)', !S.isDue(mk(once, D(10, 8, 15, 0, 5)), D(10, 8, 15, 5)) && !S.isDue(mk(once, D(10, 8, 15, 0, 5)), D(10, 9, 15, 0)));
+  check('once: 꺼져 있어서 놓쳤으면(안 돈 채로 시각이 지났으면) 켜진 뒤 돈다', S.isDue(mk(once), D(10, 20, 9, 0)));
+
+  // every
+  const every = { 종류: 'every', 분: 30 };
+  check('every(30분): 한 번도 안 돌았으면 돈다, 29분 59초 뒤에는 안 돌고 30분 뒤에 돈다',
+    S.isDue(mk(every), D(10, 7, 9, 0)) && !S.isDue(mk(every, D(10, 7, 9, 0, 0)), D(10, 7, 9, 29, 59)) && S.isDue(mk(every, D(10, 7, 9, 0, 0)), D(10, 7, 9, 30, 0)));
+
+  // 놓친 회차는 한 번만: 며칠·몇 주를 놓쳐도 한 번 돌고 나면 다음 정해진 시각까지 다시 안 돈다
+  const once1 = (e, now) => { const first = S.isDue(e, now); const after = { ...e, 마지막실행: now.toISOString() }; return first && !S.isDue(after, new Date(now.getTime() + 30_000)) && !S.isDue(after, new Date(now.getTime() + 60_000)); };
+  check('놓친 daily(닷새 못 돌았음): 켜진 뒤 한 번만 돌고 더는 안 몰아서 돎', once1(mk(daily, D(10, 2, 9, 0, 5)), D(10, 7, 12, 0)));
+  check('놓친 weekly(3주 못 돌았음): 한 번만', once1(mk(weekly, D(9, 14, 9, 0, 5)), D(10, 7, 12, 0)));
+  check('놓친 every(몇 시간 못 돌았음): 한 번만', once1(mk(every, D(10, 7, 1, 0)), D(10, 7, 12, 0)));
+  check('놓친 once: 한 번만', once1(mk(once), D(10, 20, 9, 0)));
+  const ran = mk(daily, D(10, 7, 12, 0)); // 12시에 따라잡아 돌고 난 뒤에도 다음 날 정해진 시각에는 정상으로 돈다
+  check('따라잡아 돈 뒤에도 다음 정해진 시각(다음 날 09:00)에는 정상으로 돎', !S.isDue(ran, D(10, 8, 8, 59)) && S.isDue(ran, D(10, 8, 9, 0)));
+
+  // 끔·형식 오류
+  check('켬=false 는 때가 지나도 안 돈다, 켬이 아예 없으면 켠 것으로 본다', !S.isDue(mk(once, null, { 켬: false }), D(10, 20)) && S.isDue(mk(once, null, { 켬: undefined }), D(10, 20)));
+  const bad = (e) => S.check(e) !== null && S.isDue(e, D(10, 20, 12)) === false; // 틀린 항목은 이유가 나오고, 터지지 않고, 돌지 않는다
+  const ok = (언제) => S.check(mk(언제)) === null;
+  check('형식 오류 거절: 항목이 객체가 아님·id 없음·지시문 비어 있음·마지막실행이 시각이 아님·언제 없음', [null, [], 'x', mk(daily, null, { id: '' }), mk(daily, null, { 지시문: '  ' }), mk(daily, null, { 마지막실행: '어제' }), mk(null)].every(bad));
+  check('형식 오류 거절: 모르는 종류·시각 형식(9:00, 24:00, 09:60)', [{ 종류: 'monthly', 시각: '09:00' }, { 종류: 'daily', 시각: '9:00' }, { 종류: 'daily', 시각: '24:00' }, { 종류: 'daily', 시각: '09:60' }].every((w) => bad(mk(w))));
+  check('형식 오류 거절: 요일(월요일·빈칸·English)·없는 날짜(2월 30일·13월·자리수)', [{ ...weekly, 요일: '월요일' }, { ...weekly, 요일: '' }, { ...weekly, 요일: 'Mon' }, { ...once, 날짜: '2026-02-30' }, { ...once, 날짜: '2026-13-01' }, { ...once, 날짜: '2026-2-3' }].every((w) => bad(mk(w))));
+  check('형식 오류 거절: every 의 분이 0·소수·글자·없음', [0, 1.5, '30', undefined].every((분) => bad(mk({ 종류: 'every', 분 }))));
+  check('올바른 네 가지 모양(마지막실행이 null 이어도)은 통과', [daily, weekly, once, every, { 종류: 'every', 분: 1 }].every(ok));
+}
+
+// 예약 전체 흐름(server.js): 점검용 서버는 시계를 200ms 마다 본다. 가짜 claude 로 실행 → 일지·알림·마지막실행·놓친 회차·겹침·깨진 파일
+async function runSchedule(ck) {
+  const S = require('./scheduler.js');
+  const H = { 'Content-Type': 'application/json', Cookie: ck };
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const until = async (fn, ms = 20000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
+  const file = path.join(dir, 'schedule.json');
+  const writeSched = (list) => { fs.writeFileSync(file + '.t', typeof list === 'string' ? list : JSON.stringify(list, null, 2)); fs.renameSync(file + '.t', file); }; // 서버가 쓰다 만 파일을 읽지 않게 통째로 바꿔치기
+  const readSched = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+  const notices = async () => (await (await fetch(BASE + '/api/db/notices', { headers: H })).json());
+  const mine = async (re) => (await notices()).filter((n) => re.test(n.title));
+  const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  const day = new Date().toLocaleDateString('sv-SE'), wd = '일월화수목금토'[new Date().getDay()];
+  const mkE = (id, 이름, 언제, 지시문, extra = {}) => ({ id, 이름, 언제, 지시문, 켬: true, 마지막실행: null, ...extra });
+  const base = (await notices()).length;
+
+  const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('.system.md: 예약 안내(schedule.json·30초·네 가지 언제·마지막실행은 서버 칸·지우지 말고 끔)가 정확히 한 번 더해짐',
+    sys.split('<!-- 지침:예약 -->').length === 2 && ['data/schedule.json', '30초마다', 'daily', 'weekly', 'once', 'every', '서버가 채우는 칸', '`켬` 을 `false`', 'data/journal/'].every((w) => sys.includes(w)));
+  const tpl = fs.readFileSync(path.join(__dirname, 'templates', 'system-add', 'schedule.md'), 'utf8');
+  const ex = JSON.parse(/```json\r?\n([\s\S]*?)```/.exec(tpl)[1]);
+  check('안내의 작성 예가 서버의 형식 검사를 통과하고(id 8자·마지막실행 null) 안내의 네 가지 "언제" 모양도 모두 통과',
+    ex.length === 1 && S.check(ex[0]) === null && ex[0].마지막실행 === null && /^[a-z0-9]{8}$/.test(ex[0].id)
+    && (() => { const w = [...tpl.matchAll(/\| (?:daily|weekly|once|every) \| `(\{.*?\})` \|/g)].map((m) => JSON.parse(m[1])); return w.length === 4 && w.every((x) => S.check({ id: 'x', 지시문: 'y', 언제: x }) === null); })());
+
+  // 한꺼번에 넣는다: 놓친 것 4개(once·며칠 놓친 daily·몇 주 놓친 weekly·15분 만에 돌 every), 실패할 것 1개, 안 돌아야 하는 것 4개
+  writeSched([
+    mkE('aaaa0001', '놓친 한 번', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '놓친 한 번 점검'),
+    mkE('aaaa0002', '며칠 놓친 매일', { 종류: 'daily', 시각: '00:00' }, '며칠 놓침 점검', { 마지막실행: ago(60 * 24 * 3) }),
+    mkE('aaaa0003', '몇 주 놓친 주간', { 종류: 'weekly', 요일: wd, 시각: '00:00' }, '몇 주 놓침 점검', { 마지막실행: ago(60 * 24 * 21) }),
+    mkE('aaaa0004', '꺼 둔 예약', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '꺼진 예약 점검', { 켬: false, 메모: '모르는 칸도 그대로 남아야 함' }),
+    mkE('aaaa0005', '형식이 틀린 예약', { 종류: 'daily', 시각: '25:99' }, '형식 오류 점검'),
+    mkE('aaaa0006', '처음 보는 매일', { 종류: 'daily', 시각: '00:00' }, '처음 보는 예약 점검'),
+    mkE('aaaa0007', '먼 미래', { 종류: 'once', 날짜: '2999-01-01', 시각: '00:00' }, '미래 점검'),
+    mkE('aaaa0008', '실패할 예약', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '/limit'),
+    mkE('aaaa0009', '간격 예약', { 종류: 'every', 분: 5 }, '간격 점검', { 마지막실행: ago(10) }),
+  ]);
+  const got = await until(async () => (await mine(/^예약 (결과|실패): /)).length >= 5 && (await mine(/^예약 하나를/)).length >= 1);
+  check('때가 된 예약 5개(놓친 once·daily·weekly, 간격 every, 실패할 것)가 실행되고 알림이 쌓임', got);
+  await sleep(1500); // 시계를 7번쯤 더 본 뒤에도 늘어나지 않아야 한다 (놓친 회차를 몰아서 돌리거나 되풀이하면 늘어난다)
+  const ns = await notices(), titles = ns.map((n) => n.title);
+  const one = (t) => titles.filter((x) => x === t).length === 1;
+  check('놓친 회차는 각각 정확히 한 번만 실행(알림이 하나씩, 시계를 더 봐도 안 늘어남)', ['놓친 한 번', '며칠 놓친 매일', '몇 주 놓친 주간', '간격 예약'].every((n) => one(`예약 결과: ${n}`)));
+  check('꺼 둔·먼 미래·처음 보는 예약은 실행되지 않음', !titles.some((t) => /꺼 둔|먼 미래|처음 보는/.test(t)) && ns.length === base + 5 + 1);
+  const n1 = ns.find((n) => n.title === '예약 결과: 놓친 한 번');
+  check('알림에 제목·요약(결과 첫머리)·시각이 들어가고 안 읽음 상태, 기존 알림은 그대로', n1 && /^[0-9a-f]{8}$/.test(n1.id) && n1.body.startsWith('에코: 놓친 한 번 점검') && n1.level === '안내' && n1.read === false
+    && Date.now() - Date.parse(n1.at) < 60_000 && ns.slice(0, base).length === base);
+  const fail = ns.find((n) => n.title === '예약 실패: 실패할 예약');
+  check('실행이 실패하면(사용 한도) "예약 실패" 알림이 주의 단계로, 쉬운 한국어 이유와 함께 올라감', fail && fail.level === '주의' && fail.body.includes('Claude 사용 한도에 닿았습니다'));
+  const badN = ns.filter((n) => n.title === '예약 하나를 건너뛰었어요');
+  check('형식이 틀린 예약은 이름·이유와 함께 알림 한 번만(30초마다 되풀이 안 됨), 실행은 안 됨', badN.length === 1 && badN[0].level === '주의' && badN[0].body.includes('형식이 틀린 예약') && badN[0].body.includes('시각은 24시간'));
+
+  const jf = path.join(dir, 'journal', `${day}.md`), j = fs.existsSync(jf) ? fs.readFileSync(jf, 'utf8') : '';
+  const sections = (name) => j.split('\n').filter((l) => new RegExp(`^## \\d\\d:\\d\\d (⚠ )?${name}$`).test(l)).length;
+  check('data/journal/<오늘>.md 에 실행마다 "## 시각 이름" 한 칸씩(제목 한 번, 각 예약 정확히 한 칸)', j.startsWith(`# ${day} 일지`) && j.split(`# ${day} 일지`).length === 2
+    && ['놓친 한 번', '며칠 놓친 매일', '몇 주 놓친 주간', '간격 예약'].every((n) => sections(n) === 1) && sections('실패할 예약') === 1 && /## \d\d:\d\d ⚠ 실패할 예약/.test(j));
+  check('일지에 지시와 결과가 적힘(두뇌는 새 세션: --resume 없음, 작업 폴더 data/, 현재 시각을 알려 줌)',
+    j.includes('지시: 놓친 한 번 점검') && j.includes('에코: 놓친 한 번 점검') && j.includes('resume=none') && /cwd=\S+/.test(j) && /현재 시각: \d\d:\d\d/.test(j) && j.includes('예약("놓친 한 번")'));
+  check('일지에 실패 이유도 적히고, 꺼 둔·미래·형식 오류 예약은 일지에 없음', j.includes('Claude 사용 한도에 닿았습니다')
+    && !['꺼 둔 예약', '먼 미래', '형식이 틀린 예약', '처음 보는 매일', '꺼진 예약 점검', '미래 점검', '형식 오류 점검', '처음 보는 예약 점검'].some((w) => j.includes(w)));
+
+  const sc = readSched(), by = (id) => sc.find((e) => e.id === id), recent = (v) => Date.now() - Date.parse(v) < 60_000;
+  check('실행한 예약은 마지막실행이 지금으로 바뀌고 다른 칸(이름·지시문·켬)은 그대로', ['aaaa0001', 'aaaa0002', 'aaaa0003', 'aaaa0008', 'aaaa0009'].every((id) => recent(by(id).마지막실행)) && by('aaaa0001').이름 === '놓친 한 번' && by('aaaa0001').켬 === true);
+  check('처음 보는 매일 예약은 안 돌고 마지막실행만 "지금부터 센다"로 채워짐 (아침 9시 예약을 오후에 만들어도 바로 안 돎)', by('aaaa0006').마지막실행 && recent(by('aaaa0006').마지막실행));
+  check('꺼 둔 예약·먼 미래 예약은 마지막실행이 그대로 null, 모르는 칸(메모)과 순서도 그대로', by('aaaa0004').마지막실행 === null && by('aaaa0007').마지막실행 === null && by('aaaa0004').메모 === '모르는 칸도 그대로 남아야 함' && sc.map((e) => e.id).join() === ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => 'aaaa000' + n).join());
+
+  // 겹침 방지: 2.5초 걸리는 예약이 도는 중에 다시 때가 된 것처럼 만들어도 두 번째가 뜨지 않는다
+  const runsLog = path.join(dir, 'wait-runs.log'), runs = () => (fs.existsSync(runsLog) ? fs.readFileSync(runsLog, 'utf8').split('\n').filter(Boolean).length : 0);
+  writeSched([...readSched(), mkE('bbbb0001', '겹침 점검', { 종류: 'every', 분: 1 }, '/wait 겹침', { 마지막실행: ago(10) })]);
+  check('겹침 점검 예약이 때가 되어 실행되기 시작함', await until(() => runs() === 1));
+  writeSched(readSched().map((e) => (e.id === 'bbbb0001' ? { ...e, 마지막실행: ago(10) } : e))); // 도는 중인데 또 때가 된 것처럼
+  await sleep(1200); // 시계를 6번쯤 본다
+  check('실행 중인 예약은 다시 때가 되어도 건너뜀(두 번째 실행이 뜨지 않음)', runs() === 1);
+  writeSched(readSched().map((e) => (e.id === 'bbbb0001' ? { ...e, 켬: false } : e))); // 끝난 뒤 되풀이되지 않게 끈다
+  check('끝나면 결과가 알림으로 오고, 도는 동안 건너뛴 회차는 몰아서 돌지 않음(실행은 총 한 번)', await until(async () => (await mine(/^예약 결과: 겹침 점검$/)).length === 1) && (await sleep(700), runs() === 1)
+    && (await mine(/^예약 결과: 겹침 점검$/)).length === 1);
+
+  // 깨진 파일: 예약을 멈추고 알리되, 파일은 덮어쓰지 않는다 (고치면 알림이 다시 가능)
+  const before = (await notices()).length;
+  writeSched('[ { 깨진 JSON');
+  check('schedule.json 이 깨지면 "예약 파일을 읽지 못했어요" 알림이 한 번만 올라가고 파일은 덮어쓰지 않음',
+    await until(async () => (await mine(/^예약 파일을 읽지 못했어요$/)).length === 1) && (await sleep(800), (await mine(/^예약 파일을 읽지 못했어요$/)).length === 1)
+    && fs.readFileSync(file, 'utf8') === '[ { 깨진 JSON' && (await notices()).length === before + 1);
+  writeSched([]);
+  await sleep(600);
+  check('파일을 고치면(빈 목록) 문제없이 지나가고 알림이 더 늘지 않음', (await notices()).length === before + 1 && JSON.parse(fs.readFileSync(file, 'utf8')).length === 0);
+}
+
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
 function startServer(port, dataDir, env) {
   const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
@@ -889,7 +1034,7 @@ fs.writeFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), '�
 // 주인이 손본 .system.md 를 흉내 낸다 (옛 템플릿 + 손으로 덧붙인 줄): 서버를 켜도 그 줄은 지워지지 않고, 새 WBS 안내만 맨 끝에 한 번 더해져야 한다
 fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), path.join(dir, '.system.md'));
 fs.appendFileSync(path.join(dir, '.system.md'), '\n나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)\n');
-const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid' });
+const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200' }); // 예약 시계를 30초 대신 0.2초마다
 srv.ready.then(async () => {
   try {
     await run();
