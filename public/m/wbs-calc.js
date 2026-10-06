@@ -127,6 +127,56 @@
   const x = (day, from, dayW) => (num(day) - num(from)) * dayW; // 그 날의 왼쪽 끝(px)
   const px = (start, end, from, dayW) => ({ left: x(start, from, dayW), width: (num(end) - num(start) + 1) * dayW });
 
+  // ---------- S-곡선 ----------
+  // 계획 누적 진도: 날짜마다 (모든 작업의 전체 비중 × 그 날의 작업 계획 진도) 의 합. 긴 기간은 점이 160개 안팎이 되게 건너뛰며 잡는다
+  function scurve(rows, from, to) {
+    const leaves = rows.filter((r) => r.leaf && r.start), n0 = num(from), n1 = num(to);
+    if (n1 < n0) return [];
+    const step = Math.max(1, Math.ceil((n1 - n0 + 1) / 160)), out = [];
+    for (let n = n0; ; n += step) {
+      const nn = Math.min(n, n1), d = ymd(nn);
+      out.push({ d, v: leaves.reduce((a, r) => a + r.eff * planPct(r.start, r.end, d), 0) });
+      if (nn === n1) return out;
+    }
+  }
+  // 실제 누적 진도: 저장할 때마다 쌓인 기록(actualLog)에서 오늘까지만. 오늘 값은 지금 계산한 값으로 덮는다. 기록이 없는 날은 만들어 내지 않는다
+  function actualPoints(log, asOf, nowActual) {
+    const m = new Map(Object.entries(isObj(log) ? log : {}).filter(([d, v]) => isDate(d) && d <= asOf && isNum(v)));
+    m.set(asOf, nowActual);
+    return [...m].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([d, v]) => ({ d, v }));
+  }
+
+  // 예시 데이터용(진짜 기록이 아님): 지금의 진도율이 각 작업 기간 동안 일정한 속도로 쌓여 왔다고 보고, 일주일마다의 "실제 누적 진도"를 거꾸로 만든다.
+  // 진짜 기록은 저장할 때마다 actualLog 에 하루 한 점씩 쌓이는 것뿐이라 과거는 되살릴 수 없다 — 예시 공정표의 S-곡선이 점 하나로 보이지 않게 하려는 용도
+  function sampleLog(doc, asOf, step = 7) {
+    const items = Array.isArray(doc.items) ? doc.items : [], starts = items.map((it) => it && it.start).filter(isDate).sort(), log = {};
+    if (!starts.length) return log;
+    for (let d = starts[0]; d < asOf; d = addDays(d, step)) {
+      const scaled = items.map((it) => {
+        if (!isObj(it) || !isDate(it.start) || !isDate(it.end) || !isNum(it.progress)) return it;
+        const e = Math.min(num(it.end), num(asOf)), f = d < it.start ? 0 : Math.min(1, (num(d) - num(it.start) + 1) / Math.max(1, e - num(it.start) + 1));
+        return { ...it, progress: it.progress * f };
+      });
+      log[d] = Math.round(compute({ items: scaled }, d).overall.actual * 100) / 100;
+    }
+    return log;
+  }
+
+  // ---------- 엑셀(CSV): UTF-8 BOM(한글이 안 깨짐) + 줄바꿈 CRLF ----------
+  // 글자 칸이 = + - @ 로 시작하면 엑셀이 수식으로 읽을 수 있어서 앞에 ' 를 붙인다. 코드(1.10 이 1.1 로 바뀌는 것 방지)는 우리가 만든 모양이라 ="1.10" 으로 쓴다
+  const csvCell = (v, isText) => {
+    let s = str(v);
+    if (isText && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  function csv(rows) {
+    const r1 = (x) => Math.round(x * 10) / 10;
+    const head = ['코드', '단계', '작업명', '담당', '시작일', '완료일', '가중치', '진도율(%)', '계획 진도(%)', '상태', '메모'].map((h) => csvCell(h));
+    const body = rows.map((r) => [r.code.includes('.') ? `="${r.code}"` : r.code, r.leaf ? '작업' : '대단락', csvCell(r.name, true), csvCell(r.owner, true), csvCell(r.start), csvCell(r.end),
+      csvCell(r.weight), csvCell(r1(r.actual)), csvCell(r1(r.plan)), r.status, csvCell(r.it.memo, true)].join(','));
+    return '﻿' + [head.join(','), ...body].join('\r\n') + '\r\n';
+  }
+
   // ---------- 검증·정리 (서버가 저장 전에 한다) ----------
   function validate(doc) {
     if (!isObj(doc) || !Array.isArray(doc.items)) return '저장할 내용이 올바르지 않습니다. (items 목록이 필요해요)';
@@ -253,7 +303,7 @@
     return { value: Math.round(Number(m[1] || 0) * 1e8 + Number(m[2] || 0) * 1e4 + Number(m[3] || 0)) };
   }
 
-  const api = { MAX_ITEMS, CODE, num, ymd, isDate, addDays, today, parentOf, cmp, planPct, compute, visible, span, months, x, px,
+  const api = { MAX_ITEMS, CODE, num, ymd, isDate, addDays, today, parentOf, cmp, planPct, compute, visible, span, months, x, px, scurve, actualPoints, sampleLog, csv,
     validate, normalize, emptyDoc, addRoot, addBelow, addChild, remove, move, countSubtree, setField, shiftTask, parseMoney };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.wbs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

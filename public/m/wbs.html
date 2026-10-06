@@ -12,24 +12,29 @@
     font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
   button, input, select { font: inherit; }
   button { cursor: pointer; }
+  [hidden] { display: none !important; }
 
   /* 위쪽 줄 */
   .bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); }
   .bar h2 { margin: 0 4px 0 4px; font-size: 18px; }
   .sp { flex: 1; }
   .sub { color: var(--sub); font-size: 13px; }
+  .pname { font-weight: 700; }
   select { padding: 6px 9px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: var(--text); max-width: 260px; }
-  .btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #344054; }
+  .btn { padding: 6px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #344054; white-space: nowrap; }
   .btn:hover { background: #f2f4f7; }
   .seg { display: flex; }
   .seg button { padding: 6px 12px; border: 1px solid var(--line); background: #fff; color: #344054; }
   .seg button:first-child { border-radius: 8px 0 0 8px; } .seg button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
   .seg button.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); font-weight: 600; }
-  #warn { flex: none; padding: 0 16px; color: var(--red); font-size: 13px; white-space: pre-line; }
+  #banner { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 16px; background: #fff7e6; border-bottom: 1px solid #fde4b0; color: #7a4b00; font-size: 13px; }
+  #banner .btn { padding: 3px 10px; }
+  #main { flex: 1; min-height: 0; overflow-y: auto; }
+  #warn { padding: 0 16px; color: var(--red); font-size: 13px; white-space: pre-line; }
   #warn:not(:empty) { padding-top: 8px; }
 
   /* EVMS 카드: BAC·PV·EV·SV·SPI·CPI + 지연 작업 */
-  .cards { flex: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 16px; }
   .ecard { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--text); text-align: left; }
   .ecard .k { color: var(--sub); font-size: 12px; }
   .ecard b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-variant-numeric: tabular-nums; }
@@ -39,7 +44,7 @@
   .ecard input { width: 100%; height: 26px; padding: 0 6px; border: 1px solid var(--blue); border-radius: 6px; font-size: 14px; }
 
   /* 표 + 간트: 한 줄이 한 항목이라 왼쪽 표와 오른쪽 막대가 항상 같은 줄에 있다 */
-  #scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; margin: 0 16px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  #scroll { height: clamp(300px, 54vh, 680px); overflow: auto; scrollbar-gutter: stable; margin: 0 16px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
   .wbs { position: relative; }
   .row { display: flex; height: 32px; border-top: 1px solid #eef0f3; background: #fff; }
   .row.par { background: #f9fafb; font-weight: 600; }
@@ -50,6 +55,7 @@
   .head .c-code, .head .c-name { z-index: 6; }
   .c-num { justify-content: flex-end; font-variant-numeric: tabular-nums; }
   .ed { cursor: text; } .ed:hover { background: #f2f6ff; }
+  .ro .ed { cursor: default; } .ro .ed:hover { background: none; }
   .auto { color: #98a2b3; font-style: italic; font-weight: 400; }
   .c input { width: 100%; height: 24px; padding: 0 4px; border: 1px solid var(--blue); border-radius: 4px; background: #fff; color: var(--text); font-size: 13px; }
   .nm { overflow: hidden; text-overflow: ellipsis; }
@@ -71,62 +77,157 @@
   .gc { flex: none; position: relative; display: flex; }
   .mh { flex: none; overflow: hidden; padding-left: 4px; border-left: 1px solid #e9ecf0; line-height: 30px; white-space: nowrap; }
   .gbar { position: absolute; top: 6px; height: 20px; z-index: 1; overflow: hidden; border-radius: 5px; background: var(--cbg); box-shadow: inset 0 0 0 1px var(--c); cursor: grab; touch-action: none; user-select: none; }
+  .ro .gbar { cursor: default; }
   .gbar.sum { top: 11px; height: 10px; border-radius: 2px; cursor: default; }
   .gbar.dragging { cursor: grabbing; box-shadow: inset 0 0 0 2px var(--c), 0 2px 8px rgba(0, 0, 0, .25); }
   .gbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cf); pointer-events: none; }
   .gbar b { position: relative; padding: 0 5px; color: var(--ct); font-size: 11px; line-height: 20px; white-space: nowrap; pointer-events: none; }
   .gbar u { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
+  .ro .gbar u { cursor: default; }
   .ov { position: absolute; top: 30px; bottom: 0; z-index: 2; pointer-events: none; }
   .ov i { position: absolute; top: 0; bottom: 0; width: 1px; background: #eef0f3; }
   .ov u { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #d92d20; }
+
+  /* S-곡선 */
+  #sc { margin: 0 16px 20px; padding: 12px 16px 8px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  #sc h3 { display: inline; margin: 0 10px 0 0; font-size: 15px; }
+  #sc .hint { color: var(--sub); font-size: 12px; }
+  .lg { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; font-size: 12px; color: #344054; }
+  .lg i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+  #sc svg { display: block; width: 100%; margin-top: 4px; }
+  #sc text { fill: #667085; font-size: 11px; }
+
   #tip { position: fixed; z-index: 30; display: none; padding: 3px 8px; border-radius: 6px; background: #1b1f24; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }
   #toast { position: fixed; left: 50%; bottom: 18px; z-index: 30; display: none; max-width: 90%; padding: 8px 14px; transform: translateX(-50%); border-radius: 8px; background: #1b1f24; color: #fff; font-size: 13px; }
+
+  /* 창 (Rev 저장·이력·공유 링크) */
+  dialog { width: min(560px, calc(100% - 24px)); padding: 0; border: 0; border-radius: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); color: var(--text); }
+  dialog::backdrop { background: rgba(16, 24, 40, .4); }
+  .dlg { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; }
+  .dlg h3 { margin: 0; font-size: 17px; }
+  .dlg label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--sub); }
+  .dlg input { width: 100%; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 8px; color: var(--text); }
+  .dlg input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .err { min-height: 1.2em; color: var(--red); font-size: 13px; }
+  .btns { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .primary { padding: 7px 18px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-weight: 600; }
+  .danger { padding: 6px 12px; border: 1px solid #fecdca; border-radius: 8px; background: #fff; color: var(--red); }
+  .danger:hover { background: #fee4e2; }
+  #histList { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .rv { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 12px; border-top: 1px solid #eef0f3; font-size: 13px; }
+  .rv:first-child { border-top: 0; }
+  .rv b { min-width: 52px; } .rv .when { color: var(--sub); font-variant-numeric: tabular-nums; } .rv .note { flex: 1; min-width: 120px; }
+  .rv .tag { padding: 0 7px; border-radius: 999px; background: #f2f4f7; color: #475467; font-size: 11px; }
+  .rv .btn { padding: 3px 9px; }
+  .note-list { margin: 0; padding-left: 18px; color: var(--sub); font-size: 12px; }
+  .url { display: flex; gap: 6px; } .url input { flex: 1; font-size: 12px; }
+
+  /* 인쇄용 화면(PDF): 한 장에 표·간트·S-곡선이 다 들어오게 가로 A4 로. 열리자마자 인쇄 창을 띄우는 ?print=1 과 Ctrl+P 둘 다 이 모양이 된다 */
+  @page { size: A4 landscape; margin: 10mm; }
+  .pm { height: auto; display: block; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pm .bar > :not(h2):not(.pname):not(#overall):not(.sp) { display: none !important; }
+  .pm .bar { border-bottom: 1px solid var(--line); padding: 0 0 8px; }
+  .pm #main { overflow: visible; }
+  .pm #scroll { height: auto; overflow: visible; margin: 0 0 10px; }
+  .pm .row.head { position: static; } .pm .c-code, .pm .c-name { position: static; }
+  .pm .cards { padding: 8px 0; } .pm .ecard b { font-size: 14px; } .pm #sc { margin: 0; break-inside: avoid; }
+  #pmbar { display: none; padding: 8px 12px; background: #eaf1ff; color: #1d4ed8; font-size: 13px; }
+  .pm #pmbar { display: flex; align-items: center; gap: 10px; }
+  @media print { #pmbar, #toast, #tip { display: none !important; } }
 </style>
 </head>
 <body>
+  <div id="pmbar"><span>인쇄 창에서 "PDF 로 저장"을 고르면 PDF 파일이 됩니다.</span><button class="btn" id="pmPrint">🖨 인쇄</button></div>
   <div class="bar">
     <h2>WBS</h2>
-    <select id="proj" aria-label="프로젝트 선택"></select>
+    <select id="proj" aria-label="프로젝트 선택"></select><span class="pname" id="pname" hidden></span>
     <span class="sub" id="overall"></span>
     <span class="sp"></span>
     <button class="btn" id="addRoot">＋ 대단락</button>
     <div class="seg" id="zoom" title="간트 확대"><button data-z="fit">맞춤</button><button data-z="6">보통</button><button data-z="12">넓게</button></div>
+    <button class="btn" id="bSave" title="지금 상태를 Rev 로 저장">💾 Rev 저장</button>
+    <button class="btn" id="bHist" title="저장한 Rev 목록">📜 이력</button>
+    <button class="btn" id="bCsv" title="엑셀에서 열리는 CSV 파일로 내려받기">📊 엑셀</button>
+    <button class="btn" id="bPdf" title="인쇄용 화면을 열어 PDF 로 저장">📄 PDF</button>
+    <button class="btn" id="bShare" title="로그인 없이 읽기만 되는 링크">🔗 공유 링크</button>
   </div>
-  <div id="warn"></div>
-  <div class="cards" id="cards"></div>
-  <div id="scroll"></div>
+  <div id="banner" hidden></div>
+  <div id="main">
+    <div id="warn"></div>
+    <div class="cards" id="cards"></div>
+    <div id="scroll"></div>
+    <section id="sc"></section>
+  </div>
   <div id="tip"></div>
   <div id="toast"></div>
 
-<script src="/m/db.js"></script>
+  <dialog id="dSave"><form class="dlg" id="fSave">
+    <h3>💾 Rev 저장</h3>
+    <label>설명 (어떤 상태인지 적어 두면 나중에 찾기 쉬워요) <input id="saveNote" maxlength="100" autocomplete="off" placeholder="예: 9월 말 보고 기준"></label>
+    <div class="err" id="saveErr"></div>
+    <div class="btns"><button type="button" class="btn" data-close>취소</button><button type="submit" class="primary">저장</button></div>
+  </form></dialog>
+
+  <dialog id="dHist"><div class="dlg">
+    <h3>📜 Rev 이력</h3>
+    <div class="sub">보기: 그때 화면을 읽기 전용으로 봅니다. 되돌리기: 그 Rev 로 바꾸되, 바꾸기 전 지금 상태를 자동으로 Rev 로 저장합니다.</div>
+    <div id="histList"></div>
+    <div class="btns"><button type="button" class="btn" data-close>닫기</button></div>
+  </div></dialog>
+
+  <dialog id="dShare"><div class="dlg">
+    <h3>🔗 공유 링크</h3>
+    <div id="shareBody"></div>
+    <ul class="note-list">
+      <li>로그인 없이 읽기만 돼요 (고칠 수 없어요).</li>
+      <li>계약금액·실제 비용·메모는 서버가 아예 보내지 않아서 보이지 않아요.</li>
+      <li>만든 지 30일이 지나면 저절로 끊겨요. 새 링크를 만들면 이전 링크는 끊겨요.</li>
+      <li>이 프로그램은 이 PC 안에서만 열려서, 다른 사람의 PC 에서는 열리지 않아요. (밖에서 쓰기는 9편에서 다룹니다)</li>
+    </ul>
+    <div class="btns"><button type="button" class="btn" data-close>닫기</button></div>
+  </div></dialog>
+
+<script>
+  // 공유 화면(/s/<토큰>)은 로그인이 없어서 /m/db.js 를 못 받는다. 공유 화면이 아닐 때만 불러온다
+  if (!location.pathname.startsWith('/s/')) document.write('<script src="/m/db.js"><\/script>');
+</script>
 <script src="/m/wbs-calc.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const SC = { '완료': 'done', '진행': 'go', '지연': 'late', '대기': 'wait' };
   const W = { code: 40, name: 176, owner: 56, start: 70, end: 70, weight: 48, progress: 50, status: 50, act: 104 };
-  const TABLE_W = Object.values(W).reduce((a, b) => a + b);
   const JSON_HEAD = { 'Content-Type': 'application/json' };
+  const SHARE = location.pathname.startsWith('/s/'), TOKEN = SHARE ? location.pathname.split('/')[2] : '';
+  const QS = new URLSearchParams(location.search);
 
-  let projects = [], pid = '', doc = wbs.emptyDoc(), etag = 'none', calc = wbs.compute(doc, wbs.today()), loadErr = '';
-  let collapsed = new Set(), zoom = 'fit', dayW = 6, editing = null, drag = null, later = false, seq = 0, firstScroll = true, unwatch = null;
+  let projects = [], pid = '', doc = wbs.emptyDoc(), etag = 'none', calc = wbs.compute(doc, wbs.today()), calcAsOf = wbs.today(), curDoc = doc, loadErr = '', shareName = '';
+  let collapsed = new Set(), zoom = 'fit', dayW = 6, CW = W, editing = null, drag = null, later = false, seq = 0, firstScroll = true;
+  let view = null; // Rev 보기 중이면 { rev, savedAt, note, auto, doc, asOf }
+  let PM = QS.get('print') !== null, pmTmp = false; // 인쇄용 화면
+  const ro = () => SHARE || !!view; // 읽기 전용: 공유 화면이거나 Rev 를 보는 중
 
   const fmtWon = (n) => (n === null ? '—' : Math.round(n).toLocaleString('ko-KR') + '원');
   const fmtN = (n) => (n === null ? '—' : n.toFixed(2));
   const fmtP = (n) => `${Math.round(n * 10) / 10}%`;
+  const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : `${d.toLocaleDateString('sv-SE')} ${d.toTimeString().slice(0, 5)}`; };
+  const projName = () => (SHARE ? shareName : (projects.find((p) => p.id === pid) || {}).name || 'WBS');
   let toastTimer;
-  function flash(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.style.display = 'none'), 4500); }
+  function flash(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.style.display = 'none'), 5000); }
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: body === undefined ? {} : JSON_HEAD, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error || `요청 실패 (${r.status})`), { status: r.status });
+    return j;
+  }
 
   // ---------- 자료: 파일이 바뀌면(다른 탭·AI 가 직접 고쳐도) 바로 다시 불러온다 ----------
   async function load() {
-    if (!pid) return;
+    if (!pid || SHARE) return;
     const my = ++seq;
     let j;
-    try {
-      const r = await fetch(`/api/wbs/${encodeURIComponent(pid)}`);
-      j = await r.json();
-      if (!r.ok) throw new Error(j.error || `불러오지 못했어요 (${r.status})`);
-    } catch (e) { if (my === seq) { loadErr = e.message; render(); } return; }
+    try { j = await api('GET', `/api/wbs/${encodeURIComponent(pid)}`); }
+    catch (e) { if (my === seq) { loadErr = e.message; render(); } return; }
     if (my !== seq) return; // 더 새 요청이 있다
     const hadErr = loadErr; loadErr = '';
     if (j.etag === etag) return hadErr ? render() : undefined; // 내가 방금 저장해서 생긴 알림이면 그대로 둔다 (입력 중인 칸이 사라지지 않게)
@@ -138,95 +239,137 @@
   // 저장은 한 줄로 세워서 하나씩 한다 (etag 가 꼬이지 않게). mut(현재 문서) 가 새 문서를 돌려주고, null 이면 저장 안 함
   let chain = Promise.resolve();
   const save = (mut, after) => (chain = chain.then(async () => {
-    const next = mut(doc);
+    const next = ro() ? null : mut(doc);
     if (!next) return render();
     try {
-      const r = await fetch(`/api/wbs/${encodeURIComponent(pid)}`, { method: 'PUT', headers: JSON_HEAD, body: JSON.stringify({ etag, doc: next }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        flash(j.error || `저장하지 못했어요 (${r.status})`);
-        if (r.status === 409) { etag = ''; await load(); } else render();
-        return;
-      }
+      const j = await api('PUT', `/api/wbs/${encodeURIComponent(pid)}`, { etag, doc: next });
       doc = j.doc; etag = j.etag;
       if (after) after();
       render();
-    } catch { flash('저장하지 못했어요. 서버가 켜져 있는지 확인해 주세요.'); render(); }
+    } catch (e) {
+      flash(e.status ? e.message : '저장하지 못했어요. 서버가 켜져 있는지 확인해 주세요.');
+      if (e.status === 409) { etag = ''; await load(); } else render();
+    }
   }));
 
   // ---------- 그리기 ----------
   function render() {
-    calc = wbs.compute(doc, wbs.today());
+    const cur = view ? { d: view.doc, asOf: view.asOf } : { d: doc, asOf: wbs.today() };
+    curDoc = cur.d; calcAsOf = cur.asOf;
+    calc = wbs.compute(curDoc, calcAsOf);
+    CW = { ...W, act: ro() || PM ? 0 : W.act }; // 읽기 전용·인쇄 화면에는 행 단추 칸이 없다
+    document.body.classList.toggle('pm', PM);
     $('proj').innerHTML = projects.length ? projects.map((p) => `<option value="${esc(p.id)}"${p.id === pid ? ' selected' : ''}>${esc(p.name) || '(이름 없음)'}</option>`).join('') : '<option>프로젝트 없음</option>';
-    $('proj').disabled = !projects.length;
-    $('addRoot').disabled = !pid;
+    $('proj').disabled = !projects.length; $('proj').hidden = SHARE || PM;
+    $('pname').textContent = projName(); $('pname').hidden = !(SHARE || PM);
+    $('addRoot').hidden = ro(); $('addRoot').disabled = !pid;
+    $('bSave').hidden = ro(); $('bHist').hidden = SHARE; $('bShare').hidden = ro(); $('bPdf').hidden = !!view;
     document.querySelectorAll('#zoom button').forEach((b) => b.classList.toggle('on', b.dataset.z === String(zoom)));
-    $('overall').textContent = pid ? `전체 진도 실제 ${fmtP(calc.overall.actual)} / 계획 ${fmtP(calc.overall.plan)}` : '';
-    $('warn').textContent = [loadErr ? `⚠ ${loadErr}` : '', calc.problems.length ? `⚠ 형식이 맞지 않는 항목 ${calc.problems.length}개 (data/wbs/${pid}.json 을 확인해 주세요): ${calc.problems.slice(0, 3).join(' · ')}${calc.problems.length > 3 ? ' …' : ''}` : ''].filter(Boolean).join('\n');
+    $('overall').textContent = pid ? `전체 진도 실제 ${fmtP(calc.overall.actual)} / 계획 ${fmtP(calc.overall.plan)} · 기준 ${calcAsOf}` : '';
+    $('warn').textContent = [loadErr ? `⚠ ${loadErr}` : '', calc.problems.length ? `⚠ 형식이 맞지 않는 항목 ${calc.problems.length}개${SHARE ? '' : ` (data/wbs/${pid}.json 을 확인해 주세요)`}: ${calc.problems.slice(0, 3).join(' · ')}${calc.problems.length > 3 ? ' …' : ''}` : ''].filter(Boolean).join('\n');
     $('warn').title = calc.problems.join('\n');
+    const ban = $('banner');
+    ban.hidden = !(view || SHARE) || PM;
+    ban.innerHTML = view
+      ? `<span>📜 <b>Rev ${view.rev}</b> 보기 — ${esc(when(view.savedAt))}${view.note ? ' · ' + esc(view.note) : ''}${view.auto ? ' (자동 저장)' : ''} · 읽기 전용이에요. 날짜는 저장한 날(${esc(view.asOf)}) 기준으로 계산했어요.</span><span class="sp"></span><button class="btn" data-b="back">현재로 돌아가기</button><button class="btn" data-b="restore">이 Rev 로 되돌리기</button>`
+      : SHARE ? '<span>🔗 읽기 전용 공유 화면이에요. 계약금액·실제 비용·메모는 보이지 않아요.</span>' : '';
     renderCards();
     renderGrid();
+    renderCurve();
   }
 
   function renderCards() {
-    const e = calc.evms;
-    const card = (k, val, sub, o = {}) => `<div class="ecard${o.neg ? ' neg' : ''}"${o.edit ? ` data-edit="${o.edit}" title="눌러서 입력"` : ''}><span class="k">${k}</span><b>${val}</b><small>${sub}</small></div>`;
-    $('cards').innerHTML = [
-      card('BAC · 계약금액', fmtWon(e.bac), '눌러서 입력', { edit: 'bac' }),
+    const e = calc.evms, canEdit = !ro();
+    const card = (k, val, sub, o = {}) => `<div class="ecard${o.neg ? ' neg' : ''}"${o.edit && canEdit ? ` data-edit="${o.edit}" title="눌러서 입력"` : ''}><span class="k">${k}</span><b>${val}</b><small>${sub}</small></div>`;
+    $('cards').innerHTML = (SHARE ? [ // 공유 화면에는 금액이 없다: 진도·SPI·지연 작업만
+      card('계획 진도', fmtP(calc.overall.plan), `기준 ${calcAsOf}`),
+      card('실제 진도', fmtP(calc.overall.actual), '가중 평균'),
+      card('SPI · 일정 성과', fmtN(e.spi), '실제 ÷ 계획 (1 보다 작으면 늦음)', { neg: e.spi !== null && e.spi < 1 }),
+      card('지연 작업', `${e.late}개`, '계획보다 10%p 넘게 뒤처짐', { neg: e.late > 0 }),
+    ] : [
+      card('BAC · 계약금액', fmtWon(e.bac), canEdit ? '눌러서 입력' : '계약금액', { edit: 'bac' }),
       card('PV · 계획 가치', fmtWon(e.pv), `계획 진도 ${fmtP(calc.overall.plan)}`),
       card('EV · 실행 가치', fmtWon(e.ev), `실제 진도 ${fmtP(calc.overall.actual)}`),
       card('SV · 일정 차이', e.sv === null ? '—' : (e.sv > 0 ? '+' : '') + fmtWon(e.sv), 'EV − PV', { neg: e.sv < 0 }),
       card('SPI · 일정 성과', fmtN(e.spi), 'EV ÷ PV (1 보다 작으면 늦음)', { neg: e.spi !== null && e.spi < 1 }),
-      card('CPI · 비용 성과', fmtN(e.cpi), `AC ${e.ac === null ? '입력 안 됨' : fmtWon(e.ac)} · 눌러서 입력`, { edit: 'ac', neg: e.cpi !== null && e.cpi < 1 }),
+      card('CPI · 비용 성과', fmtN(e.cpi), `AC ${e.ac === null ? '입력 안 됨' : fmtWon(e.ac)}${canEdit ? ' · 눌러서 입력' : ''}`, { edit: 'ac', neg: e.cpi !== null && e.cpi < 1 }),
       card('지연 작업', `${e.late}개`, '계획보다 10%p 넘게 뒤처짐', { neg: e.late > 0 }),
-    ].join('');
+    ]).join('');
   }
 
   function rowHtml(r, sp) {
     const par = !r.leaf, s = SC[r.status];
     const cell = (cls, w, inner) => `<div class="c ${cls}" style="width:${w}px">${inner}</div>`;
-    const ed = (f, inner, cls = '', tip = '') => `<div class="c ${cls} ed" style="width:${W[f]}px" data-f="${f}" title="${tip}두 번 누르면 고칠 수 있어요">${inner}</div>`;
+    const ed = (f, inner, cls = '', tip = '') => `<div class="c ${cls} ed" style="width:${CW[f]}px" data-f="${f}" title="${tip}${ro() ? '' : '두 번 누르면 고칠 수 있어요'}">${inner}</div>`;
     const sd = (d) => (d ? d.slice(2).replace(/-/g, '.') : '—'); // 2026-10-07 → 26.10.07 (칸이 좁아서. 전체 날짜는 위에 두면 보임)
-    const auto = (f, inner, full = '') => `<div class="c c-num auto" style="width:${W[f]}px" title="${full ? esc(full) + ' · ' : ''}하위 항목에서 자동으로 계산돼요">${inner}</div>`;
+    const auto = (f, inner, full = '') => `<div class="c c-num auto" style="width:${CW[f]}px" title="${full ? esc(full) + ' · ' : ''}하위 항목에서 자동으로 계산돼요">${inner}</div>`;
     const tg = par ? `<button class="tg" data-tg="${r.code}" title="접기/펼치기">${collapsed.has(r.code) ? '▶' : '▼'}</button>` : '<span class="tg"></span>';
+    const pos = r.start ? `left:${wbs.x(r.start, sp.from, dayW)}px;width:${wbs.px(r.start, r.end, sp.from, dayW).width}px` : '';
     const bar = !r.start ? '' : par
-      ? `<div class="gbar sum s-${s}" style="left:${wbs.x(r.start, sp.from, dayW)}px;width:${wbs.px(r.start, r.end, sp.from, dayW).width}px" title="${r.start} ~ ${r.end} · ${fmtP(r.actual)}"><i style="width:${r.actual}%"></i></div>`
-      : `<div class="gbar s-${s}" data-bar="${r.code}" style="left:${wbs.x(r.start, sp.from, dayW)}px;width:${wbs.px(r.start, r.end, sp.from, dayW).width}px" title="${r.start} ~ ${r.end} · ${fmtP(r.actual)} (끌어서 이동, 오른쪽 끝을 끌면 기간 변경)"><i style="width:${r.actual}%"></i><b>${fmtP(r.actual)}</b><u class="hd"></u></div>`;
-    const dv = (v) => (v ? esc(v) : '—');
+      ? `<div class="gbar sum s-${s}" style="${pos}" title="${r.start} ~ ${r.end} · ${fmtP(r.actual)}"><i style="width:${r.actual}%"></i></div>`
+      : `<div class="gbar s-${s}" ${ro() ? '' : `data-bar="${r.code}"`} style="${pos}" title="${r.start} ~ ${r.end} · ${fmtP(r.actual)}${ro() ? '' : ' (끌어서 이동, 오른쪽 끝을 끌면 기간 변경)'}"><i style="width:${r.actual}%"></i><b>${fmtP(r.actual)}</b><u class="hd"></u></div>`;
     return `<div class="row${par ? ' par' : ''}" data-code="${r.code}">
-      ${cell('c-code', W.code, r.code)}
+      ${cell('c-code', CW.code, r.code)}
       ${ed('name', `<span style="flex:none;width:${r.depth * 16}px"></span>${tg}<span class="nm">${esc(r.name)}</span>`, 'c-name')}
       ${ed('owner', esc(r.owner))}
       ${par ? auto('start', sd(r.start), r.start) : ed('start', sd(r.it.start ?? r.start), 'c-num', `${esc(r.it.start)} · `)}
       ${par ? auto('end', sd(r.end), r.end) : ed('end', sd(r.it.end ?? r.end), 'c-num', `${esc(r.it.end)} · `)}
       ${ed('weight', `<span title="같은 단계 안에서의 비중 ${Math.round(r.share * 100)}%">${esc(r.weight)}</span>`, 'c-num')}
       ${par ? auto('progress', fmtP(r.actual)) : ed('progress', fmtP(r.actual), 'c-num')}
-      ${cell('', W.status, `<span class="pill s-${s}">${r.status}</span>`)}
-      ${cell('c-act', W.act, `<button class="ib" data-act="below" title="아래에 행 추가">＋</button><button class="ib" data-act="child" title="하위로 행 추가">↳</button><button class="ib" data-act="up" title="위로 이동">▲</button><button class="ib" data-act="down" title="아래로 이동">▼</button><button class="ib x" data-act="del" title="삭제">✕</button>`)}
+      ${cell('', CW.status, `<span class="pill s-${s}">${r.status}</span>`)}
+      ${CW.act ? cell('c-act', CW.act, `<button class="ib" data-act="below" title="아래에 행 추가">＋</button><button class="ib" data-act="child" title="하위로 행 추가">↳</button><button class="ib" data-act="up" title="위로 이동">▲</button><button class="ib" data-act="down" title="아래로 이동">▼</button><button class="ib x" data-act="del" title="삭제">✕</button>`) : ''}
       <div class="gc" style="width:${sp.px}px">${bar}</div></div>`;
   }
 
   function renderGrid() {
-    const today = wbs.today(), box = $('scroll');
+    const box = $('scroll'), tw = Object.values(CW).reduce((a, b) => a + b), today = calcAsOf;
+    box.classList.toggle('ro', ro());
     if (!pid) { box.innerHTML = '<div class="empty">프로젝트가 없어요. 왼쪽 "프로젝트" 메뉴에서 먼저 만들어 주세요.</div>'; return; }
     const sp = wbs.span(calc.range, today), mons = wbs.months(sp.from, sp.to), days = mons.reduce((a, m) => a + m.days, 0);
-    // 맞춤: 표 오른쪽에 남은 너비에 전체 기간이 딱 들어오게 (너무 좁아지면 1.5px 까지만). 보통·넓게는 하루 6px·12px 로 고정
-    dayW = zoom === 'fit' ? Math.max(1.5, Math.min(12, ((box.clientWidth || 1000) - TABLE_W - 2) / days)) : zoom;
+    // 맞춤: 표 오른쪽에 남은 너비에 전체 기간이 딱 들어오게 (너무 좁아지면 1.5px 까지만). 보통·넓게는 하루 6px·12px 로 고정. 인쇄 화면은 가로 A4 너비(1040px)에 맞춘다
+    dayW = PM || zoom === 'fit' ? Math.max(1.5, Math.min(12, ((PM ? 1040 : box.clientWidth || 1000) - tw - 2) / days)) : zoom;
     sp.px = days * dayW;
-    const rows = wbs.visible(calc.rows, collapsed);
+    const rows = PM ? calc.rows : wbs.visible(calc.rows, collapsed); // 인쇄할 때는 접어 둔 줄도 모두
     let acc = 0; const lines = mons.map((m) => { const l = acc * dayW; acc += m.days; return `<i style="left:${l}px"></i>`; }).join('');
     const todayX = wbs.x(today, sp.from, dayW) + dayW; // 오늘이 끝난 지점(계획 진도는 오늘 하루를 다 지난 것으로 센다)
-    const H = [['code', '코드'], ['name', '작업명'], ['owner', '담당'], ['start', '시작'], ['end', '완료'], ['weight', '가중치'], ['progress', '진도율'], ['status', '상태'], ['act', '']]
-      .map(([k, t]) => `<div class="c${k === 'code' || k === 'name' ? ' c-' + k : ''}${['start', 'end', 'weight', 'progress'].includes(k) ? ' c-num' : ''}" style="width:${W[k]}px">${t}</div>`).join('');
-    box.innerHTML = `<div class="wbs" style="width:${TABLE_W + sp.px}px">
+    const H = [['code', '코드'], ['name', '작업명'], ['owner', '담당'], ['start', '시작'], ['end', '완료'], ['weight', '가중치'], ['progress', '진도율'], ['status', '상태'], ['act', '']].filter(([k]) => CW[k])
+      .map(([k, t]) => `<div class="c${k === 'code' || k === 'name' ? ' c-' + k : ''}${['start', 'end', 'weight', 'progress'].includes(k) ? ' c-num' : ''}" style="width:${CW[k]}px">${t}</div>`).join('');
+    box.innerHTML = `<div class="wbs" style="width:${tw + sp.px}px">
       <div class="row head">${H}<div class="gc" style="width:${sp.px}px">${mons.map((m) => `<span class="mh" style="width:${m.days * dayW}px">${m.label}</span>`).join('')}</div></div>
       ${rows.map((r) => rowHtml(r, sp)).join('')}
-      ${calc.rows.length ? '' : '<div class="empty">아직 항목이 없어요. 위의 "＋ 대단락"을 눌러 시작하세요.</div>'}
-      <div class="ov" style="left:${TABLE_W}px;width:${sp.px}px">${lines}<u style="left:${todayX}px" title="오늘 ${today}"></u></div></div>`;
+      ${calc.rows.length ? '' : `<div class="empty">${ro() ? '항목이 없어요.' : '아직 항목이 없어요. 위의 "＋ 대단락"을 눌러 시작하세요.'}</div>`}
+      <div class="ov" style="left:${tw}px;width:${sp.px}px">${lines}<u style="left:${todayX}px" title="${view ? '저장한 날' : '오늘'} ${today}"></u></div></div>`;
     if (firstScroll && calc.rows.length) { // 보통·넓게로 바꾼 직후에는 오늘이 간트 가운데쯤 오게 (맞춤은 맨 왼쪽)
       firstScroll = false;
-      box.scrollLeft = zoom === 'fit' ? 0 : Math.max(0, TABLE_W + todayX - (W.code + W.name) - (box.clientWidth - W.code - W.name) / 2);
+      box.scrollLeft = zoom === 'fit' ? 0 : Math.max(0, tw + todayX - (CW.code + CW.name) - (box.clientWidth - CW.code - CW.name) / 2);
     }
+  }
+
+  // ---------- S-곡선: 계획 누적 진도 vs 실제 누적 진도 (그림 라이브러리 없이 SVG) ----------
+  function renderCurve() {
+    const box = $('sc');
+    if (!calc.range) { box.innerHTML = ''; return; }
+    const asOf = calcAsOf, act = wbs.actualPoints(curDoc.actualLog, asOf, calc.overall.actual);
+    const from = [calc.range.start, act[0].d].sort()[0], to = [calc.range.end, asOf].sort().pop();
+    const plan = wbs.scurve(calc.rows, from, to);
+    const Wd = PM ? 1040 : Math.max(480, (box.clientWidth || 900) - 32), Ht = 250, L = 42, R = 16, T = 16, B = 28;
+    const n0 = wbs.num(from), span = Math.max(1, wbs.num(to) - n0);
+    const X = (d) => L + ((wbs.num(d) - n0) / span) * (Wd - L - R), Y = (v) => T + (1 - v / 100) * (Ht - T - B);
+    const pts = (a) => a.map((p) => `${X(p.d).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+    const grid = [0, 25, 50, 75, 100].map((v) => `<line x1="${L}" x2="${Wd - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#e4e7eb"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}%</text>`).join('');
+    let ticks = ''; // 달 눈금
+    for (let y = +from.slice(0, 4), m = +from.slice(5, 7) - 1, first = true; Date.UTC(y, m, 1) / 864e5 <= wbs.num(to); m++, first = false) {
+      if (m > 11) { m = 0; y++; }
+      const d = wbs.ymd(Math.max(Date.UTC(y, m, 1) / 864e5, n0));
+      ticks += `<line x1="${X(d)}" x2="${X(d)}" y1="${T}" y2="${Ht - B}" stroke="#f1f3f5"/><text x="${X(d) + 3}" y="${Ht - 10}">${first || m === 0 ? `${y}.${String(m + 1).padStart(2, '0')}` : `${m + 1}월`}</text>`;
+    }
+    const tx = asOf >= from && asOf <= to ? `<line x1="${X(asOf)}" x2="${X(asOf)}" y1="${T - 4}" y2="${Ht - B}" stroke="#d92d20" stroke-width="2"/><text x="${X(asOf)}" y="${T - 5}" text-anchor="middle" style="fill:#d92d20">${view ? '저장한 날' : '오늘'}</text>` : '';
+    const dots = act.map((p) => `<circle cx="${X(p.d).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="${act.length === 1 ? 5 : 3}" fill="#f08a24"/>`).join('');
+    box.innerHTML = `<h3>S-곡선</h3><span class="hint">계획 누적 진도 대 실제 누적 진도 · 실제 기록 ${act.length}일치 (저장할 때마다 그날 값이 쌓여요)</span>
+      <div style="margin-top:6px"><span class="lg"><i style="background:#2f6fed"></i>계획 누적 ${fmtP(calc.overall.plan)}</span><span class="lg"><i style="background:#f08a24"></i>실제 누적 ${fmtP(calc.overall.actual)}</span><span class="lg"><i style="background:#d92d20"></i>${view ? '저장한 날' : '오늘'} ${asOf}</span></div>
+      <svg viewBox="0 0 ${Wd} ${Ht}" width="${Wd}" height="${Ht}" role="img" aria-label="S-곡선: 계획 누적 진도와 실제 누적 진도">${grid}${ticks}${tx}
+        <polyline points="${pts(plan)}" fill="none" stroke="#2f6fed" stroke-width="2.5" stroke-linejoin="round"/>
+        <polyline points="${pts(act)}" fill="none" stroke="#f08a24" stroke-width="2.5" stroke-linejoin="round"/>${dots}</svg>`;
   }
 
   // ---------- 누르기 ----------
@@ -234,15 +377,16 @@
     const tg = e.target.closest('[data-tg]');
     if (tg) { const c = tg.closest('.row').dataset.code; collapsed.has(c) ? collapsed.delete(c) : collapsed.add(c); return render(); }
     const ib = e.target.closest('[data-act]');
-    if (ib && !editing) act(ib.dataset.act, ib.closest('.row').dataset.code);
+    if (ib && !editing && !ro()) act(ib.dataset.act, ib.closest('.row').dataset.code);
   };
   $('scroll').ondblclick = (e) => {
     const c = e.target.closest('.ed[data-f]');
-    if (c && !editing && !drag && !e.target.closest('[data-tg]')) startEdit(c.closest('.row').dataset.code, c.dataset.f);
+    if (c && !ro() && !editing && !drag && !e.target.closest('[data-tg]')) startEdit(c.closest('.row').dataset.code, c.dataset.f);
   };
   $('addRoot').onclick = () => act('root', '');
   document.querySelectorAll('#zoom button').forEach((b) => (b.onclick = () => { zoom = b.dataset.z === 'fit' ? 'fit' : Number(b.dataset.z); firstScroll = true; render(); }));
-  window.onresize = () => { if (zoom === 'fit' && !editing && !drag) render(); }; // 맞춤일 때는 창 크기에 맞게 다시 그린다
+  let resizeTimer;
+  window.onresize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!editing && !drag) render(); }, 150); }; // 창 크기가 바뀌면 맞춤·S-곡선을 다시 그린다
   $('proj').onchange = () => { // 프로젝트를 바꾸면 메인 화면 주소도 바꿔서(#WBS/<id>) 이 화면이 그 프로젝트로 다시 열린다
     if (parent !== window) parent.location.hash = '#WBS/' + encodeURIComponent($('proj').value); else location.search = '?p=' + encodeURIComponent($('proj').value);
   };
@@ -271,7 +415,7 @@
   // ---------- 칸 두 번 누르기: 바로 고치기 (Enter 저장, Esc 취소, 다른 곳을 누르면 저장) ----------
   function startEdit(code, f) {
     const r = calc.rows.find((x) => x.code === code), cell = $('scroll').querySelector(`.row[data-code="${code}"] [data-f="${f}"]`);
-    if (!r || !cell || editing) return;
+    if (!r || !cell || editing || ro()) return;
     const orig = f === 'weight' ? (r.it.weight ?? 1) : f === 'progress' ? (r.it.progress ?? 0) : (r.it[f] ?? '');
     const input = document.createElement('input');
     input.type = f === 'start' || f === 'end' ? 'date' : f === 'weight' || f === 'progress' ? 'number' : 'text';
@@ -295,7 +439,7 @@
   // ---------- BAC·AC 카드 눌러 입력 ----------
   $('cards').onclick = (e) => {
     const card = e.target.closest('[data-edit]');
-    if (!card || editing) return;
+    if (!card || editing || ro()) return;
     const key = card.dataset.edit, b = card.querySelector('b'), input = document.createElement('input');
     input.value = calc.evms[key] ?? ''; input.inputMode = 'numeric'; input.placeholder = '예: 1200000000 · 12억 · 3000만';
     b.replaceChildren(input); input.focus(); input.select();
@@ -317,7 +461,7 @@
   const tip = (e, text) => { const t = $('tip'); t.textContent = text; t.style.display = 'block'; t.style.left = e.clientX + 12 + 'px'; t.style.top = e.clientY - 30 + 'px'; };
   $('scroll').onpointerdown = (e) => {
     const bar = e.target.closest('[data-bar]');
-    if (!bar || editing || e.button !== 0) return;
+    if (!bar || editing || ro() || e.button !== 0) return;
     const r = calc.rows.find((x) => x.code === bar.dataset.bar);
     if (!r || !r.leaf) return;
     drag = { r, bar, mode: e.target.classList.contains('hd') ? 'size' : 'move', x0: e.clientX, d: 0, left0: parseFloat(bar.style.left), w0: parseFloat(bar.style.width) };
@@ -344,20 +488,118 @@
   $('scroll').onpointercancel = () => endDrag(false);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drag) endDrag(false); });
 
+  // ---------- 창 닫기 ----------
+  document.querySelectorAll('dialog [data-close]').forEach((b) => (b.onclick = () => b.closest('dialog').close()));
+
+  // ---------- 💾 Rev 저장 ----------
+  $('bSave').onclick = () => { $('saveNote').value = ''; $('saveErr').textContent = ''; $('dSave').showModal(); $('saveNote').focus(); };
+  $('fSave').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('POST', `/api/wbs/${encodeURIComponent(pid)}/revs`, { note: $('saveNote').value });
+      $('dSave').close(); flash(`Rev ${r.rev} 로 저장했어요 (${when(r.savedAt)})`);
+    } catch (x) { $('saveErr').textContent = x.message; }
+  };
+
+  // ---------- 📜 이력: 목록 · 보기 · 이 Rev 로 되돌리기 ----------
+  $('bHist').onclick = () => { $('dHist').showModal(); loadHist(); };
+  async function loadHist() {
+    $('histList').textContent = '불러오는 중…';
+    try {
+      const { revs } = await api('GET', `/api/wbs/${encodeURIComponent(pid)}/revs`);
+      $('histList').innerHTML = revs.length
+        ? revs.slice().reverse().map((v) => `<div class="rv"><b>Rev ${v.rev}</b><span class="when">${esc(when(v.savedAt))}</span>${v.auto ? '<span class="tag">자동</span>' : ''}<span class="note">${esc(v.note) || '<span class="sub">(설명 없음)</span>'}</span>
+          <button class="btn" data-v="${v.rev}">보기</button>${SHARE ? '' : `<button class="btn" data-r="${v.rev}">이 Rev 로 되돌리기</button>`}</div>`).join('')
+        : '<div class="rv"><span class="sub">아직 저장한 Rev 가 없어요. "💾 Rev 저장"을 눌러 지금 상태를 남겨 보세요.</span></div>';
+    } catch (x) { $('histList').textContent = x.message; }
+  }
+  $('histList').onclick = (e) => {
+    const v = e.target.closest('[data-v]'), r = e.target.closest('[data-r]');
+    if (v) viewRev(Number(v.dataset.v)); else if (r) restoreRev(Number(r.dataset.r));
+  };
+  async function viewRev(n) {
+    try {
+      const j = await api('GET', `/api/wbs/${encodeURIComponent(pid)}/revs/${n}`);
+      view = { ...j, asOf: new Date(j.savedAt).toLocaleDateString('sv-SE') }; // 그 Rev 를 저장한 날을 "오늘"로 놓고 계산해 그때 화면을 그대로 본다
+      $('dHist').close(); firstScroll = true; render();
+    } catch (x) { flash(x.message); }
+  }
+  async function restoreRev(n) {
+    if (!confirm(`Rev ${n} 으로 되돌릴까요?\n\n되돌리기 전에 지금 상태를 자동으로 Rev 로 저장해 두니, 마음이 바뀌면 이력에서 다시 되돌릴 수 있어요.`)) return;
+    try {
+      const j = await api('POST', `/api/wbs/${encodeURIComponent(pid)}/revs/${n}/restore`);
+      doc = j.doc; etag = j.etag; view = null; collapsed = new Set();
+      $('dHist').close(); render();
+      flash(`Rev ${n} 으로 되돌렸어요.${j.backupRev ? ` 되돌리기 전 상태는 Rev ${j.backupRev} 로 저장해 뒀어요.` : ''}`);
+    } catch (x) { flash(x.message); }
+  }
+  $('banner').onclick = (e) => {
+    const b = e.target.closest('[data-b]');
+    if (!b || !view) return;
+    if (b.dataset.b === 'back') { view = null; render(); } else restoreRev(view.rev);
+  };
+
+  // ---------- 📊 엑셀(CSV, UTF-8 BOM) ----------
+  $('bCsv').onclick = () => {
+    const name = `${projName().replace(/[\\/:*?"<>|]/g, '_')}_WBS_${calcAsOf}${view ? '_Rev' + view.rev : ''}.csv`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([wbs.csv(calc.rows)], { type: 'text/csv;charset=utf-8' })); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    flash(`엑셀(CSV) 파일을 내려받았어요: ${name}`);
+  };
+
+  // ---------- 📄 PDF: 인쇄용 화면을 새 창으로 열고(?print=1) 인쇄 창에서 "PDF 로 저장" ----------
+  $('bPdf').onclick = () => { if (!window.open(SHARE ? `${location.pathname}?print=1` : `/m/wbs.html?p=${encodeURIComponent(pid)}&print=1`, '_blank')) flash('새 창이 막혔어요. 팝업을 허용해 주세요.'); };
+  $('pmPrint').onclick = () => window.print();
+  window.addEventListener('beforeprint', () => { if (!PM) { PM = true; pmTmp = true; render(); } }); // Ctrl+P 로 인쇄해도 같은 모양
+  window.addEventListener('afterprint', () => { if (pmTmp) { pmTmp = false; PM = false; render(); } });
+
+  // ---------- 🔗 공유 링크 ----------
+  $('bShare').onclick = () => { $('dShare').showModal(); loadShare(); };
+  async function loadShare(fresh) {
+    const box = $('shareBody');
+    try {
+      const s = await api('GET', `/api/wbs/${encodeURIComponent(pid)}/share`);
+      const ex = s.active ? s.expiresAt.slice(0, 10) : '';
+      box.innerHTML = (fresh ? `<div>✅ 새 링크를 만들었어요. 이 주소는 <b>지금 한 번만</b> 보여 드려요 (복사해 두세요).</div>
+          <div class="url"><input id="shareUrl" readonly value="${esc(fresh)}"><button class="btn" id="copyUrl">복사</button></div><div class="sub">${esc(ex)} 까지 열려요.</div>`
+        : s.active ? `<div>✅ 공유 링크가 켜져 있어요 (${esc(ex)} 까지). 주소는 만들 때 한 번만 보여 드려서 다시 볼 수 없어요.</div>` : '<div>아직 공유 링크가 없어요.</div>')
+        + `<div class="btns" style="justify-content:flex-start;margin-top:8px"><button class="primary" id="mkShare">${s.active ? '새 링크 만들기 (이전 링크는 끊김)' : '링크 만들기'}</button>${s.active ? '<button class="danger" id="rmShare">링크 끊기</button>' : ''}</div>`;
+      $('mkShare').onclick = async () => {
+        try { const r = await api('POST', `/api/wbs/${encodeURIComponent(pid)}/share`); loadShare(location.origin + r.path); } catch (x) { flash(x.message); }
+      };
+      if ($('rmShare')) $('rmShare').onclick = async () => {
+        if (!confirm('공유 링크를 끊을까요?\n이 링크로는 더 이상 열 수 없어요.')) return;
+        try { await api('DELETE', `/api/wbs/${encodeURIComponent(pid)}/share`); loadShare(); flash('공유 링크를 끊었어요.'); } catch (x) { flash(x.message); }
+      };
+      if ($('copyUrl')) $('copyUrl').onclick = async () => {
+        const i = $('shareUrl'); i.select();
+        try { await navigator.clipboard.writeText(i.value); flash('링크를 복사했어요.'); } catch { try { document.execCommand('copy'); flash('링크를 복사했어요.'); } catch { flash('복사하지 못했어요. 주소를 직접 선택해서 복사해 주세요.'); } }
+      };
+    } catch (x) { box.textContent = x.message; }
+  }
+
   // ---------- 시작 ----------
+  const autoPrint = () => { if (QS.get('print') === '1') setTimeout(() => window.print(), 600); }; // ?print=preview 는 모양만 보여 준다
+  async function initShare() {
+    try { const j = await api('GET', `/api/share/${encodeURIComponent(TOKEN)}`); shareName = j.name; doc = j.doc; pid = 'share'; }
+    catch (e) { $('main').innerHTML = `<div class="empty" style="position:static;width:auto">${esc(e.message)}</div>`; $('banner').hidden = true; return; }
+    render(); autoPrint();
+  }
   async function init() {
     const loadProjects = async () => {
       let list = []; try { list = await db.list('projects'); } catch { /* 프로젝트 목록을 못 읽어도 화면은 연다 */ }
       projects = list.filter((p) => p && typeof p.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(p.id));
     };
     await loadProjects();
-    const want = new URLSearchParams(location.search).get('p');
+    const want = QS.get('p');
     pid = projects.some((p) => p.id === want) ? want : projects.length ? (projects.find((p) => p.status === '진행중') || projects[0]).id : '';
     render();
     if (pid) { db.watch('wbs-' + pid, load); await load(); }
     db.watch('projects', async () => { await loadProjects(); if (!editing) render(); });
+    autoPrint();
   }
-  init();
+  SHARE ? initShare() : init();
 </script>
 </body>
 </html>

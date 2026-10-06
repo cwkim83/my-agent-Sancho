@@ -23,7 +23,8 @@ async function run(msg) {
   const arg = (flag) => (a.indexOf(flag) >= 0 ? a[a.indexOf(flag) + 1] : null);
   const sysFile = arg('--append-system-prompt-file');
   const sysOk = sysFile && fs.existsSync(sysFile) && fs.readFileSync(sysFile, 'utf8').includes('Sancho') ? 'ok' : 'none';
-  const deny = ['.system.md', '.claude/**'].every((f) => a.includes(`Edit(./${f})`) && a.includes(`Write(./${f})`)) && a.includes('Bash') ? 'ok' : 'none';
+  const deny = ['.system.md', '.claude/**'].every((f) => a.includes(`Edit(./${f})`) && a.includes(`Write(./${f})`)) && a.includes('Bash')
+    && ['users.json', 'sessions.json', 'share.json'].every((f) => ['Read', 'Edit', 'Write'].every((t) => a.includes(`${t}(./${f})`))) ? 'ok' : 'none'; // 비밀번호·로그인 기록·공유 링크 파일은 읽지도 못하게
   // 허용 도구가 모두 data/ 안(./**)으로 묶여 있는지: 범위 없는 'Read' 같은 것이 하나라도 있으면 none
   const allowed = a.slice(a.indexOf('--allowedTools') + 1);
   const allowList = allowed.slice(0, allowed.findIndex((x) => x.startsWith('--')));

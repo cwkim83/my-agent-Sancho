@@ -172,6 +172,121 @@ const wbsFile = (pid) => path.join(WBS_DIR, `${pid}.json`);
 const etagOf = (buf) => crypto.createHash('sha1').update(buf).digest('hex'); // 파일 내용의 지문. 화면이 불러온 뒤 파일이 바뀌었는지 알아보는 데 쓴다
 watchJson(WBS_DIR, /^([A-Za-z0-9_-]{1,64})\.json$/, 'wbs-'); // 화면은 db.watch('wbs-<프로젝트id>') 로 받는다
 
+// ---------- Rev (저장 이력): data/wbs/_history/<프로젝트id>/<번호>_<날짜>_<시각>.json — 한 번 저장에 파일 하나 ----------
+const MAX_REVS = 200; // 넘으면 더 안 쌓고 알린다 (묻지 않고 지우지 않는다)
+const REV_FILE = /^(\d{4,6})_\d{4}-\d\d-\d\d_\d{6}\.json$/;
+const revDir = (pid) => path.join(WBS_DIR, '_history', pid);
+const revNames = (pid) => { try { return fs.readdirSync(revDir(pid)).filter((f) => REV_FILE.test(f)); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } };
+// ponytail: 목록을 부를 때마다 Rev 파일을 모두 읽는다(200개 한도라 괜찮다). 느려지면 목록 파일(index)을 따로 둔다
+function listRevs(pid) {
+  return revNames(pid).map((f) => {
+    try { const j = JSON.parse(fs.readFileSync(path.join(revDir(pid), f), 'utf8')); return { rev: Number(REV_FILE.exec(f)[1]), savedAt: String(j.savedAt || ''), note: String(j.note || ''), auto: !!j.auto, doc: j.snapshot }; }
+    catch { return null; } // 깨진 Rev 파일은 건너뛴다
+  }).filter(Boolean).sort((a, b) => a.rev - b.rev);
+}
+function writeRev(pid, doc, note, auto) { // 성공하면 { rev, savedAt }, 한도에 닿으면 { error }
+  const names = revNames(pid);
+  if (names.length >= MAX_REVS) return { error: `이 프로젝트의 Rev 가 ${MAX_REVS}개예요. 더 쌓지 않았어요. 오래된 Rev 파일(data/wbs/_history/${pid}/)을 정리한 뒤 다시 저장해 주세요.` };
+  const rev = Math.max(0, ...names.map((f) => Number(REV_FILE.exec(f)[1]))) + 1, now = new Date();
+  const file = `${String(rev).padStart(4, '0')}_${now.toLocaleDateString('sv-SE')}_${now.toTimeString().slice(0, 8).replace(/:/g, '')}.json`;
+  fs.mkdirSync(revDir(pid), { recursive: true });
+  writeJson(path.join(revDir(pid), file), { rev, savedAt: now.toISOString(), note, auto, snapshot: doc });
+  return { rev, savedAt: now.toISOString() };
+}
+
+// ---------- 읽기 전용 공유 링크: 토큰의 해시만 data/share.json 에 둔다(파일을 읽어도 링크를 만들 수 없게). 링크는 만들 때 한 번만 보여 준다 ----------
+const SHARE_FILE = path.join(DATA_DIR, 'share.json');
+const SHARE_MS = 30 * 24 * 60 * 60 * 1000; // 30일
+const live = (e) => !!e && Date.parse(e.expiresAt) > Date.now();
+const shareEntry = (token) => { const e = readJson(SHARE_FILE, {})[sha(token)]; return live(e) ? e : null; };
+function publicWbs(pid) { // 공유 화면에 보내는 자료: 계약금액·실제 비용·메모는 화면에서 숨기는 게 아니라 서버가 아예 안 보낸다
+  let doc; try { doc = JSON.parse(fs.readFileSync(wbsFile(pid), 'utf8').replace(/^﻿/, '')); } catch (e) { if (e.code === 'ENOENT') doc = wbsCalc.emptyDoc(); else return null; }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return null;
+  const items = (Array.isArray(doc.items) ? doc.items : []).map((it) => { if (!it || typeof it !== 'object') return it; const { memo, ...rest } = it; return rest; });
+  let name = pid; try { const p = loadCollection('projects').find((x) => x && x.id === pid); if (p && p.name) name = String(p.name); } catch { /* 이름을 못 읽어도 id 로 */ }
+  return { name, doc: { ...doc, bac: null, ac: null, items } };
+}
+
+// /api/wbs/<프로젝트id>[/revs[/<번호>[/restore]] | /share] — 처리했으면 true (아니면 404 로 넘어간다)
+async function wbsApi(req, res, pid, sub, revN, restore) {
+  const M = req.method, done = (status, body) => { send(res, status, body); return true; };
+  const bad = () => done(400, { error: '요청이 올바르지 않습니다.' });
+  const readDoc = (file) => { // 파일 → { doc, etag } | { missing } | { broken }
+    let raw; try { raw = fs.readFileSync(file); } catch (e) { if (e.code === 'ENOENT') return { missing: true }; throw e; }
+    try { return { doc: JSON.parse(raw.toString('utf8').replace(/^﻿/, '')), etag: etagOf(raw) }; } catch { return { broken: true }; }
+  };
+  const brokenMsg = `data/wbs/${pid}.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.`;
+
+  if (!sub) {
+    if (M === 'GET') {
+      const r = readDoc(wbsFile(pid));
+      return r.missing ? done(200, { doc: wbsCalc.emptyDoc(), etag: 'none' }) : r.broken ? done(500, { error: brokenMsg }) : done(200, { doc: r.doc, etag: r.etag });
+    }
+    if (M === 'PUT') {
+      // 저장: 본문을 먼저 다 받고, 그 다음 비교→쓰기를 await 없이 한 번에 한다 (db 저장과 같은 이유).
+      // 화면이 불러온 뒤 다른 곳(다른 탭, 비서가 파일을 직접 고침)이 바꿨으면 etag 가 달라서 409 로 막는다 — 남의 수정을 조용히 덮어쓰지 않는다
+      let b; try { b = await readBody(req, 1_000_000); } catch { return bad(); }
+      if (!b || typeof b.etag !== 'string') return done(400, { error: '요청이 올바르지 않습니다. (etag 가 필요해요)' });
+      const why = wbsCalc.validate(b.doc);
+      if (why) return done(400, { error: why });
+      let cur = null; try { cur = fs.readFileSync(wbsFile(pid)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (b.etag !== (cur ? etagOf(cur) : 'none')) return done(409, { error: '그 사이 다른 곳에서 먼저 바뀌어서 저장하지 않았어요. 최신 내용을 새로 불러옵니다.' });
+      const doc = wbsCalc.normalize(b.doc, wbsCalc.today());
+      writeJson(wbsFile(pid), doc);
+      return done(200, { doc, etag: etagOf(fs.readFileSync(wbsFile(pid))) });
+    }
+    return false;
+  }
+
+  if (sub === 'revs') {
+    if (!revN && M === 'GET') return done(200, { revs: listRevs(pid).map(({ rev, savedAt, note, auto }) => ({ rev, savedAt, note, auto })) });
+    if (!revN && M === 'POST') { // 지금 저장된 공정표를 Rev 로 복사
+      let b; try { b = await readBody(req); } catch { return bad(); }
+      const note = String((b && b.note) ?? '').trim();
+      if (note.length > 100) return done(400, { error: '설명은 100자까지예요.' });
+      const r = readDoc(wbsFile(pid));
+      if (r.missing) return done(400, { error: '저장할 공정표가 아직 없어요. 먼저 항목을 추가해 주세요.' });
+      if (r.broken) return done(500, { error: brokenMsg });
+      const w = writeRev(pid, r.doc, note, false);
+      return w.error ? done(409, { error: w.error }) : done(200, w);
+    }
+    const rev = revN ? listRevs(pid).find((x) => x.rev === Number(revN)) : null;
+    if (revN && !restore && M === 'GET') return rev ? done(200, rev) : done(404, { error: '없는 Rev 입니다.' });
+    if (revN && restore && M === 'POST') { // 이 Rev 로 되돌리기: 먼저 지금 상태를 자동 Rev 로 저장하고, 그 다음 바꾼다
+      if (!rev) return done(404, { error: '없는 Rev 입니다.' });
+      const why = wbsCalc.validate(rev.doc);
+      if (why) return done(400, { error: `이 Rev 는 형식이 맞지 않아 되돌릴 수 없어요: ${why}` });
+      const cur = readDoc(wbsFile(pid));
+      if (cur.broken) return done(500, { error: `${brokenMsg} (지금 상태를 저장할 수 없어 되돌리지 않았어요)` });
+      let backupRev = null;
+      if (!cur.missing) {
+        const w = writeRev(pid, cur.doc, `되돌리기 전 자동 저장 (Rev ${rev.rev} 으로 되돌림)`, true);
+        if (w.error) return done(409, { error: w.error });
+        backupRev = w.rev;
+      }
+      const doc = wbsCalc.normalize(rev.doc, wbsCalc.today());
+      writeJson(wbsFile(pid), doc);
+      return done(200, { doc, etag: etagOf(fs.readFileSync(wbsFile(pid))), backupRev });
+    }
+    return false;
+  }
+
+  if (sub === 'share' && !revN) {
+    const all = readJson(SHARE_FILE, {}), mine = Object.entries(all).filter(([, e]) => e && e.pid === pid);
+    for (const [h, e] of Object.entries(all)) if (!live(e)) delete all[h]; // 기한이 지난 것은 치운다
+    if (M === 'GET') { const e = mine.map(([, x]) => x).find(live); return done(200, e ? { active: true, createdAt: e.createdAt, expiresAt: e.expiresAt } : { active: false }); }
+    if (M === 'POST') { // 새 링크를 만들면 이 프로젝트의 이전 링크는 끊긴다
+      const token = crypto.randomBytes(24).toString('base64url'), now = Date.now();
+      for (const [h] of mine) delete all[h];
+      all[sha(token)] = { pid, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + SHARE_MS).toISOString() };
+      writeJson(SHARE_FILE, all);
+      return done(200, { path: `/s/${token}`, expiresAt: all[sha(token)].expiresAt });
+    }
+    if (M === 'DELETE') { for (const [h] of mine) delete all[h]; writeJson(SHARE_FILE, all); return done(200, { ok: true, removed: mine.length }); }
+  }
+  return false;
+}
+
 // ---------- 연습용 예시 데이터 (가상 회사 "가나다전자", 실제 회사·사람 이름은 쓰지 않는다) ----------
 // 날짜는 "지금"을 기준으로 잡아서 언제 넣어도 이번 주·다음 주로 보인다
 function sampleData(now = new Date()) {
@@ -250,7 +365,7 @@ if (!fs.existsSync(SKILL_FILE) || fs.readFileSync(SKILL_FILE, 'utf8') !== fs.rea
   fs.mkdirSync(path.dirname(SKILL_FILE), { recursive: true });
   fs.copyFileSync(SKILL_SRC, SKILL_FILE);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
+const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
 const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
 const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
@@ -407,6 +522,14 @@ async function handle(req, res) {
       if (t && sessions[sha(t)]) { delete sessions[sha(t)]; writeJson(SESSIONS_FILE, sessions); }
       return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader('', 0) });
     }
+    // 읽기 전용 공유 링크의 자료: 로그인 없이 열린다. 길고 무작위인 토큰을 아는 사람만, 그 프로젝트의 공정표를(금액·메모 빼고) 읽을 수만 있다
+    const sm = p.match(/^\/api\/share\/([A-Za-z0-9_-]{20,64})$/);
+    if (sm && req.method === 'GET') {
+      const e = shareEntry(sm[1]);
+      if (!e) return send(res, 404, { error: '없거나 끊긴 링크입니다.' });
+      const r = publicWbs(e.pid);
+      return r ? send(res, 200, r) : send(res, 500, { error: '공정표 파일을 읽지 못했어요.' });
+    }
     // 여기부터는 로그인해야만 쓸 수 있다
     if (!user) return send(res, 401, { error: '로그인이 필요합니다.' });
     if (p === '/api/me' && req.method === 'GET') return send(res, 200, { name: user.name, username: user.username });
@@ -447,26 +570,8 @@ async function handle(req, res) {
       }
     }
 
-    const wm = p.match(/^\/api\/wbs\/([A-Za-z0-9_-]{1,64})$/);
-    if (wm && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(wm[1]) && (req.method === 'GET' || req.method === 'PUT')) {
-      const pid = wm[1];
-      if (req.method === 'GET') {
-        let raw; try { raw = fs.readFileSync(wbsFile(pid)); } catch (e) { if (e.code === 'ENOENT') return send(res, 200, { doc: wbsCalc.emptyDoc(), etag: 'none' }); throw e; }
-        try { return send(res, 200, { doc: JSON.parse(raw.toString('utf8').replace(/^﻿/, '')), etag: etagOf(raw) }); }
-        catch { return send(res, 500, { error: `data/wbs/${pid}.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
-      }
-      // 저장: 본문을 먼저 다 받고, 그 다음 비교→쓰기를 await 없이 한 번에 한다 (db 저장과 같은 이유).
-      // 화면이 불러온 뒤 다른 곳(다른 탭, 비서가 파일을 직접 고침)이 바꿨으면 etag 가 달라서 409 로 막는다 — 남의 수정을 조용히 덮어쓰지 않는다
-      let b; try { b = await readBody(req, 1_000_000); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
-      if (!b || typeof b.etag !== 'string') return send(res, 400, { error: '요청이 올바르지 않습니다. (etag 가 필요해요)' });
-      const bad = wbsCalc.validate(b.doc);
-      if (bad) return send(res, 400, { error: bad });
-      let cur = null; try { cur = fs.readFileSync(wbsFile(pid)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      if (b.etag !== (cur ? etagOf(cur) : 'none')) return send(res, 409, { error: '그 사이 다른 곳에서 먼저 바뀌어서 저장하지 않았어요. 최신 내용을 새로 불러옵니다.' });
-      const doc = wbsCalc.normalize(b.doc, wbsCalc.today());
-      writeJson(wbsFile(pid), doc);
-      return send(res, 200, { doc, etag: etagOf(fs.readFileSync(wbsFile(pid))) });
-    }
+    const wm = p.match(/^\/api\/wbs\/([A-Za-z0-9_-]{1,64})(?:\/(revs|share)(?:\/(\d{1,6})(\/restore)?)?)?$/);
+    if (wm && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(wm[1]) && await wbsApi(req, res, wm[1], wm[2], wm[3], wm[4])) return;
 
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
@@ -483,7 +588,7 @@ async function handle(req, res) {
         writeJson(dbFile(n), cur[n]);
       }
       for (const [pid, doc] of Object.entries(sampleWbs())) // WBS 예시는 그 프로젝트의 파일이 아직 없을 때만 만든다 (내가 고친 공정표를 덮어쓰지 않는다)
-        if (!fs.existsSync(wbsFile(pid))) writeJson(wbsFile(pid), wbsCalc.normalize(doc, wbsCalc.today()));
+        if (!fs.existsSync(wbsFile(pid))) writeJson(wbsFile(pid), wbsCalc.normalize({ ...doc, actualLog: wbsCalc.sampleLog(doc, wbsCalc.today()) }, wbsCalc.today()));
       return send(res, 200, { ok: true, added: Object.fromEntries(names.map((n) => [n, sample[n].length])) });
     }
 
@@ -521,7 +626,16 @@ async function handle(req, res) {
 
   if (req.method !== 'GET') return send(res, 405, '허용되지 않는 요청입니다.');
   if (p === '/' || PROTECTED_PAGES.has(p)) return serveFile(res, user ? '/index.html' : '/login.html');
-  if (p.startsWith('/m/') && !user) return send(res, 401, '로그인이 필요합니다.'); // 업무 화면(public/m/)은 로그인한 사람만
+  const sp = p.match(/^\/s\/([A-Za-z0-9_-]{20,64})$/); // 공유 화면: 같은 WBS 화면을 읽기 전용으로. 화면 파일은 /m/ 에 있어서 여기서 직접 내보낸다
+  if (sp) {
+    if (!shareEntry(sp[1])) return send(res, 404, '없거나 끊긴 링크입니다.');
+    return fs.readFile(path.join(PUBLIC_DIR, 'm', 'wbs.html'), (err, data) => {
+      if (err) return send(res, 404, '없는 페이지입니다.');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' });
+      res.end(data);
+    });
+  }
+  if (p.startsWith('/m/') && !user && p !== '/m/wbs-calc.js') return send(res, 401, '로그인이 필요합니다.'); // 업무 화면(public/m/)은 로그인한 사람만 (계산 코드 wbs-calc.js 만 공유 화면이 쓰도록 예외)
   return serveFile(res, p);
 }
 

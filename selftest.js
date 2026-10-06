@@ -88,7 +88,8 @@ async function run() {
   const guarded = [['GET', '/api/me'], ['GET', '/api/chats'], ['POST', '/api/chats'], ['GET', `/api/chats/${chatId}`],
     ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete'],
     ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events'], ['POST', '/api/seed'],
-    ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1']];
+    ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
+    ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -112,7 +113,7 @@ async function run() {
   const today = new Date().toLocaleDateString('sv-SE');
   check('claude 에 .system.md 를 --append-system-prompt-file 로 넘김', t1.includes('sys=ok'));
   check('실행할 때마다 주인 이름과 오늘 날짜를 알려 줌', t1.includes('주인 이름: 테스트') && t1.includes('오늘 날짜: ' + today));
-  check('두뇌는 .system.md 와 .claude/(스킬)를 못 고치고 명령 도구도 못 씀', t1.includes('deny=ok'));
+  check('두뇌는 .system.md 와 .claude/(스킬)를 못 고치고, 명령 도구도 못 쓰고, 비밀번호·로그인 기록·공유 링크 파일(users·sessions·share.json)은 읽지도 못함', t1.includes('deny=ok'));
   check('로그인 전 /api/memory 는 401', (await fetch(BASE + '/api/memory')).status === 401);
   const mem0 = await (await fetch(BASE + '/api/memory', { headers: H })).json();
   check('처음에는 기억이 비어 있음(제목 줄은 안 보임)', mem0.items.length === 0);
@@ -310,6 +311,8 @@ async function runSeed(ck) {
   check('예시 공정표: 완료·진행·지연·대기가 모두 보이고, 지연 작업은 2개이고, 계약금액이 들어 있음',
     ['완료', '진행', '지연', '대기'].every((s) => wc.rows.some((r) => r.status === s)) && wc.evms.late === 2 && wdoc.bac === 1200000000 && typeof wdoc.actualLog[wbsCalc.today()] === 'number');
   check('예시 공정표가 가리키는 프로젝트(demo-p1)가 실제로 있음', ids.has('demo-p1'));
+  const logDays = Object.keys(wdoc.actualLog).sort();
+  check('예시 공정표에는 S-곡선용 과거 기록이 주 단위로 쌓여 있고(8개 이상), 줄어들지 않음', logDays.length >= 8 && logDays.every((d, i) => i === 0 || wdoc.actualLog[d] >= wdoc.actualLog[logDays[i - 1]]));
   const wkeys = new Set([...Object.keys(wdoc), ...wdoc.items.flatMap(Object.keys)]);
   check('스킬 문서에 공정표 파일의 모든 필드가 적혀 있음', [...wkeys].every((k) => skillText.includes('`' + k + '`')) && skillText.includes('data/wbs/<프로젝트 id>.json'));
 
@@ -503,7 +506,7 @@ async function runWbs(ck) {
   const get = (u) => fetch(BASE + u, { headers: { Cookie: ck } });
   const api = (method, url, body) => fetch(BASE + url, { method, headers: H, body: body === undefined ? undefined : JSON.stringify(body) });
   const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
-  check('로그인 전에는 /m/wbs.html·/m/wbs-calc.js 가 401', (await fetch(BASE + '/m/wbs.html')).status === 401 && (await fetch(BASE + '/m/wbs-calc.js')).status === 401);
+  check('로그인 전에는 /m/wbs.html 이 401 (계산 코드 wbs-calc.js 만 공유 화면이 쓰도록 예외로 열려 있음)', (await fetch(BASE + '/m/wbs.html')).status === 401);
   const main = await (await get('/')).text();
   check('메인 화면: WBS 메뉴에 /m/wbs.html 을 띄우고 "#WBS/<프로젝트id>" 의 id 를 넘김', main.includes('/m/wbs.html') && main.includes('showWbs(arg)') && main.includes("'?p=' + encodeURIComponent(pid)"));
   const html = await (await get('/m/wbs.html')).text();
@@ -619,6 +622,32 @@ async function runWbs(ck) {
   check('간트 가로축: 해를 넘기면 2026.12 · 2027.01 로 연도 표시, 오늘이 범위 밖이어도 덮음', w.months('2026-12-01', '2027-01-31').map((m) => m.label).join() === '2026.12,2027.01' && sp2.from === '2026-10-01' && sp2.to === '2027-01-31');
   check('막대 자리(px): 10/1~10/10 은 8/1 에서 61일 뒤, 하루 6px → 왼쪽 366px · 폭 60px', w.px('2026-10-01', '2026-10-10', '2026-08-01', 6).left === 366 && w.px('2026-10-01', '2026-10-10', '2026-08-01', 6).width === 60);
 
+  // ---- S-곡선(계획 누적·실제 누적) ----
+  const rowsOf = (items) => w.compute({ items }, T).rows;
+  const at = (a, d) => a.find((p) => p.d === d).v;
+  const sc1 = w.scurve(rowsOf([leaf('1', '2026-10-01', '2026-10-10', 0)]), '2026-09-29', '2026-10-12');
+  check('S-곡선(계획): 작업 하나(10/1~10/10)의 누적은 시작 전 0%, 10/5 에 50%, 10/10 부터 100%, 점은 날마다(14개)',
+    near(at(sc1, '2026-09-30'), 0) && near(at(sc1, '2026-10-05'), 50) && near(at(sc1, '2026-10-10'), 100) && near(at(sc1, '2026-10-12'), 100) && sc1.length === 14 && sc1[0].d === '2026-09-29');
+  const sc2 = w.scurve(rowsOf([leaf('1', '2026-10-01', '2026-10-10', 0, 1), leaf('2', '2026-10-06', '2026-10-15', 0, 3)]), '2026-10-01', '2026-10-15');
+  check('S-곡선(계획): 가중치 1 대 3 인 두 작업의 10/10 누적 = 0.25×100% + 0.75×50% = 62.5%, 마지막 날 100%', near(at(sc2, '2026-10-10'), 62.5) && near(at(sc2, '2026-10-15'), 100));
+  const scL = w.scurve(rowsOf([leaf('1', '2025-03-01', '2027-06-30', 0)]), '2025-01-01', '2027-12-31');
+  check('S-곡선: 3년짜리도 점이 160~170개로 줄고, 마지막 날(12/31)을 꼭 포함하고, 줄어들지 않음', scL.length <= 170 && scL.at(-1).d === '2027-12-31' && scL.every((p, i) => i === 0 || p.v >= scL[i - 1].v - 1e-9));
+  const ap = w.actualPoints({ '2026-10-01': 10, '2026-10-03': 20, '2026-10-05': 25, '2026-10-09': 99, 'x': 5 }, '2026-10-05', 33.3);
+  check('S-곡선(실제): 기록 중 오늘까지만(미래·날짜 아닌 키 제외), 오늘 값은 지금 계산한 값(33.3)으로, 날짜순',
+    ap.map((p) => p.d + ':' + p.v).join() === '2026-10-01:10,2026-10-03:20,2026-10-05:33.3' && w.actualPoints(undefined, T, 40).length === 1);
+
+  const sl = w.sampleLog({ items: [leaf('1', '2026-09-01', '2026-09-30', 100), leaf('2', '2026-09-15', '2026-12-31', 40)] }, T);
+  const slv = Object.values(sl);
+  check('예시용 과거 기록(sampleLog): 첫 작업 시작일부터 7일마다 한 점, 줄어들지 않고, 마지막 점은 지금 값(70%)에 가까움',
+    Object.keys(sl)[0] === '2026-09-01' && Object.keys(sl)[1] === '2026-09-08' && slv.every((v, i) => i === 0 || v >= slv[i - 1]) && Math.abs(slv.at(-1) - 70) < 15 && !('2026-10-07' in sl) && w.sampleLog({ items: [] }, T) && Object.keys(w.sampleLog({ items: [] }, T)).length === 0);
+
+  // ---- 엑셀(CSV) ----
+  const cs =w.csv(w.compute({ items: [{ code: '1', name: '설계, 기본' }, { ...leaf('1.10', '2026-10-01', '2026-10-10', 55.54), name: '=SUM(A1)', owner: '-홍', memo: '줄1\n줄2' }, { ...leaf('2', '2026-10-01', '2026-10-10', 0), name: '5" 배관' }] }, T).rows);
+  check('엑셀(CSV): UTF-8 BOM 으로 시작하고, 줄바꿈은 CRLF, 첫 줄은 머리글', cs.startsWith('﻿코드,단계,작업명,담당,시작일,완료일,가중치,진도율(%),계획 진도(%),상태,메모\r\n') && cs.endsWith('\r\n') && !cs.replace('"줄1\n줄2"', '').replace(/\r\n/g, '').includes('\n'));
+  check('엑셀(CSV): 쉼표·따옴표·줄바꿈이 든 칸은 따옴표로 감쌈', cs.includes('"설계, 기본"') && cs.includes('"5"" 배관"') && cs.includes('"줄1\n줄2"'));
+  check('엑셀(CSV): = - 로 시작하는 글자 칸은 수식으로 읽히지 않게 앞에 \' 를 붙이고, 코드 1.10 은 ="1.10" 으로 써서 1.1 로 안 바뀜',
+    cs.includes("'=SUM(A1)") && cs.includes("'-홍") && cs.includes('="1.10"') && cs.includes(',55.5,'));
+
   // ---- 저장 API: data/wbs/<프로젝트id>.json ----
   const wbsDir = path.join(dir, 'wbs'), today = new Date().toLocaleDateString('sv-SE');
   const ac = new AbortController();
@@ -665,6 +694,84 @@ async function runWbs(ck) {
   for (const u of ['/api/wbs/nul', '/api/wbs/NUL', '/api/wbs/a.b', '/api/wbs/..%2Fusers', '/api/wbs/a%2Fb'])
     check(`이상한 프로젝트 id 는 거절: PUT ${u}`, (await api('PUT', u, { etag: 'none', doc: docA })).status === 404);
   check('다른 사이트에서 온 저장 요청은 403', (await fetch(BASE + '/api/wbs/p1', { method: 'PUT', headers: { ...H, Origin: 'https://evil.example' }, body: JSON.stringify({ etag: 'x', doc: docA }) })).status === 403);
+
+  // ---- 화면 파일: 새 단추·S-곡선·인쇄 ----
+  check('WBS 화면: 💾 Rev 저장 · 📜 이력 · 📊 엑셀 · 📄 PDF · 🔗 공유 링크 단추와 S-곡선(SVG)·인쇄 화면(@page)', ['💾 Rev 저장', '📜 이력', '📊 엑셀', '📄 PDF', '🔗 공유 링크', 'id="sc"', '<svg', '<polyline', '@page', 'beforeprint', 'data-b="restore"'].every((x) => html.includes(x)));
+  check('WBS 화면: 공유 화면(/s/)에서는 /m/db.js 를 부르지 않음(로그인이 없어 못 받음)', html.includes("location.pathname.startsWith('/s/')") && html.includes('document.write'));
+
+  // ---- Rev (저장 이력): data/wbs/_history/<프로젝트id>/<번호>_<날짜>_<시각>.json ----
+  const put = async (pid, doc) => { const g = await (await api('GET', `/api/wbs/${pid}`)).json(); return (await api('PUT', `/api/wbs/${pid}`, { etag: g.etag, doc })).json(); };
+  const withMemo = { ...docA, items: docA.items.map((i) => (i.code === '1.1' ? { ...i, memo: '비밀 메모 xyz' } : i)) };
+  await put('r1', withMemo);
+  const histDir = path.join(wbsDir, '_history', 'r1');
+  check('Rev 가 없으면 빈 목록', (await (await api('GET', '/api/wbs/r1/revs')).json()).revs.length === 0);
+  const v1 = await (await api('POST', '/api/wbs/r1/revs', { note: ' 첫 저장 ' })).json();
+  const v2 = await (await api('POST', '/api/wbs/r1/revs', {})).json();
+  const files = fs.readdirSync(histDir).sort();
+  check('Rev 저장: 번호 1·2, 파일은 data/wbs/_history/r1/0001_<날짜>_<시각>.json 모양', v1.rev === 1 && v2.rev === 2 && files.length === 2 && /^0001_\d{4}-\d\d-\d\d_\d{6}\.json$/.test(files[0]) && /^0002_/.test(files[1]));
+  const f1 = JSON.parse(fs.readFileSync(path.join(histDir, files[0]), 'utf8'));
+  check('Rev 파일: 저장 시각·설명(앞뒤 공백 제거)·자동 여부·그때의 공정표 전체(snapshot)가 들어 있음', f1.rev === 1 && f1.note === '첫 저장' && f1.auto === false && !isNaN(Date.parse(f1.savedAt)) && f1.snapshot.items.length === 5 && f1.snapshot.bac === 1e9);
+  const lst = (await (await api('GET', '/api/wbs/r1/revs')).json()).revs;
+  check('Rev 목록: 번호 순, 설명·자동 여부 포함(공정표 내용은 안 실림)', lst.map((v) => v.rev).join() === '1,2' && lst[0].note === '첫 저장' && lst[1].auto === false && !('doc' in lst[0]));
+  const gv = await (await api('GET', '/api/wbs/r1/revs/1')).json();
+  check('Rev 보기: 그때의 공정표(doc)와 저장 시각을 돌려줌', gv.rev === 1 && gv.doc.items.find((i) => i.code === '1.2').progress === 0 && !isNaN(Date.parse(gv.savedAt)));
+  await put('r1', { ...withMemo, items: withMemo.items.map((i) => (i.code === '1.2' ? { ...i, progress: 55 } : i)) });
+  const rr = await api('POST', '/api/wbs/r1/revs/1/restore'), rj = await rr.json();
+  const back = JSON.parse(fs.readFileSync(path.join(histDir, fs.readdirSync(histDir).sort()[2]), 'utf8'));
+  check('이 Rev 로 되돌리기: 진도율이 0 으로 돌아오고, 되돌리기 전 상태(55)가 자동 Rev(3)로 먼저 저장됨', rr.status === 200 && rj.doc.items.find((i) => i.code === '1.2').progress === 0 && rj.backupRev === 3
+    && back.auto === true && back.note.includes('자동 저장') && back.snapshot.items.find((i) => i.code === '1.2').progress === 55);
+  check('되돌린 뒤 파일·etag 가 일치하고 이전 Rev 들은 그대로(1·2·3)', (await (await api('GET', '/api/wbs/r1')).json()).etag === rj.etag && fs.readdirSync(histDir).length === 3);
+  check('없는 Rev 는 404, 설명이 100자를 넘으면 400, 공정표 파일이 없으면 Rev 저장 400',
+    (await api('GET', '/api/wbs/r1/revs/99')).status === 404 && (await api('POST', '/api/wbs/r1/revs/99/restore')).status === 404
+    && (await api('POST', '/api/wbs/r1/revs', { note: 'x'.repeat(101) })).status === 400 && (await api('POST', '/api/wbs/nofile/revs', {})).status === 400);
+  const before = fs.readFileSync(path.join(wbsDir, 'r1.json'), 'utf8');
+  fs.writeFileSync(path.join(histDir, '0010_2026-01-01_000000.json'), JSON.stringify({ rev: 10, savedAt: '2026-01-01T00:00:00Z', note: '깨진 내용', auto: false, snapshot: { items: [{ code: 'x', name: 'a' }] } }));
+  fs.writeFileSync(path.join(histDir, 'memo.json'), '{}'); fs.writeFileSync(path.join(histDir, '0011_2026-01-01_000000.json'), '{ 깨짐');
+  const bad10 = await api('POST', '/api/wbs/r1/revs/10/restore');
+  check('형식이 틀린 Rev 는 되돌리기 400 이고 지금 파일은 그대로, 이름이 다른 파일·깨진 Rev 는 목록에서 건너뜀',
+    bad10.status === 400 && fs.readFileSync(path.join(wbsDir, 'r1.json'), 'utf8') === before && (await (await api('GET', '/api/wbs/r1/revs')).json()).revs.map((v) => v.rev).join() === '1,2,3,10');
+  await put('cap', docA);
+  fs.mkdirSync(path.join(wbsDir, '_history', 'cap'), { recursive: true });
+  for (let i = 1; i <= 200; i++) fs.writeFileSync(path.join(wbsDir, '_history', 'cap', `${String(i).padStart(4, '0')}_2026-01-01_000000.json`), '{}');
+  const capRes = await api('POST', '/api/wbs/cap/revs', {});
+  check('Rev 가 200개면 더 쌓지 않고 이유를 알림(묻지 않고 지우지 않음)', capRes.status === 409 && (await capRes.json()).error.includes('200') && fs.readdirSync(path.join(wbsDir, '_history', 'cap')).length === 200);
+  check('Rev 폴더를 만들어도 공정표 파일 알림·목록에 영향 없음(_history 는 폴더)', fs.statSync(path.join(wbsDir, '_history')).isDirectory() && !fs.existsSync(path.join(wbsDir, '_history.json')));
+
+  // ---- 읽기 전용 공유 링크 ----
+  const anon = (u, o) => fetch(BASE + u, o); // 쿠키 없이
+  const mk = async (pid) => (await (await api('POST', `/api/wbs/${pid}/share`)).json());
+  const s1 = await mk('r1'), tok = (s1.path || '').slice(3);
+  const shareFile = path.join(dir, 'share.json');
+  check('공유 링크 만들기: /s/<긴 토큰> 주소와 만료일(30일 뒤)', /^\/s\/[A-Za-z0-9_-]{32}$/.test(s1.path) && Math.abs(Date.parse(s1.expiresAt) - Date.now() - 30 * 864e5) < 60000);
+  check('토큰은 파일에 없고(해시만 저장), 서버 로그에도 없음', fs.existsSync(shareFile) && !fs.readFileSync(shareFile, 'utf8').includes(tok) && !srv.log.includes(tok));
+  const st1 = await (await api('GET', '/api/wbs/r1/share')).json();
+  check('공유 상태: 켜져 있음 + 만료일(주소는 다시 안 알려 줌)', st1.active === true && !!st1.expiresAt && !JSON.stringify(st1).includes(tok));
+  const pubRes = await anon(`/api/share/${tok}`), pubTxt = await pubRes.text(), pub = JSON.parse(pubTxt);
+  check('로그인 없이 /api/share/<토큰> 이 열리고 공정표를 돌려줌', pubRes.status === 200 && pub.doc.items.length === 5 && pub.name === 'r1' && pub.doc.items.some((i) => i.code === '1.1'));
+  check('금액(BAC·AC)과 메모는 서버가 아예 안 보냄(응답 글 전체에 없음)', pub.doc.bac === null && pub.doc.ac === null && !pubTxt.includes('비밀 메모') && !pubTxt.includes('1000000000') && !pub.doc.items.some((i) => 'memo' in i));
+  const pg = await anon(`/s/${tok}`), pgTxt = await pg.text();
+  check('로그인 없이 /s/<토큰> 화면이 열림(캐시·referrer 차단 헤더 포함)', pg.status === 200 && (pg.headers.get('content-type') || '').startsWith('text/html') && pgTxt.includes('WBS 공정표') && pgTxt.includes('/m/wbs-calc.js')
+    && pg.headers.get('cache-control') === 'no-store' && pg.headers.get('referrer-policy') === 'no-referrer');
+  const wc = await anon('/m/wbs-calc.js');
+  check('로그인 없이 받을 수 있는 건 계산 코드(/m/wbs-calc.js)뿐 — 화면(/m/wbs.html)·/m/db.js·/m/cal.js 는 여전히 401', wc.status === 200 && (wc.headers.get('content-type') || '').startsWith('text/javascript')
+    && (await anon('/m/wbs.html')).status === 401 && (await anon('/m/db.js')).status === 401 && (await anon('/m/cal.js')).status === 401 && (await anon('/m/projects.html')).status === 401);
+  check('토큰으로는 읽기만: 로그인 필요한 API(저장·Rev·공유·목록)는 쿠키 없이 모두 401', (await Promise.all([['GET', '/api/wbs/r1'], ['PUT', '/api/wbs/r1'], ['GET', '/api/wbs/r1/revs'], ['POST', '/api/wbs/r1/share'], ['GET', '/api/db/projects'], ['PUT', `/api/share/${tok}`]]
+    .map(([m, u]) => anon(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'PUT' ? '{}' : undefined })))).every((r) => r.status === 401)
+    && (await anon(`/s/${tok}`, { method: 'POST' })).status === 405);
+  const bogus = 'x'.repeat(32);
+  check('틀린 토큰·짧은 토큰은 열리지 않음(404)', (await anon(`/api/share/${bogus}`)).status === 404 && (await anon(`/s/${bogus}`)).status === 404 && (await anon('/s/abc')).status === 404 && (await anon(`/s/${tok}/x`)).status === 404);
+  const r2doc = await (await anon(`/api/share/${(await mk('cap')).path.slice(3)}`)).json();
+  check('토큰은 그 프로젝트의 공정표만 보여 줌(다른 프로젝트 것은 안 열림)', r2doc.name === 'cap' && (await (await anon(`/api/share/${tok}`)).json()).name === 'r1');
+  const s2 = await mk('r1');
+  check('새 링크를 만들면 이전 링크는 끊기고 새 링크는 열림', s2.path !== s1.path && (await anon(`/api/share/${tok}`)).status === 404 && (await anon(`/api/share${s2.path.slice(2)}`)).status === 200);
+  const tok2 = s2.path.slice(3);
+  const del = await (await api('DELETE', '/api/wbs/r1/share')).json();
+  check('링크 끊기: 끊은 뒤에는 화면·자료 모두 404, 상태는 꺼짐', del.removed === 1 && (await anon(`/api/share/${tok2}`)).status === 404 && (await anon(`/s/${tok2}`)).status === 404 && (await (await api('GET', '/api/wbs/r1/share')).json()).active === false);
+  const s3 = await mk('r1'), tok3 = s3.path.slice(3);
+  const sj = JSON.parse(fs.readFileSync(shareFile, 'utf8'));
+  for (const h of Object.keys(sj)) if (sj[h].pid === 'r1') sj[h].expiresAt = new Date(Date.now() - 1000).toISOString();
+  fs.writeFileSync(shareFile, JSON.stringify(sj));
+  check('만료된 링크는 열리지 않음(404)', (await anon(`/api/share/${tok3}`)).status === 404 && (await anon(`/s/${tok3}`)).status === 404 && (await (await api('GET', '/api/wbs/r1/share')).json()).active === false);
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
