@@ -95,6 +95,9 @@ async function run() {
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
+  check('두뇌에는 개발용 지침(상위 폴더 CLAUDE.md)·주인 PC 설정·플러그인 훅·커넥터(MCP)를 싣지 않고, 도구는 7개(읽기·찾기·검색·고치기·쓰기·웹 검색·웹 읽기)로 고정', t1.includes('iso=ok'));
+  check('실행할 때마다 스킬 문서의 정확한 위치(작업 폴더 data 안 .claude/skills)를 알려 줌 — 상위 폴더에서 찾다가 "권한 없음"이 나지 않게',
+    t1.includes(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md')) && t1.includes(`작업 폴더: ${dir}`));
   // claude 가 결과 없이 죽어도 화면이 멈추지 않아야 한다
   const crashId = (await (await fetch(BASE + '/api/chats', { method: 'POST', headers: H })).json()).id;
   const crash = await ask(crashId, '/crash');
@@ -905,6 +908,32 @@ function runScheduleCalc() {
   const ran = mk(daily, D(10, 7, 12, 0)); // 12시에 따라잡아 돌고 난 뒤에도 다음 날 정해진 시각에는 정상으로 돈다
   check('따라잡아 돈 뒤에도 다음 정해진 시각(다음 날 09:00)에는 정상으로 돎', !S.isDue(ran, D(10, 8, 8, 59)) && S.isDue(ran, D(10, 8, 9, 0)));
 
+  // 경계: 자정 · 일요일 · 월말·연말·윤년 (4편 점검)
+  const Y = (y, m, d, h = 0, mi = 0, s = 0) => new Date(y, m - 1, d, h, mi, s);
+  const d00 = { 종류: 'daily', 시각: '00:00' }, d2359 = { 종류: 'daily', 시각: '23:59' };
+  check('자정: 매일 00:00 은 23:59:59 까지는 그날 00:00, 자정 정각에 다음 날 00:00 으로 넘어감',
+    f(S.lastDue(d00, Y(2026, 10, 7, 23, 59, 59))) === '2026-10-07 00:00:00' && f(S.lastDue(d00, Y(2026, 10, 8, 0, 0, 0))) === '2026-10-08 00:00:00');
+  check('자정: 00:00:10 에 돌았으면 그날 23:59:59 까지 다시 안 돌고, 다음 날 00:00 정각에 돎',
+    !S.isDue(mk(d00, Y(2026, 10, 7, 0, 0, 10)), Y(2026, 10, 7, 23, 59, 59)) && S.isDue(mk(d00, Y(2026, 10, 7, 0, 0, 10)), Y(2026, 10, 8, 0, 0, 0)));
+  check('자정: 매일 23:59 는 자정을 넘긴 직후 "어제 23:59" 로 보고, 어제 23:59 에 돌았으면 자정 직후 다시 안 돎',
+    f(S.lastDue(d2359, Y(2026, 10, 8, 0, 0, 30))) === '2026-10-07 23:59:00' && !S.isDue(mk(d2359, Y(2026, 10, 7, 23, 59, 20)), Y(2026, 10, 8, 0, 0, 30)) && S.isDue(mk(d2359, Y(2026, 10, 7, 23, 59, 20)), Y(2026, 10, 8, 23, 59)));
+  check('자정: 30분마다는 날을 넘겨도 이어서 셈(23:50 → 다음 날 00:20)', !S.isDue(mk(every, Y(2026, 10, 7, 23, 50)), Y(2026, 10, 8, 0, 19, 59)) && S.isDue(mk(every, Y(2026, 10, 7, 23, 50)), Y(2026, 10, 8, 0, 20)));
+  const sun0 = { 종류: 'weekly', 요일: '일', 시각: '00:00' };
+  check('일요일: 매주 일 00:00 은 토요일 23:59:59 까지 지난 일요일, 일요일 자정 정각에 그날로',
+    f(S.lastDue(sun0, Y(2026, 10, 10, 23, 59, 59))) === '2026-10-04 00:00:00' && f(S.lastDue(sun0, Y(2026, 10, 11, 0, 0, 0))) === '2026-10-11 00:00:00');
+  check('일요일: 매주 토 23:59 는 일요일 자정 직후 "어제", 매주 월 은 일요일에 엿새 전 월요일',
+    f(S.lastDue({ 종류: 'weekly', 요일: '토', 시각: '23:59' }, Y(2026, 10, 11, 0, 0, 30))) === '2026-10-10 23:59:00' && f(S.lastDue(weekly, Y(2026, 10, 11, 12, 0))) === '2026-10-05 09:00:00');
+  check('일요일: 지난 일요일 00:00 에 돌았으면 토요일 밤까지 안 돌고 일요일 자정에 돎', !S.isDue(mk(sun0, Y(2026, 10, 4, 0, 0, 5)), Y(2026, 10, 10, 23, 59, 59)) && S.isDue(mk(sun0, Y(2026, 10, 4, 0, 0, 5)), Y(2026, 10, 11, 0, 0, 0)));
+  check('월말: 10월 31일 → 11월 1일, 매주 일요일이 달을 넘어 지난달(10/25)로',
+    f(S.lastDue(daily, Y(2026, 11, 1, 8, 0))) === '2026-10-31 09:00:00' && f(S.lastDue({ 종류: 'weekly', 요일: '일', 시각: '09:00' }, Y(2026, 11, 1, 8, 0))) === '2026-10-25 09:00:00');
+  check('월말: 2월 — 평년은 3/1 → 2/28, 윤년(2028)은 3/1 → 2/29',
+    f(S.lastDue({ 종류: 'daily', 시각: '01:00' }, Y(2026, 3, 1, 0, 30))) === '2026-02-28 01:00:00' && f(S.lastDue({ 종류: 'daily', 시각: '01:00' }, Y(2028, 3, 1, 0, 30))) === '2028-02-29 01:00:00');
+  check('연말: 1월 1일 새벽 → 작년 12월 31일, 매주 목(2027-01-01 금요일) → 2026-12-31',
+    f(S.lastDue({ 종류: 'daily', 시각: '23:00' }, Y(2027, 1, 1, 0, 10))) === '2026-12-31 23:00:00' && f(S.lastDue({ 종류: 'weekly', 요일: '목', 시각: '09:00' }, Y(2027, 1, 1, 8, 0))) === '2026-12-31 09:00:00');
+  check('한 번(once): 2026-02-29·4월 31일은 없는 날이라 거절, 2028-02-29 는 통과, 12/31 23:59 는 해를 넘긴 직후에 돎',
+    S.check(mk({ 종류: 'once', 날짜: '2026-02-29', 시각: '09:00' })) !== null && S.check(mk({ 종류: 'once', 날짜: '2026-04-31', 시각: '09:00' })) !== null && S.check(mk({ 종류: 'once', 날짜: '2028-02-29', 시각: '09:00' })) === null
+    && S.isDue(mk({ 종류: 'once', 날짜: '2026-12-31', 시각: '23:59' }), Y(2027, 1, 1, 0, 0, 0)));
+
   // 끔·형식 오류
   check('켬=false 는 때가 지나도 안 돈다, 켬이 아예 없으면 켠 것으로 본다', !S.isDue(mk(once, null, { 켬: false }), D(10, 20)) && S.isDue(mk(once, null, { 켬: undefined }), D(10, 20)));
   const bad = (e) => S.check(e) !== null && S.isDue(e, D(10, 20, 12)) === false; // 틀린 항목은 이유가 나오고, 터지지 않고, 돌지 않는다
@@ -1210,8 +1239,8 @@ async function runInbox(ck) {
     ['id="sch"', 'id="schN"', 'type="checkbox"', 'data-run', 'data-del', '이 예약을 지울까요?', 'id="mem"'].every((w) => html.includes(w)));
   check('메인 화면: 대시보드 "안 읽은 알림" 카드와 🔔 는 같은 자료(noticeRaw)를 쓰고(대시보드가 따로 받지 않음), 카드·메뉴의 #알림 을 누르면 같은 목록이 열림',
     html.includes('notices: noticeRaw') && /DASH_DATA = \['events', 'projects', 'tasks'\]/.test(html) && html.includes(`closest('a[href="#알림"]')`) && html.includes('<a class="stat" href="#알림">'));
-  check('설정 화면: "텔레그램 배달(선택)" 칸 — 봇 토큰(가림 입력)·채팅 ID(가림)·저장·시험 보내기·설정 지우기, 저장된 값은 ****, 옆에 BotFather 도움말(/newbot·@userinfobot·시작 누르기)',
-    ['텔레그램 배달', '(선택)', 'id="tgToken"', 'type="password"', 'new-password', 'id="tgChat"', 'text-security', 'id="tgSave"', 'id="tgTest"', 'id="tgClear"', '시험 보내기', '****', 'data/settings.json',
+  check('설정 화면: "텔레그램 배달(선택)" 칸 — 봇 토큰·채팅 ID 는 ●●● 로 가린 일반 칸(비밀번호 칸이 아니라 브라우저가 토큰을 비밀번호로 저장하지 않음)·저장·시험 보내기·설정 지우기, 저장된 값은 ****, 옆에 BotFather 도움말(/newbot·@userinfobot·시작 누르기)',
+    !html.includes('type="password"') && ['텔레그램 배달', '(선택)', 'id="tgToken"', 'data-1p-ignore', 'id="tgChat"', 'text-security', 'id="tgSave"', 'id="tgTest"', 'id="tgClear"', '시험 보내기', '****', 'data/settings.json',
       '@BotFather', '/newbot', '@userinfobot', '시작(Start)', '봇 토큰', '채팅 ID'].every((w) => html.includes(w)));
   check('설정 화면: 시험 보내기 전에 저장하지 않은 입력이 있으면 안내, 예약 칸에는 📱 체크(휴대폰으로도 보내기)와 "텔레그램 설정 필요" 표시가 있음',
     html.includes('아직 저장되지 않았어요') && html.includes('data-phone') && html.includes('휴대폰으로도 보내기') && html.includes('텔레그램 설정 필요'));
@@ -1230,11 +1259,88 @@ function startServer(port, dataDir, env) {
 }
 const filesUnder = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(path.join(d, e.name)) : [path.join(d, e.name)]));
 
+// 서버를 껐다 켜기 (4편 점검): 놓친 회차는 한 번만, 도는 도중에 꺼진 예약은 알림으로, 실행 실패(시간 초과·갑자기 죽음·로그인 풀림)는 알림에 이유가 남는지,
+// 시계가 되돌아가 마지막실행이 "미래"가 된 예약이 조용히 멈추지 않는지. 별도 폴더·포트(8794)의 서버를 실제로 껐다 켠다
+async function runRestart() {
+  const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test3-')), B3 = 'http://127.0.0.1:8794';
+  const env3 = { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), SANCHO_TICK_MS: '200', SANCHO_BRAIN_MAX_MS: '4000' }; // 실행 시간 한도를 4초로 (30초 걸리는 "/slow" 가 걸린다)
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  const until = async (fn, ms = 15000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
+  const sfile = path.join(d3, 'schedule.json'), rfile = path.join(d3, 'schedule-running.json');
+  const write = (list) => { fs.writeFileSync(sfile + '.t', JSON.stringify(list, null, 2)); fs.renameSync(sfile + '.t', sfile); }, read = () => JSON.parse(fs.readFileSync(sfile, 'utf8'));
+  const runs = () => { const f = path.join(d3, 'wait-runs.log'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0; };
+  const mk = (id, 이름, 언제, 지시문, extra = {}) => ({ id, 이름, 언제, 지시문, 켬: true, 마지막실행: null, ...extra }), PAST = { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' };
+  const start = async () => { const s = startServer(8794, d3, env3); await s.ready; return s; };
+  const stop = (s) => new Promise((ok) => { s.once('exit', ok); s.kill(); });
+  write([
+    mk('rrrr0001', '재시작 매일', { 종류: 'daily', 시각: '00:00' }, '매일 점검', { 마지막실행: ago(60 * 24 * 3) }),
+    mk('rrrr0002', '시간 초과 예약', PAST, '/slow'), mk('rrrr0003', '갑자기 죽는 예약', PAST, '/crash'), mk('rrrr0004', '로그인 풀린 예약', PAST, '/login'),
+  ]);
+  let s = await start();
+  const H3 = { 'Content-Type': 'application/json', Cookie: cookieOf(await fetch(B3 + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '셋', username: 'three', password: PW }) })) };
+  const notes = async () => (await (await fetch(B3 + '/api/db/notices', { headers: H3 })).json()), titled = async (t) => (await notes()).filter((n) => n.title === t);
+
+  // 1) 실행 실패는 알림에 이유가 남는다
+  const fails = await until(async () => (await notes()).filter((n) => n.title.startsWith('예약 실패')).length === 3 && (await titled('예약 결과: 재시작 매일')).length === 1);
+  const fl = async (name) => (await titled(`예약 실패: ${name}`))[0] || { body: '', detail: '' };
+  const [ft, fc, fg] = [await fl('시간 초과 예약'), await fl('갑자기 죽는 예약'), await fl('로그인 풀린 예약')];
+  check('실행 실패 3가지가 각각 "예약 실패" 알림(주의)으로 남음: 시간 초과(점검용 4초 한도)·결과 없이 죽음·로그인 풀림', fails && [ft, fc, fg].every((n) => n.level === '주의')
+    && ft.body.includes('너무 오래 걸려 중단') && fc.body.includes('오류로 끝났습니다') && fc.detail.includes('boom') && fg.body.includes('로그인되어 있지 않습니다'));
+  const sch3 = await (await fetch(B3 + '/api/schedule', { headers: H3 })).json();
+  check('시간이 넘어 끊은 예약도 "실행 중"에서 풀리고(목록 running=false), 실행 중 기록 파일에서도 지워짐', sch3.items.every((e) => e.running === false) && Object.keys(JSON.parse(fs.readFileSync(rfile, 'utf8'))).length === 0);
+  const j3 = fs.readFileSync(path.join(d3, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8');
+  check('실패한 예약도 일지에 "⚠ 이름" 칸과 이유가 적힘', ['시간 초과 예약', '갑자기 죽는 예약', '로그인 풀린 예약'].every((n) => j3.includes(`⚠ ${n}`)) && j3.includes('너무 오래 걸려'));
+
+  // 2) 도는 도중에 서버를 끈다
+  write([...read(), mk('rrrr0005', '끊길 예약', { 종류: 'every', 분: 1 }, '/wait 끊김', { 마지막실행: ago(10) })]);
+  check('(끄기 전) 끊길 예약이 실행되기 시작함', await until(() => runs() === 1));
+  await stop(s);
+  check('도는 도중에 서버를 끄면 그 예약이 실행 중 기록(schedule-running.json)에 남고, 마지막실행은 이미 적혀 있음',
+    !!JSON.parse(fs.readFileSync(rfile, 'utf8')).rrrr0005 && Date.now() - Date.parse(read().find((e) => e.id === 'rrrr0005').마지막실행) < 60_000);
+
+  // 3) 다시 켠다: 끊긴 예약은 알림으로 알리고 다시 돌리지 않는다. 이미 돈 회차도 다시 안 돈다
+  s = await start();
+  const cut = await until(async () => (await titled('예약이 중간에 끊겼어요: 끊길 예약')).length === 1);
+  await sleep(1500); // 시계를 7번쯤 본다
+  const cutN = (await titled('예약이 중간에 끊겼어요: 끊길 예약'))[0];
+  check('다시 켜면 "예약이 중간에 끊겼어요" 알림(주의)이 한 번 오고, 기록은 비워짐', cut && cutN.level === '주의' && cutN.body.includes('다시 돌리지 않아요') && cutN.body.includes('▶') && Object.keys(JSON.parse(fs.readFileSync(rfile, 'utf8'))).length === 0);
+  check('다시 켜도 끊긴 회차·이미 돈 회차(매일·실패 3개)는 다시 안 돎', runs() === 1 && (await titled('예약 결과: 재시작 매일')).length === 1 && (await notes()).filter((n) => n.title.startsWith('예약 실패')).length === 3);
+
+  // 4) 서버(컴퓨터)가 이틀 꺼져 있었던 것처럼: 매일 예약의 마지막실행을 이틀 전으로 돌리고 다시 켠다. 시계가 되돌아간 예약도 하나 넣는다
+  await stop(s);
+  write(read().map((e) => (e.id === 'rrrr0001' ? { ...e, 마지막실행: ago(60 * 24 * 2) } : e.id === 'rrrr0005' ? { ...e, 켬: false } : e))
+    .concat([mk('rrrr0006', '시계 되돌림 예약', { 종류: 'daily', 시각: '00:00' }, '시계 점검', { 마지막실행: new Date(Date.now() + 3 * 864e5).toISOString() })]));
+  s = await start();
+  const again = await until(async () => (await titled('예약 결과: 재시작 매일')).length === 2);
+  await sleep(1500);
+  check('이틀 놓친 매일 예약은 켜진 뒤 딱 한 번만 돎(시계를 더 봐도 몰아서 안 돎)', again && (await titled('예약 결과: 재시작 매일')).length === 2);
+  check('한 번 알린 끊긴 예약은 다시 켜도 또 알리지 않음', (await titled('예약이 중간에 끊겼어요: 끊길 예약')).length === 1);
+  const clk = read().find((e) => e.id === 'rrrr0006');
+  check('마지막실행이 사흘 뒤(시계가 되돌아감)인 예약은 조용히 멈추지 않고 "지금부터" 다시 셈(바로 돌지는 않음)',
+    Math.abs(Date.now() - Date.parse(clk.마지막실행)) < 60_000 && (await titled('예약 결과: 시계 되돌림 예약')).length === 0);
+  await stop(s);
+  fs.rmSync(d3, { recursive: true, force: true });
+}
+
+// 비밀이 git 에 올라가지 않는지 (git 이 없는 PC 면 건너뜀)
+function runGit() {
+  const { execFileSync } = require('child_process');
+  const git = (...a) => { try { return { code: 0, out: execFileSync('git', a, { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 50e6 }) }; } catch (e) { return { code: e.status ?? -1, out: String(e.stdout || '') }; } };
+  if (git('rev-parse', '--is-inside-work-tree').code !== 0) return console.log('건너뜀  git 저장소가 아니어서 git 점검은 건너뜀');
+  check('data/(설정·봇 토큰·예약·알림)는 git 이 무시함(.gitignore)', ['data/settings.json', 'data/schedule.json', 'data/db/notices.json'].every((f) => git('check-ignore', '-q', f).code === 0));
+  check('git 에 올라간 파일 중 data/ 아래 것은 하나도 없음', !git('ls-files').out.split('\n').some((f) => f.startsWith('data/')));
+  const TOKEN = '[0-9]{8,10}:[A-Za-z0-9_-]{35}', revs = git('rev-list', '--all').out.split('\n').filter(Boolean);
+  check(`git 의 지금 파일과 지난 기록(${revs.length}개 커밋) 어디에도 진짜 모양의 텔레그램 봇 토큰(숫자 8~10자리:글자 35자)이 없음`,
+    git('grep', '-qE', TOKEN).code === 1 && (revs.length === 0 || git('grep', '-qE', TOKEN, ...revs).code === 1));
+}
+
 // claude 프로그램이 아예 없는 PC 를 흉내: PATH 를 빈 폴더로 바꾼 서버를 하나 더 켠다
 async function runNoClaude() {
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-'));
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-empty-'));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k) && k !== 'SANCHO_BRAIN_SCRIPT'));
+  // 예약도 하나 걸어 둔다: claude 가 없으면 예약 실행이 "예약 실패" 알림으로 이유를 남겨야 한다 (켜자마자 한 번 시계를 본다)
+  fs.writeFileSync(path.join(dir2, 'schedule.json'), JSON.stringify([{ id: 'nocl0001', 이름: 'claude 없는 예약', 언제: { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, 지시문: '안녕', 켬: true, 마지막실행: null }]));
   const s2 = startServer(8792, dir2, { ...env, PATH: empty });
   await s2.ready;
   const B2 = 'http://127.0.0.1:8792';
@@ -1244,6 +1350,10 @@ async function runNoClaude() {
   const t0 = Date.now();
   const sse = await (await fetch(`${B2}/api/chats/${id}/messages`, { method: 'POST', headers: H2, body: JSON.stringify({ content: '안녕' }), signal: AbortSignal.timeout(15000) })).text();
   check('claude 가 없는 PC 에서는 바로 쉬운 안내와 함께 끝남(멈추지 않음)', sse.includes('claude 프로그램을 찾을 수 없습니다') && sse.includes('event: done') && Date.now() - t0 < 10000);
+  let nf = null;
+  for (let i = 0; i < 50 && !nf; i++) { nf = (await (await fetch(B2 + '/api/db/notices', { headers: H2 })).json()).find((n) => n.title === '예약 실패: claude 없는 예약'); if (!nf) await new Promise((ok) => setTimeout(ok, 100)); }
+  check('claude 가 없는 PC 에서 예약이 돌면 "예약 실패" 알림(주의)에 쉬운 이유가 남고, 일지에도 ⚠ 와 함께 적힘', !!nf && nf.level === '주의' && nf.body.includes('claude 프로그램을 찾을 수 없습니다') && nf.detail.includes('Claude Code 가 설치')
+    && fs.readFileSync(path.join(dir2, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8').includes('⚠ claude 없는 예약'));
   s2.kill();
   fs.rmSync(dir2, { recursive: true, force: true }); fs.rmSync(empty, { recursive: true, force: true });
 }
@@ -1276,6 +1386,8 @@ srv.ready.then(async () => {
   try {
     await run();
     await runNoClaude();
+    await runRestart();
+    runGit();
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
     check('서버 로그에 비밀번호 평문이 없음', !srv.log.includes(PW));
     const leaked = filesUnder(dir).filter((f) => fs.readFileSync(f, 'utf8').includes(PW));

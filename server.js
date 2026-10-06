@@ -379,8 +379,14 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
 }
 const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰은 두뇌도 못 보게 막는다
 const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
+const BRAIN_TOOLS = ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebFetch'];
 const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
+  // 비서는 이 PC 의 Claude Code 를 그대로 쓰지만, 개발할 때의 것은 싣지 않는다 (4편 점검에서 찾음):
+  //  - 주인 PC 의 설정(user)·상위 폴더의 개발용 CLAUDE.md(project)·플러그인 훅·전역 스킬 → 'local' 만 읽는다. 상위 my-agent 를 "프로젝트"로 착각해 스킬 문서를 엉뚱한 곳에서 찾던 원인
+  //  - 메일·슬랙·드라이브 같은 커넥터(MCP) → 하나도 싣지 않는다 (밖으로 보내는 통로가 되지 않게)
+  //  - 쓸 수 있는 도구 자체를 아래 7개로 고정한다 (예약 만들기·알림 보내기 같은 Claude Code 기본 도구도 빼려고)
+  '--setting-sources', 'local', '--strict-mcp-config', '--disable-slash-commands', '--tools', BRAIN_TOOLS.join(','),
   // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 아직 안 준다
   '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch',
   '--disallowedTools', 'Bash', 'PowerShell', ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
@@ -391,7 +397,7 @@ const BRAIN_ARGS = [
 const BRAIN_CMD = process.env.SANCHO_BRAIN_SCRIPT ? [process.execPath, process.env.SANCHO_BRAIN_SCRIPT] : ['claude'];
 const TOOL_LABELS = { Read: '파일 읽는 중', Glob: '파일 찾는 중', Grep: '내용 검색 중', Edit: '파일 고치는 중', Write: '파일 쓰는 중',
   WebSearch: '웹 검색 중', WebFetch: '웹 페이지 읽는 중' };
-const BRAIN_MAX_MS = 10 * 60 * 1000;
+const BRAIN_MAX_MS = Number(process.env.SANCHO_BRAIN_MAX_MS) || 10 * 60 * 1000; // 점검에서만 짧게 줄인다
 const running = new Set(); // 지금 답하는 중인 대화
 
 // CLAUDE 로 시작하는 환경변수와 접속 주소·토큰을 지운다 (Claude Code 안에서 서버를 켜도 "로그인 안 됨"이 나지 않게)
@@ -408,7 +414,9 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 }
 
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
-const brainCtx = (name, d = new Date()) => `주인 이름: ${name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}.`;
+// 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
+const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
+const brainCtx = (name, d = new Date()) => `주인 이름: ${name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${SKILL_HINT}`;
 
 // 두뇌가 실패했을 때 이유를 쉬운 한국어로 — 대화(streamReply)와 예약(askBrainOnce)이 같이 쓴다
 const STALE_SESSION_MSG = '이전 대화의 기억을 찾지 못했습니다. 같은 말을 한 번 더 보내시면 새 기억으로 시작합니다.';
@@ -503,6 +511,9 @@ const TICK_MS = Number(process.env.SANCHO_TICK_MS) || 30_000; // 점검에서만
 const schedRunning = new Set(); // 지금 도는 예약 id — 같은 예약이 겹쳐 돌지 않게
 const warned = new Set(); // 이미 알림으로 알린 문제 (30초마다 같은 알림이 쌓이지 않게)
 const wasOff = new Set(); // 꺼 둔 걸 본 예약 id — 다시 켜진 순간을 알아보려고
+const RUNNING_FILE = path.join(DATA_DIR, 'schedule-running.json'); // 지금 도는 예약 { id: { 이름, 시작 } } — 도는 도중에 서버(컴퓨터)가 꺼졌는지 다음에 켤 때 알아보려고
+const markRunning = (id, info) => { const m = readJson(RUNNING_FILE, {}); if (info) m[id] = info; else delete m[id]; writeJson(RUNNING_FILE, m); };
+const CLOCK_SLACK_MS = 10 * 60 * 1000; // 마지막실행이 지금보다 이만큼 넘게 "미래"면 시계가 되돌아간 것으로 본다
 const DETAIL_MAX = 20_000; // 알림에 담는 결과 전체의 한도. 화면이 알림을 고쳐 저장할 때 보내는 크기 제한(200KB)을 넘지 않게. 전체는 일지에 있다
 watchJson(DATA_DIR, /^(schedule)\.json$/, ''); // 화면의 예약 칸은 db.watch('schedule') 로 받는다 (비서가 파일을 직접 고쳐도 따라 바뀌게)
 
@@ -624,11 +635,12 @@ async function runScheduled(e) {
   schedRunning.add(e.id); // 첫 await 전에 넣는다 (다음 점검이 끼어들기 전에)
   emitDb('schedule'); // 화면의 예약 칸이 "실행 중"을 보이게
   const name = String(e.이름 || e.id), t0 = new Date(), owner = readJson(USERS_FILE, [])[0];
+  markRunning(e.id, { 이름: name, 시작: t0.toISOString() }); // 끝나면 지운다. 남아 있으면 도중에 꺼진 것
   let r;
   try {
     r = await askBrainOnce(e.지시문, `${brainCtx(owner ? owner.name : '주인', t0)} 이 실행은 예약("${name}")이 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 요약한다.`);
   } catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
-  finally { schedRunning.delete(e.id); emitDb('schedule'); }
+  finally { schedRunning.delete(e.id); markRunning(e.id, null); emitDb('schedule'); }
   const day = t0.toLocaleDateString('sv-SE'), file = path.join(JOURNAL_DIR, `${day}.md`), text = r.text || '(결과 글이 없어요)', title = `${r.ok ? '예약 결과' : '예약 실패'}: ${name}`;
   try {
     fs.mkdirSync(JOURNAL_DIR, { recursive: true });
@@ -649,7 +661,8 @@ function scheduleTick() {
     if (why) { warnOnce(`${e && e.id}:${why}`, '예약 하나를 건너뛰었어요', `"${(e && (e.이름 || e.id)) || '이름 없음'}": ${why} data/schedule.json 에서 고쳐 주세요.`); continue; }
     if (e.켬 === false) { wasOff.add(e.id); continue; }
     // 쉬던 예약을 다시 켰다(화면 스위치든 비서가 파일을 고쳤든): 지금부터 센다 — 쉬는 동안 놓친 회차가 켜자마자 돌지 않게
-    if (wasOff.delete(e.id)) { e.마지막실행 = now.toISOString(); dirty = true; continue; }
+    // 마지막실행이 한참 미래다(컴퓨터 시계를 앞으로 잘못 맞췄다가 고침): 그대로 두면 그 시각까지 조용히 안 도니, 지금부터 다시 센다
+    if (wasOff.delete(e.id) || Date.parse(e.마지막실행) - now > CLOCK_SLACK_MS) { e.마지막실행 = now.toISOString(); dirty = true; continue; }
     // 처음 보는 예약(마지막실행 없음)은 지금부터 센다 — 아침 9시 예약을 오후 3시에 만들었다고 바로 돌지 않게. 한 번만 하는 예약(once)은 시각이 지났으면 바로 돈다
     if (!e.마지막실행 && e.언제.종류 !== 'once') { e.마지막실행 = now.toISOString(); dirty = true; continue; }
     if (schedRunning.has(e.id) || !sched.isDue(e, now)) continue; // 실행 중이면 건너뛴다
@@ -865,6 +878,13 @@ const server = http.createServer((req, res) => {
 });
 server.listen(PORT, HOST, () => {
   console.log(`Sancho 서버 실행 중: http://${HOST}:${PORT}`);
+  // 지난번에 도는 도중에 서버(컴퓨터)가 꺼진 예약: 결과 없이 끝났음을 알린다. 그 회차는 다시 돌리지 않는다(마지막실행이 이미 적혀 있다)
+  try {
+    const m = readJson(RUNNING_FILE, {});
+    for (const [id, x] of Object.entries(m)) addNotice(`예약이 중간에 끊겼어요: ${(x && x.이름) || id}`,
+      `${x && x.시작 ? `${new Date(x.시작).toLocaleString('ko-KR')} 에 ` : ''}시작한 실행이 서버(컴퓨터)가 꺼지면서 끝나지 못했어요. 이 회차는 다시 돌리지 않아요. 필요하면 예약 칸의 ▶ 로 다시 실행해 주세요.`, '주의');
+    if (Object.keys(m).length) writeJson(RUNNING_FILE, {});
+  } catch (e) { console.error('끊긴 예약 확인 오류:', e.message); }
   const tick = () => { try { scheduleTick(); } catch (e) { console.error('예약 점검 오류:', e); } }; // 오류가 나도 서버가 죽지 않게
   tick(); // 켜자마자 한 번: 꺼져 있는 동안 놓친 예약은 여기서 한 번 돈다
   setInterval(tick, TICK_MS);
