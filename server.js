@@ -205,8 +205,14 @@ const SYSTEM_FILE = path.join(DATA_DIR, '.system.md'); // 비서의 성격·기�
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.md'); // 비서의 기억 (한 줄에 사실 하나: "- 날짜 내용")
 if (!fs.existsSync(SYSTEM_FILE)) fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), SYSTEM_FILE);
 if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '# 기억\n');
+// 업무 데이터(data/db)의 파일 위치·필드 형식을 가르치는 스킬. 두뇌의 작업 폴더가 data/ 라서 data/.claude/skills/ 에 둔다
+const SKILL_FILE = path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md');
+if (!fs.existsSync(SKILL_FILE)) {
+  fs.mkdirSync(path.dirname(SKILL_FILE), { recursive: true });
+  fs.copyFileSync(path.join(__dirname, 'templates', 'skills', 'platform', 'SKILL.md'), SKILL_FILE);
+}
 const PRIVATE_FILES = ['users.json', 'sessions.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
-const READONLY_FILES = ['.system.md']; // 비서가 자기 지침을 스스로 고치지 못하게 막는다 (읽기만 가능)
+const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
 const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
   // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 아직 안 준다

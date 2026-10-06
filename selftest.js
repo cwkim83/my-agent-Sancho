@@ -101,10 +101,17 @@ async function run() {
   const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
   check('data/.system.md 가 만들어지고 Sancho·기억 규칙이 들어 있음', sys.includes('Sancho') && sys.includes('기억해:') && sys.includes('잊어:') && sys.includes('(기억함)') && sys.includes('memory.md'));
   check('data/memory.md 가 만들어짐', fs.existsSync(path.join(dir, 'memory.md')));
+  check('.system.md 에 업무 데이터 규칙이 있음(스킬 형식대로 직접 고침·무작위 id·한 줄 보고·날짜 정확히 계산·삭제는 먼저 물음)',
+    ['platform 스킬', 'data/db/*.json 을 직접 고친다', '짧은 무작위 문자열', '한 줄로 알려', '오늘 날짜를 기준으로 정확히', '다음 주 화요일', '먼저 물어보고'].every((w) => sys.includes(w)));
+  const skill = fs.readFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), 'utf8');
+  check('data/.claude/skills/platform/SKILL.md 가 만들어짐(이름 platform, 세 파일 위치·id 규칙·삭제는 먼저 물음)',
+    /^---\r?\nname: platform\r?\n/.test(skill) && ['data/db/events.json', 'data/db/tasks.json', 'data/db/projects.json', '짧은 무작위', '먼저 물어보고'].every((w) => skill.includes(w)));
+  check('스킬에 날짜 계산법이 있음(월요일 시작·내일·이번 주·다음 주·월말·시각 말)',
+    ['월요일부터 일요일', '`내일`', '`이번 주 ○요일`', '`다음 주 ○요일`', '월말', '`오후 세 시` → `15:00`'].every((w) => skill.includes(w)));
   const today = new Date().toLocaleDateString('sv-SE');
   check('claude 에 .system.md 를 --append-system-prompt-file 로 넘김', t1.includes('sys=ok'));
   check('실행할 때마다 주인 이름과 오늘 날짜를 알려 줌', t1.includes('주인 이름: 테스트') && t1.includes('오늘 날짜: ' + today));
-  check('두뇌는 .system.md 를 못 고치고 명령 도구도 못 씀', t1.includes('deny=ok'));
+  check('두뇌는 .system.md 와 .claude/(스킬)를 못 고치고 명령 도구도 못 씀', t1.includes('deny=ok'));
   check('로그인 전 /api/memory 는 401', (await fetch(BASE + '/api/memory')).status === 401);
   const mem0 = await (await fetch(BASE + '/api/memory', { headers: H })).json();
   check('처음에는 기억이 비어 있음(제목 줄은 안 보임)', mem0.items.length === 0);
@@ -265,6 +272,12 @@ async function runSeed(ck) {
   const ids = new Set(projects.map((p) => p.id));
   check('일정·할 일이 가리키는 프로젝트가 실제로 있음', [...events, ...tasks].every((x) => x.projectId === null || ids.has(x.projectId)));
   check('가상 회사 "가나다전자" 기준', JSON.stringify([events, projects, tasks, notices]).includes('가나다전자'));
+
+  const skillText = fs.readFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), 'utf8');
+  const undocumented = [];
+  for (const [n, rows] of Object.entries({ events, projects, tasks, notices }))
+    for (const k of new Set(rows.flatMap(Object.keys))) if (!skillText.includes('`' + k + '`')) undocumented.push(n + '.' + k);
+  check('스킬 문서에 화면이 쓰는 모든 필드가 적혀 있음(문서와 화면이 어긋나지 않음)' + (undocumented.length ? ' — 빠진 것: ' + undocumented.join() : ''), !undocumented.length);
 
   const before = snapshot();
   const r2 = await seed(), j2 = await r2.json();
