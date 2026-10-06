@@ -377,7 +377,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json']; // 비밀번호 해시·로그인 기록은 두뇌도 못 보게 막는다
+const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰은 두뇌도 못 보게 막는다
 const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
 const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
@@ -549,6 +549,77 @@ function askBrainOnce(prompt, ctx) {
   });
 }
 
+// ---------- 텔레그램 배달 (선택): data/settings.json 의 { telegram: { botToken, chatId } } ----------
+// 봇 토큰은 비밀번호와 같다: 이 파일에만 있고, 화면에는 "****" 로만 보내고(서버가 값을 아예 안 보냄), 두뇌는 이 파일을 못 읽고(PRIVATE_FILES),
+// 로그·알림·일지·오류 글에도 안 남긴다. 예약에 "휴대폰": true 가 있을 때만, 결과 요약(400자까지)만 텔레그램 서버로 나간다 (회사 밖으로 나가는 유일한 통로)
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const TG_API = (process.env.SANCHO_TELEGRAM_API || 'https://api.telegram.org').replace(/\/$/, ''); // 점검에서만 가짜 서버 주소로 바꾼다
+const TG_SUMMARY_MAX = 400;
+const TG_TOKEN = /^\d{5,}:[A-Za-z0-9_-]{20,}$/, TG_CHAT = /^(-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
+function loadSettings() { // 파일이 없으면 빈 설정, 깨져 있으면 예외 (모르고 덮어써서 지우지 않게)
+  let raw; try { raw = fs.readFileSync(SETTINGS_FILE, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; }
+  const v = JSON.parse(raw.replace(/^﻿/, ''));
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('not an object');
+  return v;
+}
+function tgConf() { // 둘 다 있으면 { token, chatId }, 아니면 null
+  try {
+    const t = loadSettings().telegram || {}, token = String(t.botToken ?? ''), chatId = String(t.chatId ?? '');
+    return token && chatId ? { token, chatId } : null;
+  } catch { return null; }
+}
+function explainTelegram(status, desc) { // 텔레그램이 거절한 이유를 쉬운 한국어로
+  const d = String(desc || '');
+  if (status === 401 || status === 404) return '봇 토큰이 맞지 않아요. BotFather 가 준 긴 글자를 다시 붙여 넣어 주세요.';
+  if (/chat not found/i.test(d)) return '채팅 ID 가 맞지 않아요. 숫자를 다시 확인해 주세요.';
+  if (status === 403) return '봇이 메시지를 보낼 수 없어요. 휴대폰 텔레그램에서 내 봇을 열고 시작(Start)을 먼저 눌러 주세요.';
+  if (status === 429) return '텔레그램이 너무 자주 보낸다며 잠시 막았어요. 조금 뒤에 다시 해 주세요.';
+  return `텔레그램이 거절했어요. (${status}${d ? `: ${d.slice(0, 100)}` : ''})`;
+}
+async function sendTelegram(text) { // { ok: true } | { ok: false, error: 쉬운 한국어 이유 } — 절대 던지지 않고, 토큰을 글에 남기지 않는다(오류 글에 주소를 넣지 않는다)
+  const c = tgConf();
+  if (!c) return { ok: false, error: '텔레그램 설정(봇 토큰·채팅 ID)이 비어 있어요. 설정 화면의 "텔레그램 배달"에서 입력해 주세요.' };
+  try {
+    const r = await fetch(`${TG_API}/bot${c.token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: c.chatId, text: String(text).slice(0, 4000), disable_web_page_preview: true }), signal: AbortSignal.timeout(10_000) });
+    const j = await r.json().catch(() => ({}));
+    return r.ok && j.ok ? { ok: true } : { ok: false, error: explainTelegram(r.status, j.description) };
+  } catch (e) {
+    return { ok: false, error: e.name === 'TimeoutError' ? '텔레그램이 10초 안에 답하지 않았어요. 인터넷 연결을 확인해 주세요.' : '텔레그램에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.' };
+  }
+}
+// 폰 화면에 읽기 좋게: 마크다운 기호(굵게·제목·표 구분줄)를 걷어 내고 N자까지만
+const plainSummary = (t, max) => { const s = t.replace(/\*\*/g, '').replace(/^#{1,4}\s+/gm, '').replace(/^[\s|:-]*-{3,}[\s|:-]*$/gm, '').replace(/\n{3,}/g, '\n\n').trim(); return s.length > max ? `${s.slice(0, max)}…` : s; };
+
+// /api/settings[/telegram[/test]] — 설정 화면이 쓴다. 처리했으면 true
+//   GET /api/settings → { telegram: { token: "****"|"", chatId: "****"|"" } }  (값 자체는 절대 안 보낸다)
+//   PUT /api/settings/telegram { token?, chatId? } (비운 칸은 그대로 둠) · DELETE → 지움 · POST /test → 시험 메시지 한 통
+async function settingsApi(req, res, sub, test) {
+  const M = req.method, done = (status, body) => { send(res, status, body); return true; };
+  let b = {};
+  if (sub && !test && M === 'PUT') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
+  // 여기부터는 await 없이: 읽기→고치기→쓰기를 한 번에
+  let st; try { st = loadSettings(); } catch { return done(500, { error: 'data/settings.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  const t = st.telegram && typeof st.telegram === 'object' ? st.telegram : {};
+  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' } }) : false;
+  if (!test && M === 'PUT') {
+    const token = typeof b.token === 'string' ? b.token.trim() : '', chatId = typeof b.chatId === 'string' ? b.chatId.trim() : '';
+    if (!token && !chatId) return done(400, { error: '바꿀 값을 입력해 주세요.' });
+    if (token && !TG_TOKEN.test(token)) return done(400, { error: '봇 토큰 모양이 맞지 않아요. "숫자:영문자…" 로 이어진 긴 글자예요. BotFather 가 준 것을 그대로 붙여 넣어 주세요.' });
+    if (chatId && !TG_CHAT.test(chatId)) return done(400, { error: '채팅 ID 는 숫자예요. (예: 123456789 — 그룹은 -로 시작할 수 있어요)' });
+    st.telegram = { botToken: token || t.botToken || '', chatId: chatId || t.chatId || '' };
+    writeJson(SETTINGS_FILE, st); emitDb('schedule'); // 예약 칸의 "텔레그램 설정 필요" 표시가 따라 바뀌게
+    return done(200, { ok: true });
+  }
+  if (!test && M === 'DELETE') { delete st.telegram; writeJson(SETTINGS_FILE, st); emitDb('schedule'); return done(200, { ok: true }); }
+  if (test && M === 'POST') {
+    if (!tgConf()) return done(400, { error: '봇 토큰과 채팅 ID 가 아직 비어 있어요. 도움말대로 봇을 만든 뒤 두 칸을 입력하고 [저장]을 눌러 주세요.' });
+    const r = await sendTelegram('Sancho 시험 메시지예요. 이 글이 보이면 텔레그램 연결이 잘 된 거예요. 🎉');
+    return r.ok ? done(200, { ok: true }) : done(502, { error: r.error });
+  }
+  return false;
+}
+
 async function runScheduled(e) {
   schedRunning.add(e.id); // 첫 await 전에 넣는다 (다음 점검이 끼어들기 전에)
   emitDb('schedule'); // 화면의 예약 칸이 "실행 중"을 보이게
@@ -558,12 +629,16 @@ async function runScheduled(e) {
     r = await askBrainOnce(e.지시문, `${brainCtx(owner ? owner.name : '주인', t0)} 이 실행은 예약("${name}")이 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 요약한다.`);
   } catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
   finally { schedRunning.delete(e.id); emitDb('schedule'); }
+  const day = t0.toLocaleDateString('sv-SE'), file = path.join(JOURNAL_DIR, `${day}.md`), text = r.text || '(결과 글이 없어요)', title = `${r.ok ? '예약 결과' : '예약 실패'}: ${name}`;
   try {
-    const day = t0.toLocaleDateString('sv-SE'), file = path.join(JOURNAL_DIR, `${day}.md`), text = r.text || '(결과 글이 없어요)';
     fs.mkdirSync(JOURNAL_DIR, { recursive: true });
     fs.appendFileSync(file, `${fs.existsSync(file) ? '' : `# ${day} 일지\n\n`}## ${t0.toTimeString().slice(0, 5)} ${r.ok ? '' : '⚠ '}${name}\n\n지시: ${e.지시문.replace(/\s+/g, ' ')}\n\n${text}\n\n`);
-    addNotice(`${r.ok ? '예약 결과' : '예약 실패'}: ${name}`, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의', text);
+    addNotice(title, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의', text);
   } catch (err) { console.error('예약 결과를 적지 못했어요:', err.message); }
+  if (e.휴대폰 === true) { // "휴대폰으로도 보내기"를 켠 예약만: 결과 요약을 텔레그램으로. 못 보내도 예약 결과는 이미 알림·일지에 있으니, 이유만 하루에 한 번 알린다
+    const s = await sendTelegram(`${r.ok ? '🔔' : '⚠'} ${title}\n\n${plainSummary(text, TG_SUMMARY_MAX)}\n\n(전체는 컴퓨터의 알림에서 볼 수 있어요)`);
+    if (!s.ok) warnOnce(`tg:${day}:${s.error}`, '텔레그램으로 보내지 못했어요', `"${name}": ${s.error}`);
+  }
 }
 
 function scheduleTick() {
@@ -592,18 +667,18 @@ function scheduleTick() {
 async function scheduleApi(req, res, id, act) {
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
   let b = {};
-  if (id && act === 'enable' && M === 'POST') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
+  if (id && (act === 'enable' || act === 'phone') && M === 'POST') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
   // 여기부터는 await 없이 한 번에: 읽기→고치기→쓰기 사이에 서버 시계(scheduleTick)가 끼어들지 못한다
   let list; try { list = loadSchedule(); } catch { return done(500, { error: 'data/schedule.json 이 올바른 JSON 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
   const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-  if (!id) return M === 'GET' ? done(200, { items: list.map((e) => ({ ...(isObj(e) ? e : {}), error: sched.check(e), running: isObj(e) && schedRunning.has(e.id) })) }) : false;
+  if (!id) return M === 'GET' ? done(200, { telegram: !!tgConf(), items: list.map((e) => ({ ...(isObj(e) ? e : {}), error: sched.check(e), running: isObj(e) && schedRunning.has(e.id) })) }) : false; // telegram: 연결 설정이 있는지(값은 안 보냄)
   const i = list.findIndex((e) => isObj(e) && e.id === id);
   if (i < 0) return done(404, { error: '없는 예약입니다.' });
   const e = list[i];
   if (!act && M === 'DELETE') { list.splice(i, 1); writeJson(SCHEDULE_FILE, list); return done(200, { ok: true }); } // 지우기 전 확인은 화면이 한다
-  if (act === 'enable' && M === 'POST') {
+  if ((act === 'enable' || act === 'phone') && M === 'POST') { // 켬/끔, 휴대폰(텔레그램)으로도 보내기 체크
     if (typeof b.on !== 'boolean') return done(400, { error: 'on 은 true 또는 false 여야 합니다.' });
-    e.켬 = b.on; writeJson(SCHEDULE_FILE, list); // 다시 켠 순간 "지금부터 센다"는 서버 시계(scheduleTick)가 챙긴다
+    e[act === 'enable' ? '켬' : '휴대폰'] = b.on; writeJson(SCHEDULE_FILE, list); // 다시 켠 순간 "지금부터 센다"는 서버 시계(scheduleTick)가 챙긴다
     return done(200, { ok: true });
   }
   if (act === 'run' && M === 'POST') { // 지금 한 번 — 예약 시각·마지막실행은 건드리지 않는다 (시험 삼아 돌려 보는 용도). 꺼 둔 예약도 돌릴 수 있다
@@ -714,8 +789,10 @@ async function handle(req, res) {
     const wm = p.match(/^\/api\/wbs\/([A-Za-z0-9_-]{1,64})(?:\/(revs|share)(?:\/(\d{1,6})(\/restore)?)?)?$/);
     if (wm && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(wm[1]) && await wbsApi(req, res, wm[1], wm[2], wm[3], wm[4])) return;
 
-    const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|run))?)?$/);
+    const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|phone|run))?)?$/);
     if (qm && await scheduleApi(req, res, qm[1], qm[2])) return;
+    const gm = p.match(/^\/api\/settings(?:\/(telegram)(?:\/(test))?)?$/);
+    if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
 
     if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }

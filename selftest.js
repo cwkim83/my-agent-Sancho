@@ -90,7 +90,8 @@ async function run() {
     ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events'], ['POST', '/api/seed'],
     ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
     ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share'],
-    ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['DELETE', '/api/schedule/x']];
+    ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['POST', '/api/schedule/x/phone'], ['DELETE', '/api/schedule/x'],
+    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -116,7 +117,7 @@ async function run() {
   const today = new Date().toLocaleDateString('sv-SE');
   check('claude 에 .system.md 를 --append-system-prompt-file 로 넘김', t1.includes('sys=ok'));
   check('실행할 때마다 주인 이름과 오늘 날짜를 알려 줌', t1.includes('주인 이름: 테스트') && t1.includes('오늘 날짜: ' + today));
-  check('두뇌는 .system.md 와 .claude/(스킬)를 못 고치고, 명령 도구도 못 쓰고, 비밀번호·로그인 기록·공유 링크 파일(users·sessions·share.json)은 읽지도 못함', t1.includes('deny=ok'));
+  check('두뇌는 .system.md 와 .claude/(스킬)를 못 고치고, 명령 도구도 못 쓰고, 비밀번호·로그인 기록·공유 링크·텔레그램 봇 토큰 파일(users·sessions·share·settings.json)은 읽지도 못함', t1.includes('deny=ok'));
   check('로그인 전 /api/memory 는 401', (await fetch(BASE + '/api/memory')).status === 401);
   const mem0 = await (await fetch(BASE + '/api/memory', { headers: H })).json();
   check('처음에는 기억이 비어 있음(제목 줄은 안 보임)', mem0.items.length === 0);
@@ -156,6 +157,7 @@ async function run() {
   runScheduleCalc();
   await runSchedule(ck);
   await runSchedApi(ck);
+  await runTelegram(ck);
   await runInbox(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
@@ -912,6 +914,8 @@ function runScheduleCalc() {
   check('형식 오류 거절: 요일(월요일·빈칸·English)·없는 날짜(2월 30일·13월·자리수)', [{ ...weekly, 요일: '월요일' }, { ...weekly, 요일: '' }, { ...weekly, 요일: 'Mon' }, { ...once, 날짜: '2026-02-30' }, { ...once, 날짜: '2026-13-01' }, { ...once, 날짜: '2026-2-3' }].every((w) => bad(mk(w))));
   check('형식 오류 거절: every 의 분이 0·소수·글자·없음', [0, 1.5, '30', undefined].every((분) => bad(mk({ 종류: 'every', 분 }))));
   check('올바른 네 가지 모양(마지막실행이 null 이어도)은 통과', [daily, weekly, once, every, { 종류: 'every', 분: 1 }].every(ok));
+  check('"휴대폰" 칸: true·false·없음은 통과, "true"(글자)·숫자·null 은 이유와 함께 거절(조용히 안 보내지 않게)',
+    [true, false].every((v) => S.check(mk(daily, null, { 휴대폰: v })) === null) && S.check(mk(daily)) === null && ['true', 1, null].every((v) => bad(mk(daily, null, { 휴대폰: v }))));
 }
 
 // 예약 전체 흐름(server.js): 점검용 서버는 시계를 200ms 마다 본다. 가짜 claude 로 실행 → 일지·알림·마지막실행·놓친 회차·겹침·깨진 파일
@@ -941,6 +945,9 @@ async function runSchedule(ck) {
   const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
   check('.system.md: 예약 안내(schedule.json·30초·네 가지 언제·마지막실행은 서버 칸·지우지 말고 끔)가 정확히 한 번 더해짐',
     sys.split('<!-- 지침:예약 -->').length === 2 && ['data/schedule.json', '30초마다', 'daily', 'weekly', 'once', 'every', '서버가 채우는 칸', '`켬` 을 `false`', 'data/journal/'].every((w) => sys.includes(w)));
+  check('.system.md: 휴대폰 안내(휴대폰: true·설정은 주인이 직접·settings.json 못 읽음·토큰은 대화로 안 받음·밖으로 나감)가 예약 안내 뒤에 정확히 한 번 더해짐',
+    sys.split('<!-- 지침:예약-휴대폰 -->').length === 2 && sys.indexOf('<!-- 지침:예약-휴대폰 -->') > sys.indexOf('<!-- 지침:예약 -->')
+    && ['"휴대폰": true', 'data/settings.json', '읽을 수 없다', '토큰', '회사 밖으로 나간다', '📱'].every((w) => sys.includes(w)));
   const tpl = fs.readFileSync(path.join(__dirname, 'templates', 'system-add', 'schedule.md'), 'utf8');
   const ex = JSON.parse(/```json\r?\n([\s\S]*?)```/.exec(tpl)[1]);
   check('안내의 작성 예가 서버의 형식 검사를 통과하고(id 8자·마지막실행 null) 안내의 네 가지 "언제" 모양도 모두 통과',
@@ -1081,6 +1088,97 @@ async function runSchedApi(ck) {
   ac.abort();
 }
 
+// 텔레그램 배달: 설정 저장(가림)·시험 보내기·오류 이유·예약의 "휴대폰" 체크·비밀이 새지 않는지 (진짜 텔레그램 대신 가짜 서버로)
+async function runTelegram(ck) {
+  const { H, sleep, until, writeSched, mine, ago, mkE } = schedKit(ck);
+  const set =(m, u, b, extra) => fetch(BASE + '/api/settings' + u, { method: m, headers: { ...H, ...extra }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const GOOD = '123456:SELFTEST_fake_token_for_tests_000', BAD = '123456:BADTOKEN_fake_token_for_tests_001', CHAT = '424242'; // 점검용 가짜 값 (진짜 토큰이 아님)
+  const sfile = path.join(dir, 'settings.json'), saved = () => JSON.parse(fs.readFileSync(sfile, 'utf8')).telegram;
+  const lastMsg = () => tgSeen[tgSeen.length - 1];
+
+  const g0 = await (await set('GET', '')).json(), t0 = await set('POST', '/telegram/test');
+  check('처음에는 텔레그램 칸이 비어 있고(값 없음) settings.json 도 아직 없음', g0.telegram.token === '' && g0.telegram.chatId === '' && !fs.existsSync(sfile));
+  check('토큰이 비어 있을 때 시험 보내기는 400 과 안내("도움말대로 봇을 만든 뒤 …")가 오고 텔레그램으로는 아무것도 안 나감', t0.status === 400 && (await t0.json()).error.includes('도움말대로') && tgSeen.length === 0);
+  const bads = [{ token: 'abc' }, { chatId: 'abc' }, { token: GOOD + ' x' }, { chatId: '12 34' }, {}, { token: 5 }, { token: '' , chatId: '' }];
+  const badRes = await Promise.all(bads.map((b) => set('PUT', '/telegram', b)));
+  check('이상한 값(토큰·채팅 ID 모양이 틀림·빈 값·글자 아님)은 400 이고, 아무것도 저장되지 않음', badRes.every((r) => r.status === 400) && !fs.existsSync(sfile)
+    && (await badRes[0].json()).error.includes('봇 토큰 모양') && (await badRes[1].json()).error.includes('채팅 ID 는 숫자'));
+  check('로그인 없이는 설정 저장·조회가 안 되고, 다른 사이트에서 온 저장 요청은 403', (await fetch(BASE + '/api/settings')).status === 401
+    && (await set('PUT', '/telegram', { token: GOOD, chatId: CHAT }, { Origin: 'https://evil.example' })).status === 403 && !fs.existsSync(sfile));
+
+  // 저장: 값은 settings.json 에만, 화면(API 답)에는 **** 만
+  const put = await set('PUT', '/telegram', { token: ` ${GOOD} `, chatId: CHAT }), putText = await put.text();
+  const gt = await (await set('GET', '')).text();
+  check('저장하면 settings.json 에 토큰·채팅 ID 가 들어가고(앞뒤 공백 제거), 화면용 API 는 "****" 만 돌려주며 값은 어디에도 안 실림',
+    put.status === 200 && saved().botToken === GOOD && saved().chatId === CHAT && JSON.parse(gt).telegram.token === '****' && JSON.parse(gt).telegram.chatId === '****'
+    && ![putText, gt].some((t) => t.includes(GOOD) || t.includes(CHAT) || t.includes('SELFTEST')));
+  check('칸 하나만 바꾸면(채팅 ID) 비운 칸(토큰)은 그대로', (await set('PUT', '/telegram', { chatId: '777' })).status === 200 && saved().botToken === GOOD && saved().chatId === '777'
+    && (await set('PUT', '/telegram', { chatId: CHAT })).status === 200 && saved().chatId === CHAT);
+  const sch = await (await fetch(BASE + '/api/schedule', { headers: H })).json();
+  check('예약 목록 API 가 "텔레그램 설정이 있는지"(true/false)만 알려 줌 — 값은 안 줌', sch.telegram === true && !JSON.stringify(sch).includes(GOOD));
+
+  // 시험 보내기와 오류 이유
+  const n0 = tgSeen.length, ok = await set('POST', '/telegram/test');
+  check('시험 보내기: 텔레그램 주소(/bot<토큰>/sendMessage)로 채팅 ID 와 시험 글이 감', ok.status === 200 && tgSeen.length === n0 + 1 && lastMsg().url === `/bot${GOOD}/sendMessage` && lastMsg().body.chat_id === CHAT && lastMsg().body.text.includes('시험'));
+  const why = async (token, chatId) => { await set('PUT', '/telegram', { token, chatId }); const r = await set('POST', '/telegram/test'), j = await r.json(); return { status: r.status, error: j.error }; };
+  const w401 = await why(BAD, CHAT), w400 = await why(GOOD, '999'), w403 = await why(GOOD, '403'), w429 = await why(GOOD, '429');
+  check('텔레그램이 거절하면 쉬운 한국어 이유: 토큰 틀림(401)·채팅 ID 틀림·봇에게 먼저 말 안 걸었음(403)·너무 자주(429)',
+    w401.status === 502 && w401.error.includes('봇 토큰이 맞지 않아요') && w400.error.includes('채팅 ID 가 맞지 않아요') && w403.error.includes('시작(Start)') && w429.error.includes('너무 자주'));
+  check('오류 글에 토큰이 들어가지 않음', ![w401, w400, w403, w429].some((w) => w.error.includes('BADTOKEN') || w.error.includes('SELFTEST') || w.error.includes('123456:')));
+  await set('PUT', '/telegram', { token: GOOD, chatId: CHAT });
+
+  // 예약의 "휴대폰" 체크: 켠 예약만, 결과 요약(400자까지, 마크다운 기호 없이)만 간다
+  const s0 = tgSeen.length;
+  writeSched([
+    mkE('dddd0001', '폰 켠 예약', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '/long', { 휴대폰: true }),
+    mkE('dddd0002', '폰 안 켠 예약', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '안 보냄 점검'),
+    mkE('dddd0003', '폰 켠 실패 예약', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '/limit', { 휴대폰: true }),
+    mkE('dddd0004', '폰 형식 틀림', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '안 가야 함', { 휴대폰: 'true' }),
+    mkE('dddd0005', '폰 마크다운', { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, '/markdown', { 휴대폰: true }),
+  ]);
+  const done = await until(async () => (await mine(/^예약 (결과|실패): 폰 /)).length >= 4 && (await mine(/^예약 하나를/)).some((n) => n.body.includes('휴대폰은 true 또는 false')) && tgSeen.length >= s0 + 3);
+  await sleep(800);
+  const sent = tgSeen.slice(s0).map((x) => x.body.text), ofTitle = (t) => sent.filter((x) => x.includes(t));
+  check('휴대폰을 켠 예약(길게 나온 결과·실패·마크다운)만 텔레그램으로 가고(정확히 3통), 안 켠 예약·형식이 틀린 예약은 안 감', done && sent.length === 3
+    && ofTitle('예약 결과: 폰 켠 예약').length === 1 && ofTitle('예약 실패: 폰 켠 실패 예약').length === 1 && ofTitle('예약 결과: 폰 마크다운').length === 1 && !sent.some((x) => x.includes('안 보냄 점검') || x.includes('안 가야 함') || x.includes('폰 안 켠')));
+  const longMsg = ofTitle('예약 결과: 폰 켠 예약')[0];
+  check('결과가 25000자여도 폰에는 400자 요약+안내 한 줄만 감(전체는 안 감)', longMsg.length < 520 && longMsg.includes('가'.repeat(100)) && !longMsg.includes('가'.repeat(401)) && longMsg.includes('…') && longMsg.endsWith('(전체는 컴퓨터의 알림에서 볼 수 있어요)'));
+  const failMsg = ofTitle('폰 켠 실패 예약')[0], mdMsg = ofTitle('폰 마크다운')[0];
+  check('실패한 예약도 "⚠ 예약 실패 …" 와 이유가 감', failMsg.startsWith('⚠ 예약 실패: 폰 켠 실패 예약') && failMsg.includes('사용 한도'));
+  check('폰으로 갈 때 마크다운 기호(##·**·표 구분줄)는 걷어 내고 글·표 내용은 남김', !/\*\*|## |\|---/.test(mdMsg) && mdMsg.includes('아침 요약') && mdMsg.includes('오늘 가장 신경 쓸 것: 수압시험 입회') && mdMsg.includes('10:00') && mdMsg.startsWith('🔔 예약 결과: 폰 마크다운'));
+  check('형식이 틀린 "휴대폰" 값("true" 글자)은 이유와 함께 알림으로 알려 줌', (await mine(/^예약 하나를/)).some((n) => n.body.includes('폰 형식 틀림') && n.body.includes('휴대폰은 true 또는 false')));
+
+  // 휴대폰 체크 켜고 끄는 API
+  writeSched([mkE('dddd0010', '체크 점검', { 종류: 'every', 분: 600 }, '체크 지시', { 마지막실행: ago(1) })]);
+  const call = (m, u, b) => fetch(BASE + '/api/schedule' + u, { method: m, headers: H, body: b === undefined ? undefined : JSON.stringify(b) });
+  const readS = () => JSON.parse(fs.readFileSync(path.join(dir, 'schedule.json'), 'utf8'));
+  check('📱 체크 API: 켜면 휴대폰=true, 끄면 false 로 그 예약에만 저장, 이상한 값은 400, 없는 예약은 404',
+    (await call('POST', '/dddd0010/phone', { on: true })).status === 200 && readS()[0].휴대폰 === true && (await call('POST', '/dddd0010/phone', { on: false })).status === 200 && readS()[0].휴대폰 === false
+    && (await call('POST', '/dddd0010/phone', { on: 'yes' })).status === 400 && (await call('POST', '/nope0000/phone', { on: true })).status === 404);
+
+  // 설정이 비어 있거나 텔레그램이 안 될 때: 예약 결과는 그대로 알림·일지로 오고, 못 보낸 이유만 하루에 한 번 알림
+  check('설정 지우기: 칸이 다시 비고 예약 목록의 "텔레그램 설정 있음"도 false', (await set('DELETE', '/telegram')).status === 200 && (await (await set('GET', '')).json()).telegram.token === ''
+    && !fs.readFileSync(sfile, 'utf8').includes(GOOD) && (await (await fetch(BASE + '/api/schedule', { headers: H })).json()).telegram === false);
+  writeSched([mkE('dddd0020', '설정 없는 폰 예약', { 종류: 'every', 분: 600 }, '설정 없음 점검', { 마지막실행: ago(1), 휴대폰: true })]);
+  const s1 = tgSeen.length;
+  await call('POST', '/dddd0020/run'); await until(async () => (await mine(/^예약 결과: 설정 없는 폰 예약$/)).length === 1);
+  await until(async () => (await mine(/^텔레그램으로 보내지 못했어요$/)).length === 1);
+  await call('POST', '/dddd0020/run'); await until(async () => (await mine(/^예약 결과: 설정 없는 폰 예약$/)).length === 2); await sleep(500);
+  const tn = await mine(/^텔레그램으로 보내지 못했어요$/);
+  check('설정이 비어 있으면 결과는 알림으로 오고, 텔레그램으로는 안 나가고, 못 보낸 이유 알림은 같은 날 한 번만', tn.length === 1 && tn[0].level === '주의' && tn[0].body.includes('설정 없는 폰 예약') && tn[0].body.includes('비어 있어요') && tgSeen.length === s1);
+  await set('PUT', '/telegram', { token: GOOD, chatId: CHAT });
+  tgServer.close(); tgServer.closeAllConnections(); // 텔레그램에 연결이 안 되는 상황
+  const dead = await set('POST', '/telegram/test'), deadErr = (await dead.json()).error;
+  await call('POST', '/dddd0020/run'); const gotDead = await until(async () => (await mine(/^텔레그램으로 보내지 못했어요$/)).length === 2);
+  check('텔레그램에 연결이 안 되면 시험 보내기가 쉬운 이유(인터넷 확인)로 실패하고, 예약 결과 알림은 그대로 오고, 이유 알림이 새로 하나 올라옴', dead.status === 502 && deadErr.includes('연결하지 못했어요') && gotDead
+    && (await mine(/^예약 결과: 설정 없는 폰 예약$/)).length === 3 && (await mine(/^텔레그램으로 보내지 못했어요$/))[1].body.includes('연결하지 못했어요'));
+
+  // 비밀이 새지 않는지: 봇 토큰·채팅 ID 가 서버 로그와 settings.json 이외의 어떤 파일에도 없음
+  const leak = filesUnder(dir).filter((f) => f !== sfile && !f.endsWith('.tmp')).filter((f) => { const t = fs.readFileSync(f, 'utf8'); return [GOOD, BAD, 'SELFTEST_fake', 'BADTOKEN_fake'].some((s) => t.includes(s)); });
+  check('봇 토큰은 서버 로그와 settings.json 말고는 어떤 파일(알림·일지·예약·대화)에도 없음', !['SELFTEST_fake', 'BADTOKEN_fake'].some((s) => srv.log.includes(s)) && leak.length === 0);
+  writeSched([]);
+}
+
 // 알림·예약 칸 계산 (public/m/inbox.js) + 🔔 단추·예약 칸이 들어 있는 메인 화면
 async function runInbox(ck) {
   const box = { window: {} }; vm.createContext(box);
@@ -1112,6 +1210,11 @@ async function runInbox(ck) {
     ['id="sch"', 'id="schN"', 'type="checkbox"', 'data-run', 'data-del', '이 예약을 지울까요?', 'id="mem"'].every((w) => html.includes(w)));
   check('메인 화면: 대시보드 "안 읽은 알림" 카드와 🔔 는 같은 자료(noticeRaw)를 쓰고(대시보드가 따로 받지 않음), 카드·메뉴의 #알림 을 누르면 같은 목록이 열림',
     html.includes('notices: noticeRaw') && /DASH_DATA = \['events', 'projects', 'tasks'\]/.test(html) && html.includes(`closest('a[href="#알림"]')`) && html.includes('<a class="stat" href="#알림">'));
+  check('설정 화면: "텔레그램 배달(선택)" 칸 — 봇 토큰(가림 입력)·채팅 ID(가림)·저장·시험 보내기·설정 지우기, 저장된 값은 ****, 옆에 BotFather 도움말(/newbot·@userinfobot·시작 누르기)',
+    ['텔레그램 배달', '(선택)', 'id="tgToken"', 'type="password"', 'new-password', 'id="tgChat"', 'text-security', 'id="tgSave"', 'id="tgTest"', 'id="tgClear"', '시험 보내기', '****', 'data/settings.json',
+      '@BotFather', '/newbot', '@userinfobot', '시작(Start)', '봇 토큰', '채팅 ID'].every((w) => html.includes(w)));
+  check('설정 화면: 시험 보내기 전에 저장하지 않은 입력이 있으면 안내, 예약 칸에는 📱 체크(휴대폰으로도 보내기)와 "텔레그램 설정 필요" 표시가 있음',
+    html.includes('아직 저장되지 않았어요') && html.includes('data-phone') && html.includes('휴대폰으로도 보내기') && html.includes('텔레그램 설정 필요'));
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
@@ -1151,7 +1254,24 @@ fs.writeFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), '�
 // 주인이 손본 .system.md 를 흉내 낸다 (옛 템플릿 + 손으로 덧붙인 줄): 서버를 켜도 그 줄은 지워지지 않고, 새 WBS 안내만 맨 끝에 한 번 더해져야 한다
 fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), path.join(dir, '.system.md'));
 fs.appendFileSync(path.join(dir, '.system.md'), '\n나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)\n');
-const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200' }); // 예약 시계를 30초 대신 0.2초마다
+// 가짜 텔레그램 서버(진짜 텔레그램으로는 아무것도 안 나간다): 받은 요청을 tgSeen 에 모으고, 토큰·채팅 ID 에 따라 진짜처럼 답한다
+const tgSeen = [];
+const tgServer = require('http').createServer((req, res) => {
+  let raw = '';
+  req.on('data', (c) => (raw += c)).on('end', () => {
+    const j = raw ? JSON.parse(raw) : {}, m = /^\/bot([^/]+)\/sendMessage$/.exec(req.url);
+    tgSeen.push({ url: req.url, body: j });
+    const reply = (st, o) => { res.writeHead(st, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+    if (!m) return reply(404, { ok: false, description: 'Not Found' });
+    if (m[1].includes('BADTOKEN')) return reply(401, { ok: false, description: 'Unauthorized' });
+    if (j.chat_id === '999') return reply(400, { ok: false, description: 'Bad Request: chat not found' });
+    if (j.chat_id === '403') return reply(403, { ok: false, description: "Forbidden: bot can't initiate conversation with a user" });
+    if (j.chat_id === '429') return reply(429, { ok: false, description: 'Too Many Requests: retry after 5' });
+    reply(200, { ok: true, result: { message_id: 1 } });
+  });
+});
+tgServer.listen(8793, '127.0.0.1');
+const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793' }); // 예약 시계를 30초 대신 0.2초마다
 srv.ready.then(async () => {
   try {
     await run();

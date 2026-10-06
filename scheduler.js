@@ -1,5 +1,5 @@
 // 예약의 시각 계산 — 순수 계산만 한다 (파일·진짜 시계·claude 는 건드리지 않는다). server.js 가 쓰고, selftest.js 는 시각을 바꿔 가며 직접 부른다.
-// 예약 항목: { id, 이름, 언제, 지시문, 켬, 마지막실행 }  (형식 설명은 templates/system-add/schedule.md)
+// 예약 항목: { id, 이름, 언제, 지시문, 켬, 마지막실행, 휴대폰(선택: true 면 결과 요약을 텔레그램으로도) }  (형식 설명은 templates/system-add/schedule.md·schedule_phone.md)
 //   언제: { 종류: 'daily', 시각: 'HH:MM' } | { 종류: 'weekly', 요일: '월', 시각: 'HH:MM' } | { 종류: 'once', 날짜: 'YYYY-MM-DD', 시각: 'HH:MM' } | { 종류: 'every', 분: N }
 // 시각은 모두 이 PC 의 지역 시각이다.
 const DAYS = '일월화수목금토'; // Date.getDay() 순서
@@ -12,6 +12,7 @@ function check(e) {
   if (typeof e.id !== 'string' || !e.id) return 'id 가 없어요.';
   if (typeof e.지시문 !== 'string' || !e.지시문.trim()) return '지시문이 비어 있어요.';
   if (e.마지막실행 && Number.isNaN(Date.parse(e.마지막실행))) return '마지막실행이 시각이 아니에요.';
+  if ('휴대폰' in e && typeof e.휴대폰 !== 'boolean') return '휴대폰은 true 또는 false 여야 해요.'; // "true"(글자) 로 적으면 조용히 안 보내지니 알려 준다
   const w = e.언제;
   if (!w || typeof w !== 'object') return '언제가 없어요.';
   if (w.종류 === 'every') return Number.isInteger(w.분) && w.분 >= 1 ? null : 'every 의 분은 1 이상의 정수여야 해요.';

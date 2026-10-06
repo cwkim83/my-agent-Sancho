@@ -17,6 +17,7 @@ async function run(msg) {
   }
   if (msg === '/crash') { process.stderr.write('boom: 갑자기 죽음'); process.exit(3); } // 결과 없이 죽는 경우
   if (msg === '/long') { const t = '가'.repeat(25000); delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 알림에 담는 결과 길이 한도 점검용
+  if (msg === '/markdown') { const t = '## 아침 요약\n\n**오늘 가장 신경 쓸 것:** 수압시험 입회\n\n| 시각 | 일정 |\n|---|---|\n| 10:00 | 입회 |'; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 폰으로 보낼 때 마크다운 기호를 걷어 내는지 점검용
   if (msg.startsWith('/wait')) { require('fs').appendFileSync('wait-runs.log', 'start\n'); await sleep(2500); } // 예약 겹침 점검용: 시작할 때마다 한 줄 적고 2.5초 걸린다
   if (msg === '/slow') { for (let i = 0; i < 300; i++) { delta('느림 '); await sleep(100); } }
   if (msg.includes('파일')) out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'Read', id: 't1' } } });
@@ -26,7 +27,7 @@ async function run(msg) {
   const sysFile = arg('--append-system-prompt-file');
   const sysOk = sysFile && fs.existsSync(sysFile) && fs.readFileSync(sysFile, 'utf8').includes('Sancho') ? 'ok' : 'none';
   const deny = ['.system.md', '.claude/**'].every((f) => a.includes(`Edit(./${f})`) && a.includes(`Write(./${f})`)) && a.includes('Bash')
-    && ['users.json', 'sessions.json', 'share.json'].every((f) => ['Read', 'Edit', 'Write'].every((t) => a.includes(`${t}(./${f})`))) ? 'ok' : 'none'; // 비밀번호·로그인 기록·공유 링크 파일은 읽지도 못하게
+    && ['users.json', 'sessions.json', 'share.json', 'settings.json'].every((f) => ['Read', 'Edit', 'Write'].every((t) => a.includes(`${t}(./${f})`))) ? 'ok' : 'none'; // 비밀번호·로그인 기록·공유 링크·텔레그램 봇 토큰 파일은 읽지도 못하게
   // 허용 도구가 모두 data/ 안(./**)으로 묶여 있는지: 범위 없는 'Read' 같은 것이 하나라도 있으면 none
   const allowed = a.slice(a.indexOf('--allowedTools') + 1);
   const allowList = allowed.slice(0, allowed.findIndex((x) => x.startsWith('--')));

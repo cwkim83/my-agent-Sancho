@@ -72,7 +72,7 @@
 
   /* AI 채팅 */
   #chat { flex: 1; min-width: 0; display: flex; }
-  .chatlist { flex: none; width: 240px; display: flex; flex-direction: column; background: #fff; border-right: 1px solid var(--line); }
+  .chatlist { flex: none; width: 256px; display: flex; flex-direction: column; background: #fff; border-right: 1px solid var(--line); }
   .chatlist .new { margin: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-weight: 600; color: var(--blue); }
   .chatlist .new:hover { background: var(--blue-bg); }
   #list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
@@ -87,14 +87,20 @@
   .memory h3, .sched h3 { margin: 0; padding: 10px 16px 6px; font-size: 13px; color: var(--sub); }
   /* 예약 칸: [스위치] 이름 + 언제 · ▶ 지금 실행 · ✕ 삭제 */
   #sch { overflow-y: auto; padding: 0 8px 10px; }
-  .sitem { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; }
+  .sitem { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 8px; }
+  /* 📱 휴대폰(텔레그램)으로도 보내기 체크: 꺼짐은 흐리게, 켜짐은 또렷하게 */
+  .sitem .ph { position: relative; flex: none; width: 24px; height: 24px; }
+  .sitem .ph input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .sitem .ph span { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border-radius: 6px; font-size: 14px; filter: grayscale(1); opacity: .4; pointer-events: none; }
+  .sitem .ph input:checked + span { filter: none; opacity: 1; background: var(--blue-bg); }
+  .sitem .ph input:focus-visible + span { outline: 2px solid var(--blue); }
   .sitem:hover { background: #f2f4f7; }
   .sitem .st { flex: 1; min-width: 0; }
   .sitem .st b { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sitem .st small { display: block; color: var(--sub); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sitem.off .st { opacity: .55; }
   .sitem.bad .st small { color: #b42318; }
-  .sitem > button { flex: none; width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--sub); }
+  .sitem > button { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--sub); }
   .sitem > button[data-run]:hover:not(:disabled) { background: var(--blue-bg); color: var(--blue); }
   .sitem > button[data-del]:hover:not(:disabled) { background: #fee4e2; color: #b42318; }
   .sitem > button:disabled { opacity: .35; cursor: default; }
@@ -183,7 +189,7 @@
 
   /* 설정 */
   .settings { flex: 1; min-width: 0; overflow-y: auto; padding: 24px 16px; }
-  .settings > * { max-width: 640px; margin-left: auto; margin-right: auto; }
+  .settings > * { max-width: 900px; margin-left: auto; margin-right: auto; }
   .settings h2 { margin-bottom: 14px; }
   .card { margin-bottom: 16px; padding: 18px 20px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
   .card h3 { margin: 0 0 4px; font-size: 16px; }
@@ -191,6 +197,25 @@
   .btn { padding: 9px 16px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font-weight: 600; }
   .btn:disabled { background: #98a2b3; cursor: default; }
   #seedMsg { margin-top: 10px; font-size: 14px; }
+  .card h3 small { font-weight: 400; color: var(--sub); font-size: 13px; }
+  /* 텔레그램 배달: 왼쪽 입력 칸 + 오른쪽 도움말 */
+  .tgbox { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
+  #tgState { margin-bottom: 12px; color: var(--sub); font-size: 13px; }
+  .tgform label { display: block; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: #344054; }
+  .tgform input { display: block; width: 100%; margin-top: 4px; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 10px; font: inherit; font-weight: 400; }
+  .tgform input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .tgform input.mask { -webkit-text-security: disc; } /* 채팅 ID 도 입력하는 동안 ●●● 로 가린다 */
+  .tgbtns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn.ghost { background: #fff; color: #344054; border: 1px solid #d0d5dd; }
+  .btn.ghost:disabled { color: #98a2b3; }
+  #tgMsg { margin-top: 10px; font-size: 14px; min-height: 1.5em; }
+  #tgMsg.err { color: #b42318; }
+  .tghelp { padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: #f9fafb; font-size: 13px; line-height: 1.6; }
+  .tghelp h4 { margin: 0 0 6px; font-size: 14px; }
+  .tghelp ol { margin: 0 0 8px; padding-left: 1.3em; }
+  .tghelp li { margin-bottom: 5px; }
+  .tghelp p { margin: 0 0 6px; font-size: 13px; }
+  .tghelp code, .card p code { padding: 1px 5px; border-radius: 5px; background: #eef0f3; font: 12px Consolas, monospace; }
 
   /* 휴대폰 */
   @media (max-width: 800px) {
@@ -198,6 +223,7 @@
     header .brand { font-size: 13px; }
     .bell { width: 34px; height: 34px; }
     .chip { gap: 6px; font-size: 13px; }
+    .tgbox { grid-template-columns: 1fr; }
     .icon-btn { display: block; }
     nav { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; transform: translateX(-100%); transition: transform .2s; box-shadow: 4px 0 20px rgba(0,0,0,.1); }
     body.menu nav { transform: none; }
@@ -568,17 +594,17 @@
   });
 
   // ---------- 예약 칸 (채팅 왼쪽, data/schedule.json): 켬/끔 스위치 · ▶ 지금 실행 · ✕ 삭제 ----------
-  let schedItems = [], schedErr = '', schedSeq = 0;
+  let schedItems = [], schedErr = '', schedSeq = 0, schedTelegram = false; // schedTelegram: 텔레그램 설정(봇 토큰·채팅 ID)이 저장돼 있는지
   async function loadSched() {
     const my = ++schedSeq;
-    let items = [], err = '';
+    let items = [], err = '', tg = false;
     try {
       const r = await api('/api/schedule'), j = await r.json();
       if (!r.ok) throw new Error(j.error || '예약을 읽지 못했어요.');
-      items = j.items;
+      items = j.items; tg = !!j.telegram;
     } catch (e) { if (e.message === 'login') return; err = e.message; }
     if (my !== schedSeq) return;
-    schedItems = items; schedErr = err;
+    schedItems = items; schedErr = err; schedTelegram = tg;
     renderSched();
   }
   function renderSched() {
@@ -586,14 +612,20 @@
     $('schN').textContent = schedItems.length ? `(${schedItems.length})` : '';
     el.innerHTML = schedErr ? `<div class="none">⚠ ${safe(schedErr)}</div>` : schedItems.length ? schedItems.map((e, i) => {
       const id = typeof e.id === 'string' ? e.id : '', on = e.켬 !== false, run = !!e.running;
-      const sub = e.error ? `⚠ ${e.error}` : run ? '⏳ 실행 중…' : inbox.scheduleText(e.언제);
+      const ph = e.휴대폰 === true, sub = e.error ? `⚠ ${e.error}` : run ? '⏳ 실행 중…' : inbox.scheduleText(e.언제) + (ph && !schedTelegram ? ' · ⚠ 텔레그램 설정 필요' : '');
       return `<div class="sitem ${on ? '' : 'off'} ${e.error ? 'bad' : ''}" title="${safe(e.지시문)}">
         <label class="sw" title="${on ? '켜짐 (누르면 끔)' : '꺼짐 (누르면 켬)'}"><input type="checkbox" data-i="${i}" ${on ? 'checked' : ''} ${id ? '' : 'disabled'}><span></span></label>
         <div class="st"><b>${safe(e.이름 || id || '(이름 없음)')}</b><small>${safe(sub)}</small></div>
+        <label class="ph" title="${ph ? '결과 요약을 휴대폰(텔레그램)으로도 보냄 (누르면 끔)' : '휴대폰(텔레그램)으로도 보내기 (누르면 켬)'}"><input type="checkbox" data-phone="${i}" ${ph ? 'checked' : ''} ${id ? '' : 'disabled'} aria-label="휴대폰으로도 보내기"><span>📱</span></label>
         <button data-run="${i}" title="지금 한 번 실행 (예약 시각은 그대로)" aria-label="지금 실행" ${id && !e.error && !run ? '' : 'disabled'}>▶</button>
         <button data-del="${i}" title="이 예약 지우기" aria-label="이 예약 지우기" ${id ? '' : 'disabled'}>✕</button></div>`;
     }).join('') : '<div class="none">아직 예약이 없어요. 채팅에서 "매일 아침 8시 반에 … 해 줘" 라고 말해 보세요.</div>';
     el.querySelectorAll('input[data-i]').forEach((c) => (c.onchange = () => schedCall(schedItems[c.dataset.i].id, 'enable', { on: c.checked })));
+    el.querySelectorAll('input[data-phone]').forEach((c) => (c.onchange = async () => {
+      const on = c.checked;
+      await schedCall(schedItems[c.dataset.phone].id, 'phone', { on });
+      if (on && !schedTelegram) alert('텔레그램 설정이 아직 비어 있어서 지금은 보내지지 않아요.\n설정 → "텔레그램 배달"에서 봇 토큰과 채팅 ID 를 입력해 주세요.');
+    }));
     el.querySelectorAll('[data-run]').forEach((b) => (b.onclick = () => schedCall(schedItems[b.dataset.run].id, 'run')));
     el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => {
       const e = schedItems[b.dataset.del];
@@ -618,8 +650,69 @@
         <div class="card"><h3>연습용 예시 데이터</h3>
           <p>가상 회사 "가나다전자"의 일정·프로젝트·할 일·알림을 넣어 화면을 연습해 볼 수 있어요. 실제 업무 자료가 아닙니다.</p>
           <button class="btn" id="seedBtn">예시 데이터 넣기</button><div id="seedMsg"></div></div>
+        <div class="card"><h3>텔레그램 배달 <small>(선택)</small></h3>
+          <p>예약 결과 요약을 휴대폰 텔레그램으로도 받습니다. 쓰지 않으면 비워 두세요. 값은 이 컴퓨터의 <code>data/settings.json</code> 에만 저장되고, 화면에는 <b>****</b> 로 가려서만 보입니다. (비서도 이 파일은 읽지 못합니다)</p>
+          <div class="tgbox">
+            <div class="tgform">
+              <div id="tgState">불러오는 중…</div>
+              <label>봇 토큰<input id="tgToken" type="password" autocomplete="new-password" spellcheck="false"></label>
+              <label>채팅 ID<input id="tgChat" class="mask" type="text" autocomplete="off" spellcheck="false"></label>
+              <div class="tgbtns"><button class="btn" id="tgSave">저장</button><button class="btn ghost" id="tgTest">시험 보내기</button><button class="btn ghost" id="tgClear">설정 지우기</button></div>
+              <div id="tgMsg" role="status" aria-live="polite"></div>
+            </div>
+            <aside class="tghelp"><h4>봇 만드는 방법 (처음 한 번만, 5분)</h4>
+              <ol>
+                <li>휴대폰에 <b>텔레그램</b> 앱을 설치하고 가입합니다.</li>
+                <li>텔레그램 검색창에 <code>@BotFather</code> 를 찾아 엽니다. (이름 옆에 파란 체크 표시가 있는 것) 그리고 <b>시작(Start)</b> 을 누릅니다.</li>
+                <li><code>/newbot</code> 을 보냅니다. 먼저 봇 이름(아무거나, 예: 내 비서), 다음으로 봇 아이디(영어로, 끝이 <code>bot</code> 으로 끝나야 함. 예: <code>my_sancho_bot</code>)를 답합니다.</li>
+                <li>끝나면 BotFather 가 <b>긴 글자</b>(예: <code>123456789:AAH…</code>)를 줍니다. 이것이 <b>봇 토큰</b>입니다. 비밀번호와 같으니 남에게 보여 주지 말고, 왼쪽 "봇 토큰" 칸에 붙여 넣습니다.</li>
+                <li>방금 만든 봇을 검색해서 열고 <b>시작(Start)</b> 을 누른 뒤 아무 말이나 보냅니다. (봇은 내가 먼저 말을 걸어야 답할 수 있어요)</li>
+                <li>내 <b>채팅 ID</b> 는 텔레그램에서 <code>@userinfobot</code> 에게 아무 말이나 보내면 <code>Id: 123456789</code> 처럼 알려 줍니다. 그 숫자를 "채팅 ID" 칸에 넣습니다.</li>
+                <li>[저장]을 누르고 [시험 보내기]를 누릅니다. 휴대폰에 "Sancho 시험 메시지"가 오면 성공입니다.</li>
+              </ol>
+              <p>그다음 채팅 왼쪽 <b>예약 칸의 📱</b> 를 켠 예약만 휴대폰으로도 갑니다. 보내는 것은 결과 <b>요약(400자까지)</b>이고, 텔레그램 서버를 거쳐 회사 밖으로 나갑니다. 민감한 내용을 다루는 예약에는 켜지 마세요.</p>
+            </aside>
+          </div>
+        </div>
       </section>`;
     $('seedBtn').onclick = () => seed(false);
+    showTelegram();
+  }
+  // 텔레그램 배달 칸: 값은 화면으로 오지 않는다 (서버가 "저장돼 있는지"만 알려 줌). 입력 칸은 늘 비어 있고, 새 값을 넣고 [저장]하면 바뀐다
+  const tgMsg = (t, err) => { const m = $('tgMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
+  async function tgCall(method, url, body) { // → { ok, error }
+    try {
+      const r = await api(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      return { ok: r.ok, error: (await r.json().catch(() => ({}))).error || '처리하지 못했어요.' };
+    } catch (e) { return { ok: false, error: e.message === 'login' ? '' : '서버에 연결할 수 없습니다.' }; }
+  }
+  async function loadTelegram() {
+    try {
+      const t = (await (await api('/api/settings')).json()).telegram, el = $('tgState'); if (!el) return;
+      const has = (v) => (v ? '✓ 저장됨 (****)' : '비어 있음');
+      el.textContent = `지금: 봇 토큰 ${has(t.token)} · 채팅 ID ${has(t.chatId)}`;
+      $('tgToken').placeholder = t.token ? '**** (바꾸려면 새로 붙여 넣기)' : '123456789:AAH… (BotFather 가 준 글자)';
+      $('tgChat').placeholder = t.chatId ? '**** (바꾸려면 새로 입력)' : '123456789';
+    } catch (e) { if (e.message !== 'login' && $('tgState')) $('tgState').textContent = '⚠ 설정을 읽지 못했어요.'; }
+  }
+  function showTelegram() {
+    loadTelegram();
+    const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } finally { btn.disabled = false; } };
+    $('tgSave').onclick = (ev) => busy(ev.target, async () => {
+      const r = await tgCall('PUT', '/api/settings/telegram', { token: $('tgToken').value.trim(), chatId: $('tgChat').value.trim() });
+      if (r.ok) { $('tgToken').value = ''; $('tgChat').value = ''; tgMsg('✓ 저장했어요. 이어서 [시험 보내기]를 눌러 보세요.'); loadTelegram(); } else tgMsg(`⚠ ${r.error}`, true);
+    });
+    $('tgTest').onclick = (ev) => busy(ev.target, async () => {
+      if ($('tgToken').value.trim() || $('tgChat').value.trim()) return tgMsg('입력한 값이 아직 저장되지 않았어요. [저장]을 먼저 눌러 주세요.', true);
+      tgMsg('보내는 중…');
+      const r = await tgCall('POST', '/api/settings/telegram/test');
+      if (r.ok) tgMsg('✓ 보냈어요. 휴대폰 텔레그램에 "Sancho 시험 메시지"가 왔는지 확인해 보세요.'); else tgMsg(`⚠ ${r.error}`, true);
+    });
+    $('tgClear').onclick = (ev) => busy(ev.target, async () => {
+      if (!confirm('텔레그램 설정(봇 토큰·채팅 ID)을 지울까요?\n지운 뒤에는 휴대폰으로 보내지지 않습니다.')) return;
+      const r = await tgCall('DELETE', '/api/settings/telegram');
+      if (r.ok) { tgMsg('지웠어요.'); loadTelegram(); } else tgMsg(`⚠ ${r.error}`, true);
+    });
   }
   async function seed(add) { // 이미 자료가 있으면 서버가 409 로 되묻고, 확인하면 add:true 로 다시 보낸다 (기존 자료는 안 지움)
     const btn = $('seedBtn'), msg = $('seedMsg'); btn.disabled = true; msg.textContent = '';
