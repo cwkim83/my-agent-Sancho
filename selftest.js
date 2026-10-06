@@ -48,6 +48,9 @@ async function run() {
   const ck = cookieOf(login);
   check('로그인 후 /api/me 가능', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 200);
   check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="who"'));
+  const mainHtml = await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text();
+  check('메인 화면이 db.js·dash.js 를 불러옴(대시보드)', mainHtml.includes('src="/m/db.js"') && mainHtml.includes('src="/m/dash.js"')
+    && ['오늘 브리핑', '이번 주 일정 정리', '마감 임박 알려줘', '새 프로젝트 등록'].every((q) => mainHtml.includes(q)));
   check('같은 사이트(Origin 이 우리 주소)에서 온 로그인은 정상', (await fetch(BASE + '/api/auth/login', { method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: BASE }, body: JSON.stringify({ username: 'tester', password: PW }) })).status === 200);
   for (const u of ['/', '/index.html', '/Index.html', '/INDEX.HTML', '/index.html.', '/index.html%20'])
@@ -133,6 +136,7 @@ async function run() {
   check('public 밖의 파일은 못 가져감', (await fetch(BASE + '/..%2Fserver.js')).status !== 200);
   await runDb(ck);
   await runSeed(ck);
+  await runDash(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -276,6 +280,46 @@ async function runSeed(ck) {
   check('자료 파일이 깨져 있으면 500 으로 알리고 아무것도 쓰지 않음',
     (await seed({ add: true })).status === 500 && fs.readFileSync(path.join(dbDir, 'tasks.json'), 'utf8') === tasksFile
     && fs.readFileSync(path.join(dbDir, 'events.json'), 'utf8') === '{ 깨진 파일');
+}
+
+// 대시보드 계산 (public/m/dash.js): 날짜를 2026-10-06 화요일로 고정해 같은 결과가 나오는지 본다
+async function runDash(ck) {
+  const box = { window: {} };
+  vm.runInNewContext(await (await fetch(BASE + '/m/dash.js', { headers: { Cookie: ck } })).text(), box);
+  const { greeting, stats, dday } = box.window.dash;
+  const at = (h, m = 0) => new Date(2026, 9, 6, h, m);
+  const hi = (h, m) => greeting(at(h, m), '가나').split(',')[0];
+  check('인사말: 아침(5~11시)·오후(12~17시)·저녁(18시~새벽 4시), 뒤에 "○○님"',
+    hi(5) === '좋은 아침입니다' && hi(11, 59) === '좋은 아침입니다' && hi(12) === '좋은 오후입니다' && hi(17, 59) === '좋은 오후입니다'
+    && hi(18) === '좋은 저녁입니다' && hi(2) === '좋은 저녁입니다' && greeting(at(9), '가나') === '좋은 아침입니다, 가나님');
+  const data = {
+    events: [
+      { id: 'a', date: '2026-10-06', endDate: '2026-10-06', start: '14:00' },
+      { id: 'b', date: '2026-10-05', endDate: '2026-10-07', start: '09:00' }, // 어제부터 내일까지(오늘에 걸침)
+      { id: 'c', date: '2026-10-05', endDate: '2026-10-05', start: '08:00' }, // 어제
+      { id: 'd', date: '2026-10-07', start: '08:00' }, // 내일
+      { id: 'e', date: '2026-10-06', start: '08:30' }, // endDate 없음
+      null, { id: 'f' }, // 깨진 항목
+    ],
+    projects: [{ status: '진행중' }, { status: '계획' }, { status: '진행중' }, null],
+    tasks: [
+      { id: 't1', due: '2026-10-05', status: '진행중' }, // 어제 마감(지남)
+      { id: 't2', due: '2026-10-13', status: '할 일' }, // 딱 7일 뒤(포함)
+      { id: 't3', due: '2026-10-14', status: '할 일' }, // 8일 뒤(제외)
+      { id: 't4', due: '2026-10-06', status: '완료' }, // 완료(제외)
+      { id: 't5', due: '2026-10-06', status: '할 일' },
+      { id: 't6', status: '할 일' }, null, // 마감일 없음·깨진 항목
+    ],
+    notices: [{ read: false }, {}, { read: true }, null],
+  };
+  const s = stats(data, at(9));
+  check('오늘 일정: 오늘 하루짜리+오늘에 걸친 것만, 시간순(어제·내일·깨진 항목 제외)', s.todayEvents.map((e) => e.id).join() === 'e,b,a');
+  check('진행 중 프로젝트 수', s.activeProjects === 2);
+  check('7일 안 마감 할 일: 지난 것 포함·딱 7일째 포함·8일째와 완료·마감일 없음 제외, 마감 빠른 순', s.dueSoon.map((t) => t.id).join() === 't1,t5,t2' && s.overdue === 1);
+  check('안 읽은 알림 수(read 가 없으면 안 읽음)', s.unread === 2);
+  const z = stats({}, at(9));
+  check('자료가 하나도 없어도 멈추지 않고 0', z.todayEvents.length === 0 && z.activeProjects === 0 && z.dueSoon.length === 0 && z.unread === 0);
+  check('D-day 글자: 지남·오늘·D-n', dday('2026-10-05', at(9)) === '1일 지남' && dday('2026-10-06', at(23, 59)) === '오늘' && dday('2026-10-09', at(9)) === 'D-3' && dday('엉터리', at(9)) === '');
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
