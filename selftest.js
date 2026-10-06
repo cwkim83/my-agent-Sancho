@@ -145,6 +145,7 @@ async function run() {
   await runSeed(ck);
   await runDash(ck);
   await runCal(ck);
+  await runProjects(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -415,6 +416,65 @@ async function runCal(ck) {
   check('형식 검사: 틀린 일정 12개·할 일 2개를 모두 찾고, 정상 항목은 안 잡음', Array.isArray(probs) && probs.length === 14 && !probs.some((p) => p.includes('정상'))
     && ['일정 "슬래시": 날짜가', '일정 "없는 날": 날짜가', '일정 "끝이 빠름": 끝 날짜가', '일정 "한 자리 시": 시각이', '일정 "이상한 id": id 가', '할 일 "마감 모양": 마감일이'].every((w) => probs.some((p) => p.startsWith(w))));
   check('달력: 날짜 모양이 틀린 일정은 빼고, 끝 날짜만 이상한 일정은 시작 날짜 하루짜리로 보여 줌', on6 === 'c,한글,ok,d');
+}
+
+// 프로젝트 계산·새 프로젝트 창·연간 간트 자리 검사 (public/m/proj.js) + 프로젝트 화면 파일
+async function runProjects(ck) {
+  const get = (u) => fetch(BASE + u, { headers: { Cookie: ck } });
+  check('로그인 전에는 /m/projects.html·/m/proj.js 가 401', (await fetch(BASE + '/m/projects.html')).status === 401 && (await fetch(BASE + '/m/proj.js')).status === 401);
+  const main = await (await get('/')).text();
+  check('메인 화면: 프로젝트 메뉴에 /m/projects.html 을 띄우고, "#WBS/<id>" 처럼 메뉴 뒤에 붙은 /… 는 메뉴 이름으로 보지 않음', main.includes('/m/projects.html') && main.includes(".split('/')[0]"));
+  const html = await (await get('/m/projects.html')).text();
+  check('프로젝트 화면: db.js·cal.js·proj.js 를 쓰고, "+ 새 프로젝트"·연간 통합 간트가 있고, 카드·막대를 누르면 #WBS/<id> 로 가고, 파일이 바뀌면 다시 그림',
+    ['src="/m/db.js"', 'src="/m/cal.js"', 'src="/m/proj.js"', '+ 새 프로젝트', '연간 통합 간트', "'#WBS/'", "db.watch('projects'"].every((x) => html.includes(x)));
+  const box = { window: {} }; vm.createContext(box);
+  for (const f of ['cal', 'proj']) vm.runInContext(await (await get(`/m/${f}.js`)).text(), box); // proj.js 는 cal.js 를 먼저 불러와야 한다
+  const p = box.window.proj, near = (a, b) => Math.abs(a - b) < 1e-9;
+
+  // 연간 간트: 한 해(1/1~12/31)를 가로 100% 로 보고 막대 자리를 %로 구한다
+  const whole = p.span({ start: '2026-01-01', due: '2026-12-31' }, 2026), jul = p.span({ start: '2026-07-01', due: '2026-07-31' }, 2026);
+  check('간트 자리: 한 해를 꽉 채우면 0%~100%(잘림 없음), 7월 한 달은 181일째부터 31일(365일 기준)',
+    near(whole.left, 0) && near(whole.width, 100) && !whole.cutL && !whole.cutR && near(jul.left, (181 / 365) * 100) && near(jul.width, (31 / 365) * 100));
+  const cross = { start: '2026-08-08', due: '2027-02-04' }, c26 = p.span(cross, 2026), c27 = p.span(cross, 2027);
+  check('해를 넘기는 프로젝트: 2026 에서는 오른쪽이 12/31 에서 잘리고, 2027 에서는 1/1 부터 35일만 보임',
+    c26.cutR && !c26.cutL && near(c26.left + c26.width, 100) && c27.cutL && !c27.cutR && near(c27.left, 0) && near(c27.width, (35 / 365) * 100));
+  check('그 해와 안 겹치거나 기간이 틀린 항목은 null, 하루짜리는 1일 폭으로 보임',
+    p.span(cross, 2025) === null && p.span(cross, 2028) === null && p.span({ start: '2026-10-05', due: '2026-10-01' }, 2026) === null && p.span({ name: 'x' }, 2026) === null
+    && near(p.span({ start: '2026-10-07', due: '2026-10-07' }, 2026).width, 100 / 365));
+  check('윤년: 2028 은 366일(2월 29일)이고 달 폭의 합이 한 해 날수와 같음',
+    p.monthDays(2028)[1] === 29 && p.monthDays(2026)[1] === 28 && p.monthDays(2028).reduce((a, b) => a + b) === 366
+    && near(p.span({ start: '2028-01-01', due: '2028-12-31' }, 2028).width, 100) && near(p.span({ start: '2028-03-01', due: '2028-03-01' }, 2028).left, (60 / 366) * 100));
+  check('오늘 세로선: 그 해면 그 날의 시작 자리(2026-10-07 = 279일째), 다른 해면 없음',
+    near(p.todayPos(2026, '2026-10-07'), (279 / 365) * 100) && near(p.todayPos(2026, '2026-01-01'), 0) && p.todayPos(2027, '2026-10-07') === null);
+
+  // 새 프로젝트 창
+  const ok = { name: '열교환기', client: '', owner: '', status: '계획', start: '2026-10-01', due: '2026-12-31', progress: '0' };
+  check('새 프로젝트 창 검사: 정상은 통과(진도율을 비워도 통과)', p.validate(ok) === '' && p.validate({ ...ok, progress: '' }) === '');
+  check('새 프로젝트 창 검사: 이름이 비면 안내', p.validate({ ...ok, name: '   ' }).includes('이름'));
+  check('새 프로젝트 창 검사: 시작일·종료일이 없으면 안내', p.validate({ ...ok, start: '' }).includes('시작일') && p.validate({ ...ok, due: '' }).includes('종료일'));
+  check('새 프로젝트 창 검사: 종료일이 시작일보다 빠르면 안내(같은 날은 통과)', p.validate({ ...ok, due: '2026-09-30' }).includes('종료일') && p.validate({ ...ok, due: '2026-10-01' }) === '');
+  check('새 프로젝트 창 검사: 진도율은 0~100 정수만', ['-1', '101', '5.5', 'abc'].every((x) => p.validate({ ...ok, progress: x }).includes('진도율')) && p.validate({ ...ok, progress: '100' }) === '');
+  check('새 프로젝트 창 검사: 상태는 계획·진행중·완료만', p.validate({ ...ok, status: '보류' }).includes('상태') && p.STATUS.join() === '계획,진행중,완료');
+  const made = p.toProject({ ...ok, name: ' 열교환기 ', client: ' 라마바화학 ', progress: '40' }, 'new-1');
+  check('새 프로젝트: 새 id·앞뒤 공백 제거·진도율은 숫자로', made.id === 'new-1' && made.name === '열교환기' && made.client === '라마바화학' && made.progress === 40 && made.start === '2026-10-01');
+
+  // 카드
+  check('진도율 막대: 0~100 으로 맞추고 이상한 값은 0', p.pct({ progress: 55 }) === 55 && p.pct({ progress: 150 }) === 100 && p.pct({ progress: -5 }) === 0 && p.pct({ progress: 'x' }) === 0 && p.pct({}) === 0 && p.pct({ progress: 33.4 }) === 33);
+  check('기간 글자: 2026.10.01 ~ 2026.12.31, 없으면 "기간 미정"', p.periodText({ start: '2026-10-01', due: '2026-12-31' }) === '2026.10.01 ~ 2026.12.31' && p.periodText({}) === '기간 미정');
+  const list = [{ id: 'b', name: '나', start: '2026-09-01', due: '2026-10-01' }, { id: 'a', name: '가', start: '2026-09-01', due: '2026-10-01' }, { id: 'z', name: '기간없음' },
+    { id: 'c', name: '다', start: '2026-01-01', due: '2026-02-01' }, null, 3, { name: 'id없음' }, { id: '한글', name: 'x' }];
+  check('카드 순서: 시작일 순(같으면 이름 순), 기간 없는 건 맨 뒤, id 없는 항목·깨진 항목은 빠짐', p.sorted(list).map((x) => x.id).join() === 'c,a,b,z');
+
+  // 비서가 형식을 어겨 쓴 항목: 멈추지 않고, 무엇이 문제인지 찾아 알려 준다
+  const weird = [null, 'x', { id: 'a', name: '기간이 이상', start: '2026/10/01', due: '2026-12-31' }, { id: 'b', name: '끝이 빠름', start: '2026-10-05', due: '2026-10-01' },
+    { id: 'c', name: '진도 이상', start: '2026-10-01', due: '2026-10-02', progress: '50' }, { id: 'd', name: '상태 이상', start: '2026-10-01', due: '2026-10-02', status: '보류' },
+    { id: 'e', start: '2026-10-01', due: '2026-10-02' }, { id: '한글', name: '이상한 id', start: '2026-10-01', due: '2026-10-02' },
+    { id: 'ok', name: '정상', start: '2026-10-01', due: '2026-10-02', status: '진행중', progress: 10 }];
+  let probs;
+  try { probs = p.problems(weird); } catch (e) { probs = '예외: ' + e.message; }
+  check('형식이 틀린 프로젝트가 섞여도 계산이 멈추지 않음', Array.isArray(probs));
+  check('형식 검사: 틀린 8개를 모두 찾고, 정상 항목은 안 잡음', Array.isArray(probs) && probs.length === 8 && !probs.some((x) => x.includes('정상'))
+    && ['"기간이 이상": 기간', '"끝이 빠름": 기간', '"진도 이상": 진도율', '"상태 이상": 상태', '"이상한 id": id'].every((w) => probs.some((x) => x.includes(w))));
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다

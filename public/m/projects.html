@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>프로젝트</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+    font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button, input, select, textarea { font: inherit; }
+  button { cursor: pointer; }
+
+  /* 위쪽 줄: 제목 · 개수 · + 새 프로젝트 */
+  .bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+  .bar h2 { margin: 0 4px 0 4px; font-size: 18px; }
+  .cnt { color: var(--sub); }
+  .sp { flex: 1; }
+  .btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #344054; }
+  .btn:hover { background: #f2f4f7; }
+  .primary { padding: 7px 18px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-weight: 600; }
+  #warn { flex: none; padding: 0 16px; color: var(--red); font-size: 13px; white-space: pre-line; }
+  #warn:not(:empty) { padding-top: 8px; }
+  #view { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 20px; }
+  .none { color: #98a2b3; font-size: 13px; padding: 14px 8px; }
+
+  /* 상태별 색: --c 막대 안 채움, --cbg 막대 바탕, --c2 진한 색(카드 막대), --ct 막대 글자 */
+  .b-plan { --c: #b5bcc7; --cbg: #eceef2; --c2: #98a2b3; --ct: #344054; }
+  .b-go { --c: #6c9bf3; --cbg: #dbe7ff; --c2: #2f6fed; --ct: #12326b; }
+  .b-done { --c: #62c68a; --cbg: #d8f1e3; --c2: #12a150; --ct: #0b4a26; }
+
+  /* 프로젝트 카드 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .card { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--text); text-align: left; }
+  .card:hover { border-color: var(--blue); background: #fbfcfe; }
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .nm { font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+  .st { flex: none; padding: 1px 9px; border-radius: 999px; background: var(--cbg); color: var(--ct); font-size: 12px; font-weight: 600; }
+  .cl { color: #344054; font-size: 13px; }
+  .pd { color: var(--sub); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pg { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .track { flex: 1; height: 8px; overflow: hidden; border-radius: 999px; background: #eef0f3; }
+  .track i { display: block; height: 100%; border-radius: 999px; background: var(--c2); }
+  .pg span { min-width: 36px; text-align: right; font-size: 12px; font-weight: 600; }
+
+  /* 연간 통합 간트 */
+  .gsec { margin-top: 22px; }
+  .gtop { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .gtop h3 { margin: 0 8px 0 0; font-size: 16px; }
+  .gtop b { min-width: 64px; text-align: center; }
+  .gwrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .g { min-width: 900px; }
+  .gr { display: grid; grid-template-columns: 170px minmax(0, 1fr); min-height: 38px; border-top: 1px solid var(--line); }
+  .gr:first-child { border-top: 0; }
+  .gr[data-id] { cursor: pointer; }
+  .gr[data-id]:hover { background: #fbfcfe; }
+  .lab { position: sticky; left: 0; z-index: 2; display: flex; align-items: center; padding: 4px 10px; overflow: hidden; background-color: #fff;
+    border-right: 1px solid var(--line); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+  .gh { min-height: 30px; background: #f9fafb; color: var(--sub); font-size: 12px; }
+  .gh .lab { background-color: #f9fafb; }
+  .gr[data-id]:hover .lab { background-color: #fbfcfe; }
+  .tl { position: relative; display: grid; }
+  .tl > i { border-left: 1px solid #eef0f3; } .tl > i:first-child { border-left: 0; }
+  .gh .tl > span { display: flex; align-items: center; justify-content: center; border-left: 1px solid #eef0f3; } .gh .tl > span:first-child { border-left: 0; }
+  .gb { position: absolute; top: 8px; bottom: 8px; display: flex; align-items: center; overflow: hidden; border-radius: 6px; background: var(--cbg); box-shadow: inset 0 0 0 1px var(--c); }
+  .gb.cutl { border-top-left-radius: 0; border-bottom-left-radius: 0; } .gb.cutr { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .gb .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c); }
+  .gb b { position: relative; padding: 0 6px; color: var(--ct); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .td { position: absolute; top: 0; bottom: 0; z-index: 1; width: 2px; margin-left: -1px; background: #d92d20; pointer-events: none; }
+
+  /* 새 프로젝트 창 */
+  dialog { width: min(440px, calc(100% - 24px)); padding: 0; border: 0; border-radius: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); color: var(--text); }
+  dialog::backdrop { background: rgba(16, 24, 40, .4); }
+  form { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; }
+  form h3 { margin: 0; font-size: 17px; }
+  label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 13px; color: var(--sub); }
+  .r2 { display: flex; gap: 10px; }
+  .r2 label { flex: 1; }
+  input, select { width: 100%; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: var(--text); }
+  input:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .err { min-height: 1.2em; color: var(--red); font-size: 13px; }
+  .btns { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <h2>프로젝트</h2><span class="cnt" id="cnt"></span>
+    <span class="sp"></span>
+    <button class="primary" id="add">+ 새 프로젝트</button>
+  </div>
+  <div id="warn"></div>
+  <div id="view">
+    <div class="cards" id="cards"></div>
+    <section class="gsec">
+      <div class="gtop">
+        <h3>연간 통합 간트</h3>
+        <button class="btn" id="prevY" aria-label="이전 해">‹</button><b id="year"></b><button class="btn" id="nextY" aria-label="다음 해">›</button>
+        <button class="btn" id="thisY">올해</button>
+      </div>
+      <div class="gwrap" id="gantt"></div>
+    </section>
+  </div>
+
+  <dialog id="dlg">
+    <form id="f">
+      <h3>새 프로젝트</h3>
+      <label>프로젝트 이름 <input name="name" maxlength="100" autocomplete="off"></label>
+      <div class="r2">
+        <label>고객사 <input name="client" maxlength="100" autocomplete="off"></label>
+        <label>담당 <input name="owner" maxlength="50" autocomplete="off"></label>
+      </div>
+      <div class="r2">
+        <label>시작일 <input type="date" name="start"></label>
+        <label>종료일 <input type="date" name="due"></label>
+      </div>
+      <div class="r2">
+        <label>상태 <select name="status"></select></label>
+        <label>진도율 (%) <input type="number" name="progress" min="0" max="100" step="1"></label>
+      </div>
+      <div class="err" id="err"></div>
+      <div class="btns">
+        <button type="button" class="btn" id="cancel">취소</button><button type="submit" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+<script src="/m/db.js"></script>
+<script src="/m/cal.js"></script>
+<script src="/m/proj.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const SC = { '계획': 'plan', '진행중': 'go', '완료': 'done' };
+  const sc = (p) => 'b-' + (SC[p.status] || 'plan');
+  const thisYear = () => Number(cal.ymd(new Date()).slice(0, 4));
+
+  let projects = [], bad = false, year = thisYear(), seq = 0;
+
+  // ---------- 자료: db.js 로 받고, 파일이 바뀌면(AI 가 직접 고쳐도) 바로 다시 그린다 ----------
+  async function load() {
+    const my = ++seq;
+    let list = [], failed = false;
+    try { list = await db.list('projects'); } catch { failed = true; }
+    if (my !== seq) return; // 더 새 요청이 있다
+    projects = list; bad = failed;
+    render();
+  }
+  db.watch('projects', load);
+
+  // ---------- 그리기 ----------
+  const card = (p) => `<button class="card ${sc(p)}" data-id="${esc(p.id)}" title="누르면 이 프로젝트의 WBS 공정표로 갑니다">
+      <div class="top"><span class="nm">${esc(p.name) || '(이름 없음)'}</span><span class="st">${esc(p.status) || '상태 없음'}</span></div>
+      <div class="cl">${esc(p.client) || '고객사 미정'}</div>
+      <div class="pd">${esc(proj.periodText(p))}</div>
+      <div class="pg"><div class="track"><i style="width:${proj.pct(p)}%"></i></div><span>${proj.pct(p)}%</span></div>
+    </button>`;
+
+  function gantt(list, today) {
+    const cols = proj.monthDays(year).map((d) => `minmax(0,${d}fr)`).join(' '), td = proj.todayPos(year, today);
+    const line = td === null ? '' : `<u class="td" style="left:${td}%"></u>`;
+    const rows = list.map((p) => [p, proj.span(p, year)]).filter(([, s]) => s);
+    const head = `<div class="gr gh"><div class="lab">프로젝트</div><div class="tl" style="grid-template-columns:${cols}">${Array.from({ length: 12 }, (_, i) => `<span>${i + 1}월</span>`).join('')}</div></div>`;
+    const body = rows.map(([p, s]) => `<div class="gr" data-id="${esc(p.id)}"><div class="lab" title="${esc(p.name)}">${esc(p.name) || '(이름 없음)'}</div>
+      <div class="tl" style="grid-template-columns:${cols}">${'<i></i>'.repeat(12)}${line}
+        <span class="gb ${sc(p)}${s.cutL ? ' cutl' : ''}${s.cutR ? ' cutr' : ''}" style="left:${s.left}%;width:${s.width}%" title="${esc(proj.periodText(p))} · ${proj.pct(p)}%"><i class="fill" style="width:${proj.pct(p)}%"></i><b>${proj.pct(p)}%</b></span></div></div>`).join('');
+    return `<div class="g">${head}${body}</div>${rows.length ? '' : `<div class="none">${year}년에 걸친 프로젝트가 없어요.</div>`}`;
+  }
+
+  function render() {
+    const list = proj.sorted(projects), probs = proj.problems(projects);
+    $('cnt').textContent = `${list.length}개`;
+    $('warn').textContent = [
+      bad ? '⚠ 프로젝트 자료를 읽지 못했어요. data/db/projects.json 파일을 확인해 주세요.' : '',
+      probs.length ? `⚠ 형식이 맞지 않아 제대로 안 보이는 항목 ${probs.length}개 (data/db/projects.json 을 확인해 주세요): ${probs.slice(0, 3).join(' · ')}${probs.length > 3 ? ' …' : ''}` : '',
+    ].filter(Boolean).join('\n');
+    $('warn').title = probs.join('\n');
+    $('cards').innerHTML = list.length ? list.map(card).join('') : '<div class="none">아직 프로젝트가 없어요. 위의 "+ 새 프로젝트"를 눌러 보세요.</div>';
+    $('year').textContent = `${year}년`;
+    $('gantt').innerHTML = gantt(list, cal.ymd(new Date()));
+  }
+
+  // ---------- 누르기 ----------
+  // 카드·간트 막대를 누르면 메인 화면(부모)의 WBS 메뉴로 간다. 뒤의 "/id" 로 WBS 화면이 어느 프로젝트인지 알아본다
+  $('view').onclick = (e) => {
+    const el = e.target.closest('[data-id]');
+    if (el) parent.location.hash = '#WBS/' + encodeURIComponent(el.dataset.id);
+  };
+  $('prevY').onclick = () => { year--; render(); };
+  $('nextY').onclick = () => { year++; render(); };
+  $('thisY').onclick = () => { year = thisYear(); render(); };
+
+  // ---------- 새 프로젝트 창 ----------
+  const field = (n) => $('f').elements[n];
+  $('add').onclick = () => {
+    const today = cal.ymd(new Date());
+    $('f').reset();
+    field('status').innerHTML = proj.STATUS.map((s) => `<option>${s}</option>`).join('');
+    field('start').value = today; field('due').value = cal.addDays(today, 30); field('progress').value = 0;
+    $('err').textContent = '';
+    $('dlg').showModal();
+    field('name').focus();
+  };
+  $('cancel').onclick = () => $('dlg').close();
+  $('f').onsubmit = async (e) => {
+    e.preventDefault();
+    const form = Object.fromEntries(new FormData($('f')));
+    const problem = proj.validate(form);
+    if (problem) { $('err').textContent = problem; return; }
+    const p = proj.toProject(form, crypto.randomUUID());
+    try { await db.save('projects', p.id, p); $('dlg').close(); load(); }
+    catch (x) { $('err').textContent = x.message; }
+  };
+
+  render();
+  load();
+</script>
+</body>
+</html>

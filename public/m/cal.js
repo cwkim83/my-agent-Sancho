@@ -61,5 +61,5 @@
     start: str(f.start), end: str(f.end), place: str(f.place).trim(), memo: str(f.memo).trim(),
   });
 
-  window.cal = { ymd, parse, addDays, addMonths, weekStart, weekDays, monthGrid, isDate, isTime, eventsOn, dueOn, problems, validate, toEvent };
+  window.cal = { ymd, parse, addDays, addMonths, weekStart, weekDays, monthGrid, isDate, isTime, isObj, okId, eventsOn, dueOn, problems, validate, toEvent };
 })();
