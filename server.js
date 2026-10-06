@@ -146,8 +146,6 @@ const PRIVATE_FILES = ['users.json', 'sessions.json']; // 비밀번호 해시·�
 const READONLY_FILES = ['.system.md']; // 비서가 자기 지침을 스스로 고치지 못하게 막는다 (읽기만 가능)
 const BRAIN_ARGS = [
   '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
-  // 이 PC 의 전역 설정(~/.claude/settings.json)이 다른 주소·토큰으로 연결을 바꿔 버리는 것을 막는다
-  '--setting-sources', 'project,local',
   // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 아직 안 준다
   '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch',
   '--disallowedTools', 'Bash', 'PowerShell', ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
