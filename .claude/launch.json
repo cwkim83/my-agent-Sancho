@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "docs-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "-e",
+        "const fs=require('fs'),p=require('path');require('http').createServer((q,r)=>{const f=p.join('docs',p.basename(decodeURIComponent(q.url.split('?')[0])||'architecture.html'));fs.readFile(f,(e,d)=>{if(e){r.statusCode=404;return r.end('not found')}r.setHeader('content-type',f.endsWith('.html')?'text/html;charset=utf-8':'text/plain;charset=utf-8');r.end(d)})}).listen(4173,'127.0.0.1')"
+      ],
+      "port": 4173
+    },
+    {
+      "name": "sancho",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "server.js"
+      ],
+      "port": 8790
+    }
+  ]
+}

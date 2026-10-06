@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>나의 AI 비서 Sancho</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #f5f6f8; color: #1b1f24; font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  .card { width: 100%; max-width: 380px; margin: 16px; padding: 36px 32px; background: #fff;
+    border: 1px solid #e4e7eb; border-radius: 16px; box-shadow: 0 8px 30px rgba(20, 30, 50, .08); }
+  h1 { margin: 0; font-size: 22px; text-align: center; }
+  h1 span { color: #2f6fed; }
+  .sub { margin: 8px 0 24px; text-align: center; color: #667085; font-size: 14px; }
+  label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: #344054; }
+  input { width: 100%; padding: 11px 12px; font-size: 15px; border: 1px solid #d0d5dd; border-radius: 10px; outline: none; }
+  input:focus { border-color: #2f6fed; box-shadow: 0 0 0 3px rgba(47, 111, 237, .15); }
+  button { width: 100%; margin-top: 22px; padding: 12px; font-size: 15px; font-weight: 600; color: #fff;
+    background: #2f6fed; border: 0; border-radius: 10px; cursor: pointer; }
+  button:hover { background: #2559c4; }
+  button:disabled { background: #98a2b3; cursor: default; }
+  .err { margin-top: 14px; min-height: 18px; color: #d92d20; font-size: 13px; text-align: center; }
+  .hint { margin-top: 4px; color: #667085; font-size: 12px; }
+</style>
+</head>
+<body>
+  <form class="card" id="form" autocomplete="on">
+    <h1>나의 AI 비서 <span>Sancho</span></h1>
+    <p class="sub" id="sub">불러오는 중…</p>
+    <div id="nameRow" hidden><label for="name">이름</label><input id="name" autocomplete="name" maxlength="50"></div>
+    <label for="username">아이디</label><input id="username" autocomplete="username" autocapitalize="off">
+    <label for="password">비밀번호</label><input id="password" type="password">
+    <div id="pw2Row" hidden>
+      <div class="hint">8자 이상</div>
+      <label for="password2">비밀번호 확인</label><input id="password2" type="password" autocomplete="new-password">
+    </div>
+    <button id="btn" type="submit" disabled>…</button>
+    <div class="err" id="err" role="alert"></div>
+  </form>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let setup = false;
+
+  async function init() {
+    const s = await (await fetch('/api/auth/status')).json();
+    if (s.loggedIn) return location.replace('/');
+    setup = !s.hasUsers;
+    $('sub').textContent = setup ? '처음이시네요. 관리자 계정을 만들어 주세요.' : '로그인해 주세요.';
+    $('btn').textContent = setup ? '관리자 계정 만들기' : '로그인';
+    $('nameRow').hidden = $('pw2Row').hidden = !setup;
+    $('password').autocomplete = setup ? 'new-password' : 'current-password';
+    $('btn').disabled = false;
+    (setup ? $('name') : $('username')).focus();
+  }
+
+  $('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('err').textContent = '';
+    if (setup && $('password').value !== $('password2').value) { $('err').textContent = '비밀번호 확인이 서로 다릅니다.'; return; }
+    $('btn').disabled = true;
+    try {
+      const body = { username: $('username').value, password: $('password').value };
+      if (setup) body.name = $('name').value;
+      const r = await fetch(setup ? '/api/auth/setup' : '/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (r.ok) return location.replace('/');
+      $('err').textContent = j.error || '실패했습니다.';
+    } catch { $('err').textContent = '서버에 연결할 수 없습니다.'; }
+    $('btn').disabled = false;
+  });
+
+  init().catch(() => { $('sub').textContent = '서버에 연결할 수 없습니다.'; });
+</script>
+</body>
+</html>

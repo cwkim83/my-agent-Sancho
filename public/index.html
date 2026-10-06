@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>나의 AI 비서 Sancho</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f5f6f8; color: #1b1f24;
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px;
+    background: #fff; border-bottom: 1px solid #e4e7eb; }
+  header b span { color: #2f6fed; }
+  header div { display: flex; align-items: center; gap: 12px; font-size: 14px; color: #475467; }
+  button { padding: 8px 14px; font-size: 14px; background: #fff; border: 1px solid #d0d5dd; border-radius: 8px; cursor: pointer; }
+  button:hover { background: #f2f4f7; }
+  main { max-width: 640px; margin: 80px auto; padding: 0 16px; text-align: center; color: #667085; }
+  main h2 { color: #1b1f24; }
+</style>
+</head>
+<body>
+  <header>
+    <b>나의 AI 비서 <span>Sancho</span></b>
+    <div><span id="who"></span><button id="logout">로그아웃</button></div>
+  </header>
+  <main>
+    <h2>로그인되었습니다</h2>
+    <p>이 자리에 AI 채팅이 들어옵니다. (다음 단계에서 만듭니다)</p>
+  </main>
+<script>
+  fetch('/api/me').then((r) => r.ok ? r.json() : Promise.reject())
+    .then((u) => { document.getElementById('who').textContent = u.name + ' 님'; })
+    .catch(() => location.replace('/'));
+  document.getElementById('logout').onclick = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    location.replace('/');
+  };
+</script>
+</body>
+</html>
