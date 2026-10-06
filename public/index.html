@@ -90,6 +90,17 @@
   .md .toolline { color: var(--sub); font-size: 13px; } .md .warnline { color: #b42318; }
   .md th { background: #f9fafb; } .md a { color: var(--blue); } .md hr { border: 0; border-top: 1px solid var(--line); }
 
+  /* 설정 */
+  .settings { flex: 1; min-width: 0; overflow-y: auto; padding: 24px 16px; }
+  .settings > * { max-width: 640px; margin-left: auto; margin-right: auto; }
+  .settings h2 { margin-bottom: 14px; }
+  .card { margin-bottom: 16px; padding: 18px 20px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .card p { margin: 0 0 12px; color: var(--sub); font-size: 14px; }
+  .btn { padding: 9px 16px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font-weight: 600; }
+  .btn:disabled { background: #98a2b3; cursor: default; }
+  #seedMsg { margin-top: 10px; font-size: 14px; }
+
   /* 휴대폰 */
   @media (max-width: 800px) {
     .icon-btn { display: block; }
@@ -174,6 +185,7 @@
     document.body.classList.remove('menu');
     renderNav();
     if (current === '대시보드') showChat();
+    else if (current === '설정') showSettings();
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
   }
   window.addEventListener('hashchange', route);
@@ -301,6 +313,31 @@
     setBusy(false); aborter = null;
     loadList(); loadMemory(); // 비서가 방금 기억을 적었을 수 있다
     if ($('input')) $('input').focus();
+  }
+
+  // ---------- 설정 ----------
+  const LABELS = { events: '일정', projects: '프로젝트', tasks: '할 일', notices: '알림' };
+  const countText = (o) => Object.entries(o).map(([k, n]) => `${LABELS[k] || k} ${n}개`).join(' · ');
+  function showSettings() {
+    $('main').innerHTML = `
+      <section class="settings"><h2>설정</h2>
+        <div class="card"><h3>연습용 예시 데이터</h3>
+          <p>가상 회사 "가나다전자"의 일정·프로젝트·할 일·알림을 넣어 화면을 연습해 볼 수 있어요. 실제 업무 자료가 아닙니다.</p>
+          <button class="btn" id="seedBtn">예시 데이터 넣기</button><div id="seedMsg"></div></div>
+      </section>`;
+    $('seedBtn').onclick = () => seed(false);
+  }
+  async function seed(add) { // 이미 자료가 있으면 서버가 409 로 되묻고, 확인하면 add:true 로 다시 보낸다 (기존 자료는 안 지움)
+    const btn = $('seedBtn'), msg = $('seedMsg'); btn.disabled = true; msg.textContent = '';
+    try {
+      const r = await api('/api/seed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ add }) });
+      const j = await r.json();
+      if (r.status === 409) {
+        if (confirm(`이미 자료가 있습니다. (${countText(j.exists)})\n\n기존 자료는 그대로 두고 예시만 추가할까요?`)) { btn.disabled = false; return seed(true); }
+        msg.textContent = '취소했습니다. 아무것도 바뀌지 않았어요.';
+      } else msg.textContent = r.ok ? `✓ 넣었습니다: ${countText(j.added)}` : `⚠ ${j.error}`;
+    } catch (e) { if (e.message !== 'login') msg.textContent = '⚠ 서버에 연결할 수 없습니다.'; }
+    btn.disabled = false;
   }
 
   // ---------- 시작 ----------

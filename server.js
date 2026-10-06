@@ -160,6 +160,44 @@ fs.watch(DB_DIR, (_, file) => {
   }, 50));
 }).on('error', (e) => console.error('data/db 감시 실패:', e.message));
 
+// ---------- 연습용 예시 데이터 (가상 회사 "가나다전자", 실제 회사·사람 이름은 쓰지 않는다) ----------
+// 날짜는 "지금"을 기준으로 잡아서 언제 넣어도 이번 주·다음 주로 보인다
+function sampleData(now = new Date()) {
+  const shift = (base, n) => { const d = new Date(base); d.setDate(d.getDate() + n); return d.toLocaleDateString('sv-SE'); };
+  const mon = new Date(now); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7)); // 이번 주 월요일
+  const w = (n) => shift(mon, n); // 이번 주 월요일 + n일 (7 이상이면 다음 주)
+  const t = (n) => shift(now, n); // 오늘 + n일
+  return {
+    events: [
+      { id: 'demo-e1', title: '주간 업무 회의', kind: '회의', date: w(0), endDate: w(0), start: '09:30', end: '10:30', place: '본사 3층 회의실', projectId: null },
+      { id: 'demo-e2', title: '열교환기 설계 검토 회의', kind: '회의', date: w(1), endDate: w(1), start: '14:00', end: '15:30', place: '본사 2층 설계실', projectId: 'demo-p1' },
+      { id: 'demo-e3', title: '압력용기 수압시험 입회', kind: '검사 입회', date: w(2), endDate: w(2), start: '10:00', end: '15:00', place: '협력 제작사 시험장', projectId: 'demo-p2' },
+      { id: 'demo-e4', title: '공장 자동화 현장 실사', kind: '출장', date: w(3), endDate: w(3), start: '08:30', end: '17:30', place: '가나다전자 제2공장', projectId: 'demo-p3' },
+      { id: 'demo-e5', title: '열교환기 용접부 비파괴검사 입회', kind: '검사 입회', date: w(4), endDate: w(4), start: '10:00', end: '12:00', place: '협력 제작사 검사실', projectId: 'demo-p1' },
+      { id: 'demo-e6', title: '주간 업무 회의', kind: '회의', date: w(7), endDate: w(7), start: '09:30', end: '10:30', place: '본사 3층 회의실', projectId: null },
+      { id: 'demo-e7', title: '압력용기 개조 범위 협의', kind: '출장', date: w(9), endDate: w(10), start: '08:00', end: '18:00', place: '고객사 현장 (라마바화학)', projectId: 'demo-p2' },
+      { id: 'demo-e8', title: '자동화 설비 납품 검사 입회', kind: '검사 입회', date: w(11), endDate: w(11), start: '13:00', end: '17:00', place: '협력 제작사 조립장', projectId: 'demo-p3' },
+    ],
+    projects: [
+      { id: 'demo-p1', name: '열교환기 제작', client: '라마바화학', status: '진행중', progress: 55, start: t(-60), due: t(45), owner: '김가나' },
+      { id: 'demo-p2', name: '압력용기 개조', client: '사아자에너지', status: '진행중', progress: 30, start: t(-30), due: t(80), owner: '이다라' },
+      { id: 'demo-p3', name: '공장 자동화', client: '가나다전자 생산팀', status: '계획', progress: 0, start: t(14), due: t(120), owner: '박마바' },
+    ],
+    tasks: [
+      { id: 'demo-t1', title: '열교환기 제작도면 최종 확인', projectId: 'demo-p1', due: t(-1), status: '진행중', owner: '김가나' },
+      { id: 'demo-t2', title: '용접 절차서 승인 요청', projectId: 'demo-p1', due: t(0), status: '할 일', owner: '김가나' },
+      { id: 'demo-t3', title: '수압시험 입회 보고서 작성', projectId: 'demo-p2', due: t(2), status: '할 일', owner: '이다라' },
+      { id: 'demo-t4', title: '개조 범위 견적서 제출', projectId: 'demo-p2', due: t(5), status: '진행중', owner: '이다라' },
+      { id: 'demo-t5', title: '자동화 업체 3곳 견적 비교표 작성', projectId: 'demo-p3', due: t(9), status: '할 일', owner: '박마바' },
+      { id: 'demo-t6', title: '지난주 업무 보고 정리', projectId: null, due: t(-3), status: '완료', owner: '김가나' },
+    ],
+    notices: [
+      { id: 'demo-n1', title: '마감이 지난 할 일이 1건 있습니다', body: '열교환기 제작도면 최종 확인', level: '주의', at: now.toISOString(), read: false },
+      { id: 'demo-n2', title: '연습용 예시 데이터가 들어 있습니다', body: '가상 회사 "가나다전자" 기준의 예시이며 실제 업무 자료가 아닙니다.', level: '안내', at: now.toISOString(), read: false },
+    ],
+  };
+}
+
 function readMemory() { try { return fs.readFileSync(MEMORY_FILE, 'utf8').split(/\r?\n/); } catch { return []; } }
 
 // ---------- 두뇌: 이 PC 에 설치된 Claude Code (내 구독 로그인, API 키 없음) ----------
@@ -356,6 +394,23 @@ async function handle(req, res) {
         writeJson(dbFile(name), items);
         return send(res, 200, { ok: true });
       }
+    }
+
+    if (p === '/api/seed' && req.method === 'POST') { // 설정 화면의 "예시 데이터 넣기"
+      let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+      const sample = sampleData(), names = Object.keys(sample), cur = {};
+      try { for (const n of names) cur[n] = loadCollection(n); } catch { return send(res, 500, { error: '자료 파일이 깨져 있어 예시를 넣지 못했습니다. data/db 를 확인해 주세요.' }); }
+      const exists = Object.fromEntries(names.filter((n) => cur[n].length).map((n) => [n, cur[n].length]));
+      // 이미 자료가 있으면 아무것도 쓰지 않고 되묻는다. 화면이 "추가"를 확인받아 add:true 로 다시 보내야 넣는다
+      if (Object.keys(exists).length && b.add !== true) return send(res, 409, { error: '이미 자료가 있습니다. 기존 자료는 그대로 두고 예시만 추가할까요?', exists });
+      for (const n of names) { // 같은 id(demo-…)의 예시만 바꾸고, 나머지 자료는 지우거나 바꾸지 않는다
+        for (const item of sample[n]) {
+          const i = cur[n].findIndex((x) => x && x.id === item.id);
+          if (i < 0) cur[n].push(item); else cur[n][i] = item;
+        }
+        writeJson(dbFile(n), cur[n]);
+      }
+      return send(res, 200, { ok: true, added: Object.fromEntries(names.map((n) => [n, sample[n].length])) });
     }
 
     if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory().map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });

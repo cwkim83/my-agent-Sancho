@@ -84,7 +84,7 @@ async function run() {
   // 로그인 없이는 어떤 API 도 안 열려야 한다 (진짜 있는 대화 번호로도)
   const guarded = [['GET', '/api/me'], ['GET', '/api/chats'], ['POST', '/api/chats'], ['GET', `/api/chats/${chatId}`],
     ['POST', `/api/chats/${chatId}/messages`], ['GET', '/api/memory'], ['POST', '/api/memory/delete'],
-    ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events']];
+    ['GET', '/api/db/events'], ['PUT', '/api/db/events/a'], ['DELETE', '/api/db/events/a'], ['GET', '/api/events'], ['POST', '/api/seed']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -132,6 +132,7 @@ async function run() {
   }));
   check('public 밖의 파일은 못 가져감', (await fetch(BASE + '/..%2Fserver.js')).status !== 200);
   await runDb(ck);
+  await runSeed(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -232,6 +233,49 @@ async function runDb(ck) {
   check('db.js: 맨 처음 연결은 넘기고, 끊겼다 다시 이어지면 모두에게 알림', got.join() === 'e,e,t');
   stop(); es.h.db({ data: '{"name":"events"}' });
   check('db.js: watch 가 돌려준 함수로 끄면 더 안 불림', got.join() === 'e,e,t');
+}
+
+// 연습용 예시 데이터 (설정 화면 버튼이 부르는 POST /api/seed)
+async function runSeed(ck) {
+  const H = { 'Content-Type': 'application/json', Cookie: ck };
+  const seed = (body) => fetch(BASE + '/api/seed', { method: 'POST', headers: H, body: JSON.stringify(body || {}) });
+  const get = async (n) => (await fetch(`${BASE}/api/db/${n}`, { headers: H })).json();
+  const dbDir = path.join(dir, 'db');
+  const snapshot = () => ['events', 'projects', 'tasks', 'notices'].map((n) => fs.readFileSync(path.join(dbDir, `${n}.json`), 'utf8')).join('\n');
+  for (const f of fs.readdirSync(dbDir)) if (f.endsWith('.json')) fs.unlinkSync(path.join(dbDir, f)); // 앞 검사가 남긴 자료를 치우고 빈 저장소에서 시작
+
+  const r1 = await seed();
+  const added = (await r1.json()).added || {};
+  check('빈 저장소에는 바로 들어감: 일정 8·프로젝트 3·할 일 6·알림 2',
+    r1.status === 200 && added.events === 8 && added.projects === 3 && added.tasks === 6 && added.notices === 2);
+  const [events, projects, tasks, notices] = await Promise.all(['events', 'projects', 'tasks', 'notices'].map(get));
+  check('저장소에 개수대로 들어 있음', events.length === 8 && projects.length === 3 && tasks.length === 6 && notices.length === 2);
+  const mon = new Date(); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+  const ymd = (n) => { const d = new Date(mon); d.setDate(d.getDate() + n); return d.toLocaleDateString('sv-SE'); };
+  const inWeek = (e, from) => e.date >= ymd(from) && e.date <= ymd(from + 6);
+  check('일정: 이번 주 5개·다음 주 3개', events.filter((e) => inWeek(e, 0)).length === 5 && events.filter((e) => inWeek(e, 7)).length === 3);
+  check('일정: 회의·출장·검사 입회가 모두 있음', ['회의', '출장', '검사 입회'].every((k) => events.some((e) => e.kind === k)));
+  check('프로젝트: 열교환기 제작·압력용기 개조·공장 자동화', projects.map((p) => p.name).join() === '열교환기 제작,압력용기 개조,공장 자동화');
+  check('할 일: 모두 마감일(YYYY-MM-DD)이 있음', tasks.every((t) => /^\d{4}-\d\d-\d\d$/.test(t.due)));
+  const ids = new Set(projects.map((p) => p.id));
+  check('일정·할 일이 가리키는 프로젝트가 실제로 있음', [...events, ...tasks].every((x) => x.projectId === null || ids.has(x.projectId)));
+  check('가상 회사 "가나다전자" 기준', JSON.stringify([events, projects, tasks, notices]).includes('가나다전자'));
+
+  const before = snapshot();
+  const r2 = await seed(), j2 = await r2.json();
+  check('이미 자료가 있으면 덮어쓰지 않고 409 로 되묻고(개수도 알려 줌), 파일은 그대로',
+    r2.status === 409 && j2.exists.events === 8 && j2.exists.tasks === 6 && snapshot() === before);
+  check('add 가 정확히 true 가 아니면 여전히 409', (await seed({ add: 'yes' })).status === 409 && snapshot() === before);
+  await fetch(BASE + '/api/db/tasks/mine', { method: 'PUT', headers: H, body: JSON.stringify({ title: '내가 직접 적은 할 일' }) });
+  const r3 = await seed({ add: true });
+  const tasks3 = await get('tasks');
+  check('확인(add:true)하면 예시만 더해지고, 내 자료는 그대로이며 예시가 겹쳐 쌓이지 않음',
+    r3.status === 200 && tasks3.length === 7 && tasks3.some((t) => t.id === 'mine') && (await get('events')).length === 8);
+  fs.writeFileSync(path.join(dbDir, 'events.json'), '{ 깨진 파일');
+  const tasksFile = fs.readFileSync(path.join(dbDir, 'tasks.json'), 'utf8');
+  check('자료 파일이 깨져 있으면 500 으로 알리고 아무것도 쓰지 않음',
+    (await seed({ add: true })).status === 500 && fs.readFileSync(path.join(dbDir, 'tasks.json'), 'utf8') === tasksFile
+    && fs.readFileSync(path.join(dbDir, 'events.json'), 'utf8') === '{ 깨진 파일');
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
