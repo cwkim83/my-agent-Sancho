@@ -2984,7 +2984,15 @@ async function runHelp(ck, { CM }) {
   check('README 1~10편 요약: 1편부터 10편까지 빠짐없이 한 줄씩 · 안전 절에 약속 세 가지·권한 스위치 4개·밖으로 나가는 곳 표·백업 · 화면 절에 모든 메뉴 이름(도움말·설정 포함)이 있음', rows.join() === '1,2,3,4,5,6,7,8,9,10' && ['메일을 자동으로 보내지 않는다', '묻지 않고 지우지 않는다', '회사 밖으로 자료를 보내지 않는다', '연결된 앱', '명령 실행', '내 홈 폴더 읽기', '자기 수정', '밖으로 나가는 곳', '`data/` 폴더를 통째로 복사'].every((w) => readme.includes(w))
     && menus.every((m) => readme.includes(`**${m}**`)));
   const links = [...readme.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)].map((m) => m[1]).filter((l) => !/^https?:/.test(l));
-  check(`README 의 안쪽 링크 ${links.length}개(${links.join(' · ')})가 모두 실제 파일을 가리킴 · 라이선스는 MIT 이고 LICENSE 파일과 일치`, links.length >= 5 && links.every((l) => fs.existsSync(path.join(__dirname, l))) && /MIT/.test(readme) && /^MIT License/.test(lic) && /Permission is hereby granted/.test(lic) && /Copyright \(c\) 2026/.test(lic));
+  check(`README 의 안쪽 링크 ${links.length}개(${links.join(' · ')})가 모두 실제 파일을 가리킴 · 라이선스 절이 LICENSE·LICENSE-MIT·LICENSE-APACHE·NOTICE 를 가리킴`, links.length >= 5 && links.every((l) => fs.existsSync(path.join(__dirname, l))) && ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE'].every((f) => links.includes(f)));
+  // 저작권 표시(LICENSE 추가 조건 2): 파일·README·화면 셋 중 하나라도 빠지면 실패 → 비서의 자기 수정이 표시를 지우면 관문에서 되돌려진다
+  const CR = '김철우 (cwkim83)', lf = (f) => read(f).replace(/\r\n/g, '\n'), licLf = lf('LICENSE'), mit = lf('LICENSE-MIT'), apache = lf('LICENSE-APACHE'), notice = lf('NOTICE'); // git 이 윈도우에서 CRLF 로 꺼내도 같게
+  check('저작권·라이선스: LICENSE(MIT 또는 Apache-2.0 + Commons Clause 상업적 배포 금지 + 표시 유지 + 강좌 CC BY-NC-ND 4.0)·LICENSE-MIT·LICENSE-APACHE·NOTICE 에 "Copyright (c) 2026 김철우 (cwkim83)" · README 와 화면 셋(대시보드 메뉴 밑·로그인·도움말)에 "© 2026 김철우 (cwkim83)" 가 있음',
+    ['Copyright (c) 2026 ' + CR, 'LICENSE-MIT', 'LICENSE-APACHE', 'Commons Clause License Condition v1.0', 'the right to\nSell the Software', 'Licensor: ' + CR, 'CC BY-NC-ND 4.0'].every((w) => licLf.includes(w))
+    && mit.startsWith('MIT License\n\nCopyright (c) 2026 ' + CR + '\n') && mit.includes('Permission is hereby granted') && mit.includes('Additional Conditions in LICENSE')
+    && apache.includes('Apache License') && apache.includes('Version 2.0, January 2004') && apache.includes('END OF TERMS AND CONDITIONS') && apache.includes('Copyright 2026 ' + CR)
+    && notice.includes('Copyright (c) 2026 ' + CR) && notice.includes('Commons Clause') && readme.includes('Copyright (c) 2026 ' + CR) && readme.includes('CC BY-NC-ND 4.0')
+    && [['public', 'index.html'], ['public', 'login.html'], ['public', 'm', 'help.html']].every((p) => read(...p).includes('© 2026 ' + CR)) && read('public', 'index.html').includes("join('') + COPYRIGHT"));
   check('docs/상세-설명.md: 예전 README 의 상세 내용(8편 안전장치·개인정보 표·결재·공수 규칙·워크플로)이 그대로 옮겨져 있고 맨 위에서 README 와 도움말을 안내함 · 청사진에 "1~10편 모두 구현" 진행 상태가 적힘',
     ['## 8편 안전장치', '개인정보가 밖으로 나가는 지점', '## 결재', '## 공수', '### 워크플로 메뉴', '명령 실행을 켰을 때의 한계'].every((w) => detail.includes(w)) && detail.includes('[README.md](../README.md)') && read('docs', 'blueprint.md').includes('1~10편 모두 구현'));
 }
@@ -3695,14 +3703,14 @@ async function runEp8() {
   };
 
   // ① 불변 층: 목록·권한 규칙·보호 판정
-  check('불변 층: start.bat·supervisor.js·guard.js·selftest.js·mailgate.js·test/ 가 모두 실제로 있고 불변 목록에도 그대로 있음',
-    ['start.bat', 'supervisor.js', 'guard.js', 'selftest.js', 'mailgate.js', 'test/'].every((f) => guard.IMMUTABLE.includes(f) && fs.existsSync(path.join(__dirname, f))));
+  check('불변 층: start.bat·supervisor.js·guard.js·selftest.js·mailgate.js·test/·LICENSE·LICENSE-MIT·LICENSE-APACHE·NOTICE 가 모두 실제로 있고 불변 목록에도 그대로 있음',
+    ['start.bat', 'supervisor.js', 'guard.js', 'selftest.js', 'mailgate.js', 'test/', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE'].every((f) => guard.IMMUTABLE.includes(f) && fs.existsSync(path.join(__dirname, f))));
   const appX = path.join(os.tmpdir(), 'sancho-app-x'), deny = guard.immutableDenyRules(appX), allow = guard.appAllowRules(appX), AX = guard.posixAbs(appX);
   check('불변 층: 보호 파일마다 Edit·Write 거부 규칙이 나오고(폴더는 /**), 허용 규칙은 앱 폴더 전체(/**) 5개 도구',
     guard.PROTECTED.every((p) => ['Edit', 'Write'].every((t) => deny.includes(`${t}(${AX}/${p.replace(/\/$/, '')}${p.endsWith('/') ? '/**' : ''})`))) && allow.length === 5 && allow.every((r) => r.endsWith(`${AX}/**)`)));
   check('불변 층: 윈도우 경로(C:\\a\\b)는 claude 의 절대 경로 표기(//c/a/b)로 바뀜 (진짜 claude 로 이 표기가 먹는 것을 확인함)', process.platform !== 'win32' || guard.posixAbs('C:\\a\\b') === '//c/a/b');
-  check('불변 층: 보호 판정 — start.bat·대소문자만 다른 SELFTEST.JS·Test/·.git/·CLAUDE.md 는 보호, public/index.html·server.js·README.md·testing.js 는 아님',
-    ['start.bat', 'Test/fake-claude.js', 'SELFTEST.JS', '.git/config', 'CLAUDE.md', 'test'].every(guard.isProtected) && !['public/index.html', 'server.js', 'README.md', 'testing.js'].some(guard.isProtected));
+  check('불변 층: 보호 판정 — start.bat·대소문자만 다른 SELFTEST.JS·Test/·.git/·CLAUDE.md·LICENSE·notice 는 보호, public/index.html·server.js·README.md·testing.js 는 아님',
+    ['start.bat', 'Test/fake-claude.js', 'SELFTEST.JS', '.git/config', 'CLAUDE.md', 'test', 'LICENSE', 'notice', 'License-Apache'].every(guard.isProtected) && !['public/index.html', 'server.js', 'README.md', 'testing.js'].some(guard.isProtected));
   const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   check('화면: 설정에 "서버 다시 시작" 단추·"자기 수정 기록"·권한 칸의 자기수정 스위치(위험 표시 포함)가 있고, 자기 수정이 통과해 서버가 켜지면 화면이 다시 불러옴(event: restart)',
     ['id="restartBtn"', 'id="selfmodLog"', "['자기수정'", "k === '자기수정'", "event: restart", 'waitRestart'].every((x) => html.includes(x)));

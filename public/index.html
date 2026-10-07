@@ -76,6 +76,7 @@
   nav a { display: block; padding: 9px 12px; margin-bottom: 2px; border-radius: 8px; color: #344054; text-decoration: none; }
   nav a:hover { background: #f2f4f7; }
   nav a.on { background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+  nav .copy { margin-top: 18px; padding: 10px 12px 0; border-top: 1px solid var(--line); font-size: 11px; line-height: 1.5; color: #98a2b3; }
   main { flex: 1; min-width: 0; display: flex; }
   .soon { margin: auto; text-align: center; color: var(--sub); padding: 24px; }
   .soon h2 { color: var(--text); margin: 0 0 6px; }
@@ -442,6 +443,8 @@
 <script src="/m/inbox.js"></script>
 <script src="/m/voice.js"></script>
 <script>
+  // 저작권 표시 — 지우면 selftest 가 실패한다(LICENSE 추가 조건 2)
+  const COPYRIGHT = '<div class="copy">© 2026 김철우 (cwkim83)<br>상업적 배포 금지 · LICENSE 참고</div>';
   const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '도움말', '설정'];
   const MENU_ALIAS = { 메일: '메일정리' }; // 옛 주소(#메일)도 메일정리로 (자리표시였던 메일 메뉴는 없앴다)
   const ADMIN_ONLY = ['설정', '워크플로']; // 일반 사용자에게는 메뉴에도 안 보이고, 주소로 들어와도 대시보드로 보낸다 (서버도 막는다)
@@ -494,7 +497,7 @@
   let current = '';
   const menus = () => MENUS.filter((m) => myRole === 'admin' || !ADMIN_ONLY.includes(m));
   function renderNav() {
-    $('nav').innerHTML = menus().map((m) => `<a href="#${m}" class="${m === current ? 'on' : ''}">${m}</a>`).join('');
+    $('nav').innerHTML = menus().map((m) => `<a href="#${m}" class="${m === current ? 'on' : ''}">${m}</a>`).join('') + COPYRIGHT;
   }
   function route() {
     const [h0, arg] = decodeURIComponent(location.hash.slice(1)).split('/'), h = MENU_ALIAS[h0] || h0; // "#WBS/프로젝트id" 처럼 메뉴 뒤에 붙은 /… 는 그 화면이 쓴다

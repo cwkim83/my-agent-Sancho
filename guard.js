@@ -10,7 +10,8 @@ const { spawn, execFileSync } = require('child_process');
 const ROOT = __dirname;
 // 비서가 절대 못 고치는 파일·폴더 (끝이 / 이면 폴더 통째로). 안전장치 자체와 그것을 검사하는 시험, 메일 발송 문지기.
 // 권한 규칙(immutableDenyRules)으로 막고, 그래도 바뀌면 coreChanged 가 last-good 과 비교해 잡는다
-const IMMUTABLE = ['start.bat', 'supervisor.js', 'guard.js', 'selftest.js', 'mailgate.js', 'test/'];
+// 저작권·라이선스 파일도 여기 둔다 — 비서가 지우거나 바꾸지 못하게(LICENSE 추가 조건 2)
+const IMMUTABLE = ['start.bat', 'supervisor.js', 'guard.js', 'selftest.js', 'mailgate.js', 'test/', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE'];
 // 불변 검사 대상은 아니지만 비서가 건드리면 안 되는 곳 (권한 규칙·자기 수정 검사에만): git 기록, 비밀 보호(.gitignore), 개발용 지침·설정
 const OFF_LIMITS = ['.git/', '.gitignore', '.claude/', 'CLAUDE.md'];
 const PROTECTED = [...IMMUTABLE, ...OFF_LIMITS];
