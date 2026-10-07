@@ -51,6 +51,7 @@ async function run() {
   const login = await post('/api/auth/login', { username: 'TESTER', password: PW });
   check('올바른 비밀번호로 로그인(아이디 대소문자 무시)', login.status === 200);
   const ck = cookieOf(login);
+  if (process.env.SELFTEST_ONLY === 'helpserver') { const people = await runUsers(ck); await runHelp(ck, people); return; } // 개발 중에 도움말·메뉴·문서 점검만
   if (process.env.SELFTEST_ONLY === 'wfserver') { if (process.env.WF_WITH_TG) await runTelegram(ck); const people = await runUsers(ck); await runWorkflow(ck, people); return; }
   check('로그인 후 /api/me 가능', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 200);
   check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="who"'));
@@ -183,6 +184,7 @@ async function run() {
   runWorkflowCalc();
   await runWorkflowEngine();
   await runWorkflow(ck, people);
+  await runHelp(ck, people);
   await runOkr(ck);
   await runMandays(ck, people);
   await post('/api/auth/logout', {}, ck);
@@ -512,7 +514,7 @@ async function runProjects(ck) {
   const get = (u) => fetch(BASE + u, { headers: { Cookie: ck } });
   check('로그인 전에는 /m/projects.html·/m/proj.js 가 401', (await fetch(BASE + '/m/projects.html')).status === 401 && (await fetch(BASE + '/m/proj.js')).status === 401);
   const main = await (await get('/')).text();
-  check('메인 화면: 프로젝트 메뉴에 /m/projects.html 을 띄우고, "#WBS/<id>" 처럼 메뉴 뒤에 붙은 /… 는 메뉴 이름으로 보지 않음', main.includes('/m/projects.html') && main.includes(".split('/'); // \"#WBS/"));
+  check('메인 화면: 프로젝트 메뉴에 /m/projects.html 을 띄우고, "#WBS/<id>" 처럼 메뉴 뒤에 붙은 /… 는 메뉴 이름으로 보지 않음', main.includes('/m/projects.html') && main.includes(".split('/'), h = MENU_ALIAS[h0] || h0; // \"#WBS/"));
   const html = await (await get('/m/projects.html')).text();
   check('프로젝트 화면: db.js·cal.js·proj.js 를 쓰고, "+ 새 프로젝트"·연간 통합 간트가 있고, 카드·막대를 누르면 #WBS/<id> 로 가고, 파일이 바뀌면 다시 그림',
     ['src="/m/db.js"', 'src="/m/cal.js"', 'src="/m/proj.js"', '+ 새 프로젝트', '연간 통합 간트', "'#WBS/'", "db.watch('projects'"].every((x) => html.includes(x)));
@@ -1575,7 +1577,7 @@ async function runMail(ck) {
   check('메일정리 화면: 파일이 바뀌면(mails·events·tasks) 다시 그리고, 정리·초안은 서버 주소로 시키고 진행 상태를 물어봄, 연습/Gmail 모드 표시, 원문 저장 안 함·초안 안 보냄 안내',
     ["db.watch('mails'", "db.watch('events'", "db.watch('tasks'", '/api/mail/organize', '/api/mail/draft', '/api/mail/status', '연습 모드', '내 Gmail', '원문은 저장하지 않고 요약만', '보내지 않아요', '처리된 메일도 보기'].every((w) => html.includes(w)));
   check('메일정리 화면: 모르는 글이 화면을 깨지 않게 모두 esc 로 감쌈(카드의 보낸사람·제목·요약, 자세히의 제목·초안)', ['esc(m.보낸사람)', 'esc(m.제목)', 'esc(m.요약)', 'esc(m.초안)'].every((w) => html.includes(w)) && !html.includes('${m.제목}') && !html.includes('${m.요약}'));
-  check('메인 화면: 왼쪽 메뉴에 "메일정리"가 있고 /m/mail.html 을 띄움, 로그인 없이는 화면(/m/mail.html)이 401', idx.includes("'메일', '메일정리', '메신저'") && idx.includes('/m/mail.html') && (await fetch(BASE + '/m/mail.html')).status === 401);
+  check('메인 화면: 왼쪽 메뉴에 "메일정리"가 있고 /m/mail.html 을 띄움, 로그인 없이는 화면(/m/mail.html)이 401', idx.includes("'WBS', '메일정리', '메신저'") && idx.includes('/m/mail.html') && (await fetch(BASE + '/m/mail.html')).status === 401);
 }
 
 // 최소 zip 파일 만들기 (점검용): 이름→글자. 진짜 워드·엑셀 파일처럼 파일 목록(중앙 디렉터리)이 있다. deflate 면 압축해서 넣는다
@@ -2926,6 +2928,67 @@ async function runWorkflowRestart() {
   try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더는 못 지워도 점검과 상관없다 */ }
 }
 
+// 도움말·모든 메뉴·문서 (10편 마무리): 도움말이 모든 메뉴를 다루는지 · 말하는 단추·문구가 실제 화면에 있는지 · 모든 메뉴가 "준비 중" 없이 열리는지 · README 가 처음 쓰는 사람용 구성인지
+async function runHelp(ck, { CM }) {
+  const get = (u, c = ck) => fetch(BASE + u, { headers: c ? { Cookie: c } : {} });
+  const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), 'utf8');
+  const main = await (await get('/')).text(), help = await (await get('/m/help.html')).text();
+  const menus = [...(/const MENUS = \[([^\]]*)\]/.exec(main)[1].matchAll(/'([^']+)'/g))].map((m) => m[1]), adminOnly = [...(/const ADMIN_ONLY = \[([^\]]*)\]/.exec(main)[1].matchAll(/'([^']+)'/g))].map((m) => m[1]);
+
+  // ---- 모든 메뉴가 열림
+  const noBranch = menus.filter((m) => !main.includes(`current === '${m}'`));
+  check(`왼쪽 메뉴 ${menus.length}개(${menus.join('·')}) 모두 화면에 연결됨 — "준비 중" 자리표시가 하나도 없음(주소에 #알림 을 직접 쳐도 🔔 창이 열림) · 옛 주소 #메일 은 메일정리로`, noBranch.length === 0 && !menus.includes('메일') && main.includes("MENU_ALIAS = { 메일: '메일정리' }") && menus.includes('도움말') && menus.length === 15);
+  const pages = [...new Set([...main.matchAll(/src="(\/m\/[A-Za-z0-9_-]+\.html)/g)].map((m) => m[1]))], scripts = [...new Set([...main.matchAll(/<script src="(\/[A-Za-z0-9_./-]+\.js)"/g)].map((m) => m[1]))];
+  const bad = [];
+  for (const p of pages) {
+    const r = await get(p), t = await r.text();
+    if (r.status !== 200) { bad.push(`${p} → ${r.status}`); continue; }
+    for (const m of t.matchAll(/<script>([\s\S]*?)<\/script>/g)) { try { new vm.Script(m[1]); } catch (e) { bad.push(`${p} 문법 오류: ${e.message}`); } }
+    for (const s of new Set([...t.matchAll(/<script src="(\/[A-Za-z0-9_./-]+\.js)"/g)].map((m) => m[1]))) if ((await get(s)).status !== 200) bad.push(`${p} 가 부르는 ${s} 없음`);
+  }
+  for (const s of scripts) if ((await get(s)).status !== 200) bad.push(`메인 화면이 부르는 ${s} 없음`);
+  check(`메인 화면이 띄우는 메뉴 화면 ${pages.length}개(${pages.map((p) => p.replace('/m/', '').replace('.html', '')).join('·')})와 그 스크립트가 모두 열리고(200) 스크립트 문법 오류가 없음`, pages.length >= 12 && bad.length === 0 && (console.log(bad.length ? `    (문제: ${bad.join(' / ')})` : ''), true));
+  const nav = menus.filter((m) => m !== '알림' && m !== '대시보드');
+  const usedPages = pages.map((p) => p.replace('/m/', '').replace('.html', ''));
+  check('모든 메뉴 화면 파일(public/m/*.html)이 메인 화면에서 연결됨 — 어디서도 안 부르는 고아 화면 없음(공유 링크용 wbs 포함)', fs.readdirSync(path.join(__dirname, 'public', 'm')).filter((f) => f.endsWith('.html')).every((f) => usedPages.includes(f.replace('.html', ''))) && nav.length > 10);
+
+  // ---- 도움말
+  check('도움말 화면(public/m/help.html): 로그인 없이는 401 · 관리자도 일반 사용자도 열림 · 왼쪽 메뉴 "도움말"(관리자 전용 아님)이 이 화면을 띄움 · 처음 온 사람에게 채팅 첫 화면이 도움말을 안내', (await get('/m/help.html', null)).status === 401 && (await get('/m/help.html', CM)).status === 200 && main.includes("showHelp()") && main.includes('src="/m/help.html"') && !adminOnly.includes('도움말') && main.includes('href="#도움말"'));
+  const secs = [...help.matchAll(/<details class="ms" id="m-[^"]+" data-menu="([^"]+)"([^>]*)>/g)].map((m) => ({ m: m[1], admin: /data-admin/.test(m[2]) }));
+  check('도움말에 시작하기 3단계(1·2·3)가 있고, 화면별 사용법이 모든 메뉴(도움말 자신 제외)를 하나씩 다룸 — 메뉴를 늘리면 도움말도 늘려야 점검을 통과함 · 관리자 전용 메뉴(설정·워크플로)는 "관리자 전용" 표시',
+    ['<span class="no">1</span>', '<span class="no">2</span>', '<span class="no">3</span>'].every((x) => help.includes(x)) && menus.filter((m) => m !== '도움말').every((m) => secs.some((s) => s.m === m)) && secs.every((s) => menus.includes(s.m)) && secs.length === menus.length - 1
+    && adminOnly.every((m) => (secs.find((s) => s.m === m) || {}).admin) && secs.filter((s) => s.admin).length === adminOnly.length && (help.match(/class="adm">관리자 전용/g) || []).length === adminOnly.length);
+  const faq = (help.match(/<details class="q"/g) || []).length, asks = [...help.matchAll(/data-ask="([^"]+)"/g)].map((m) => m[1]), gos = [...help.matchAll(/data-go="([^"]+)"/g)].map((m) => m[1]);
+  check(`자주 묻는 것 ${faq}개(8개 이상: 로그인·자료 위치·메일/삭제·예약 안 돎·휴대폰·안 보이는 메뉴·비밀번호·서버·자기 수정·연습 메일·기억·화면 이상) · 비서에게 말하는 예시 ${asks.length}개 · 모든 "열기 →" 단추는 실제 메뉴를 가리킴`,
+    faq >= 8 && ['로그인되어 있지 않습니다', 'data/', '보낼까요', '자동 실행 켬', '외부 접속', '비밀번호를 잊었어요', '자기 수정', '연습 모드'].every((w) => help.includes(w)) && asks.length >= 20 && asks.every((a) => a.trim() && a.length <= 200) && gos.length >= 14 && gos.every((g) => menus.includes(g)));
+  const scs = [...help.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]); let syn = scs.length > 0; for (const s of scs) { try { new vm.Script(s); } catch { syn = false; } }
+  check('도움말: 스크립트 문법 오류 없음 · 바깥 주소 스크립트 없음 · 예시 말풍선은 채팅 입력창으로 채움(type:ask 를 바깥 화면이 받는 것과 같은 규칙) · 찾기 · 관리자가 아니면 관리자 전용 화면을 숨김(/api/me)',
+    syn && !/<script[^>]+src=/.test(help) && help.includes("{ type: 'ask', text: t }") && main.includes("e.data.type !== 'ask'") && main.includes('e.origin !== location.origin') && help.includes('id="q"') && help.includes("me.role === 'admin'") && help.includes("data-admin"));
+  const files = { 일정: ['m/calendar.html', ['＋ 추가', '비서에게 시키기']], 프로젝트: ['m/projects.html', ['+ 새 프로젝트', '올해']], WBS: ['m/wbs.html', ['＋ 대단락', '💾 Rev 저장', '📜 이력', '📊 엑셀', '📄 PDF', '🖨 인쇄', '🔗 공유 링크', '링크 끊기']], 메일정리: ['m/mail.html', ['✳ 메일 정리하기', '답장 초안 만들기', '일정으로 등록', '할 일로 등록', '처리됨']],
+    메신저: ['m/messenger.html', ['＋ 새 채널']], 회의록: ['m/meeting.html', ['회의 녹취 시작', '받아쓴 글 붙여넣기', '다시 정리', '선택한 할 일 등록']], 결재: ['m/approval.html', ['＋ 새 기안', '저장하고 올리기', '전결', '🖨 인쇄 양식']], 목표: ['m/okr.html', ['＋ 목표 추가', '＋ 하위']],
+    공수: ['m/manday.html', ['비서가 정리하기', '📥 엑셀 내보내기']], 지식노트: ['m/knowledge.html', ['🗺 지식 지도', '🧠 뇌 그래프', '✦ 그래프', '점 찾기']], 워크플로: ['m/workflow.html', ['▶ 실행', '자동 실행 켬', '실행 기록']], 설정: ['index.html', ['예시 데이터 넣기', '새 사용자 추가', '서버 다시 시작', '자기 수정 기록', '텔레그램 배달']], 대시보드: ['index.html', ['＋ 새 대화', '오늘 브리핑', '이번 주 일정 정리', '마감 임박 알려줘']] };
+  const missing = [];
+  for (const [menu, [f, words]] of Object.entries(files)) { const src = read('public', ...f.split('/')) + (menu === '메일정리' ? read('public', 'm', 'mail.js') : ''); for (const w of words) if (!src.includes(w) || !help.includes(w)) missing.push(`${menu}:${w}`); }
+  check('도움말이 말하는 단추·문구(＋ 추가·✳ 메일 정리하기·＋ 새 기안·비서가 정리하기·▶ 실행·예시 데이터 넣기 …)가 실제 화면에 있음 — 화면 글자를 바꾸면 도움말도 고쳐야 점검을 통과함', missing.length === 0 && (console.log(missing.length ? `    (문제: ${missing.join(', ')})` : ''), true));
+  const tmpl = read('templates', 'system.md') + fs.readdirSync(path.join(__dirname, 'templates', 'system-add')).map((f) => read('templates', 'system-add', f)).join('') + fs.readdirSync(path.join(__dirname, 'templates', 'skills')).map((d) => read('templates', 'skills', d, 'SKILL.md')).join('');
+  check('도움말이 알려 주는 비서에게 하는 말(기억해: · 잊어: · 기안서 써 줘 · OKR 초안 짜 줘 · WBS 짜 줘 · … 위키에 저장해 · 방금 한 일 스킬로 저장해 · …워크플로 만들어줘 · @산초)을 비서 지침·스킬·서버가 실제로 알아들음',
+    ['기억해:', '잊어:', '기안서 써 줘', 'OKR 초안', 'WBS 짜 줘', '위키에 저장해', '스킬로 저장해', '워크플로 만들어줘'].every((w) => tmpl.includes(w) && asks.some((a) => a.includes(w))) && read('server.js').includes('@산초') && help.includes('@산초'));
+
+  // ---- 문서: README(처음 쓰는 사람용) · 상세 설명 · 라이선스
+  const readme = read('README.md'), lic = read('LICENSE'), detail = read('docs', '상세-설명.md');
+  const heads = [...readme.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  check('README: 처음 쓰는 사람용 구성 — 설치 5분 · 화면 · 안전 · 1~10편 요약 · 더 알아보기 · 라이선스 순서로 6개 큰 제목, 한눈에 읽을 길이(상세 내용은 docs/상세-설명.md 로)', heads.join('|') === '1. 설치 5분|2. 화면 한눈에|3. 안전|4. 1~10편 요약|5. 더 알아보기|6. 라이선스' && readme.length < 20000 && detail.length > 25000);
+  check('README 설치: Node.js 18 이상 · Claude Code 로그인 · 저장소 받기 · start.bat · 주소 127.0.0.1:8790 · 관리자 계정 · 예시 데이터 · selftest · 막힐 때 표가 있고, 적힌 파일·주소가 실제와 같음(start.bat 있음·포트 8790·git 원격 주소)',
+    ['Node.js 18 이상', '`claude`', 'git clone', '`start.bat`', 'http://127.0.0.1:8790', '비밀번호 8자 이상', '예시 데이터 넣기', '`node selftest.js`', '막힐 때'].every((w) => readme.includes(w)) && fs.existsSync(path.join(__dirname, 'start.bat')) && read('server.js').includes('8790') && (() => { try { return readme.includes(require('child_process').execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { return true; } })());
+  const rows = [...readme.matchAll(/^\| \*\*(\d+)편\*\* \|/gm)].map((m) => Number(m[1]));
+  check('README 1~10편 요약: 1편부터 10편까지 빠짐없이 한 줄씩 · 안전 절에 약속 세 가지·권한 스위치 4개·밖으로 나가는 곳 표·백업 · 화면 절에 모든 메뉴 이름(도움말·설정 포함)이 있음', rows.join() === '1,2,3,4,5,6,7,8,9,10' && ['메일을 자동으로 보내지 않는다', '묻지 않고 지우지 않는다', '회사 밖으로 자료를 보내지 않는다', '연결된 앱', '명령 실행', '내 홈 폴더 읽기', '자기 수정', '밖으로 나가는 곳', '`data/` 폴더를 통째로 복사'].every((w) => readme.includes(w))
+    && menus.every((m) => readme.includes(`**${m}**`)));
+  const links = [...readme.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)].map((m) => m[1]).filter((l) => !/^https?:/.test(l));
+  check(`README 의 안쪽 링크 ${links.length}개(${links.join(' · ')})가 모두 실제 파일을 가리킴 · 라이선스는 MIT 이고 LICENSE 파일과 일치`, links.length >= 5 && links.every((l) => fs.existsSync(path.join(__dirname, l))) && /MIT/.test(readme) && /^MIT License/.test(lic) && /Permission is hereby granted/.test(lic) && /Copyright \(c\) 2026/.test(lic));
+  check('docs/상세-설명.md: 예전 README 의 상세 내용(8편 안전장치·개인정보 표·결재·공수 규칙·워크플로)이 그대로 옮겨져 있고 맨 위에서 README 와 도움말을 안내함 · 청사진에 "1~10편 모두 구현" 진행 상태가 적힘',
+    ['## 8편 안전장치', '개인정보가 밖으로 나가는 지점', '## 결재', '## 공수', '### 워크플로 메뉴', '명령 실행을 켰을 때의 한계'].every((w) => detail.includes(w)) && detail.includes('[README.md](../README.md)') && read('docs', 'blueprint.md').includes('1~10편 모두 구현'));
+}
+
 // 목표(OKR): 전사 → 부서 → 개인 나무, KR(지표·시작값·목표값·현재값·가중치·기한), 진척 = KR 달성률의 가중 평균·상위는 하위의 평균, 색(순조/주의/위험), 비서 스킬
 async function runOkr(ck) {
   const okr = require('./public/m/okr-calc.js');
@@ -3893,6 +3956,7 @@ function runGit() {
   const { execFileSync } = require('child_process');
   const git = (...a) => { try { return { code: 0, out: execFileSync('git', a, { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 50e6 }) }; } catch (e) { return { code: e.status ?? -1, out: String(e.stdout || '') }; } };
   if (git('rev-parse', '--is-inside-work-tree').code !== 0) return console.log('건너뜀  git 저장소가 아니어서 git 점검은 건너뜀');
+  check('편마다 git 태그 ep1 … ep10 이 있음(README 의 1~10편 요약이 가리키는 것)', Array.from({ length: 10 }, (_, i) => `ep${i + 1}`).every((t) => git('rev-parse', '-q', '--verify', `refs/tags/${t}`).code === 0));
   check('data/(설정·봇 토큰·예약·알림)는 git 이 무시함(.gitignore)', ['data/settings.json', 'data/schedule.json', 'data/db/notices.json'].every((f) => git('check-ignore', '-q', f).code === 0));
   check('git 에 올라간 파일 중 data/ 아래 것은 하나도 없음', !git('ls-files').out.split('\n').some((f) => f.startsWith('data/')));
   const TOKEN = '[0-9]{8,10}:[A-Za-z0-9_-]{35}', revs = git('rev-list', '--all').out.split('\n').filter(Boolean);
@@ -4294,7 +4358,7 @@ srv.ready.then(async () => {
     if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속·커넥터 점검만 빨리 돌릴 때: SELFTEST_ONLY=access (또는 connector) node selftest.js
     else if (process.env.SELFTEST_ONLY === 'connector') await runConnector();
     else if (process.env.SELFTEST_ONLY === 'voice') await runVoice();
-    else if (process.env.SELFTEST_ONLY === 'wfserver') await run(); // 개발 중에 워크플로 서버 통합 점검만 (사용자 만들기까지만 하고 바로 거기로)
+    else if (process.env.SELFTEST_ONLY === 'wfserver' || process.env.SELFTEST_ONLY === 'helpserver') await run(); // 개발 중에 워크플로 서버 통합 점검만 (사용자 만들기까지만 하고 바로 거기로)
     else if (process.env.SELFTEST_ONLY === 'workflow') { runWorkflowCalc(); await runWorkflowEngine(); } // 서버 없이 워크플로 규칙·엔진만
     else if (process.env.SELFTEST_ONLY === 'knowledge') runKnowledgeCalc(); // 서버 없이 지식노트 계산만 (화면 점검은 전체 점검에서)
     else {
