@@ -421,6 +421,18 @@ async function runDash(ck) {
   check('대시보드: 마감일 모양이 틀린 할 일("10/7")은 7일 안 마감에 안 셈', typeof js === 'object' && js.dueSoon.length === 0);
   check('대시보드: 알림 파일에 숫자·글자가 섞여도 안 읽은 알림은 진짜 항목만 셈', typeof js === 'object' && js.unread === 2);
   check('D-day 글자: 지남·오늘·D-n', dday('2026-10-05', at(9)) === '1일 지남' && dday('2026-10-06', at(23, 59)) === '오늘' && dday('2026-10-09', at(9)) === 'D-3' && dday('엉터리', at(9)) === '');
+  // 대시보드 아래쪽 (이번 주 일정 · 할 일 현황 · 프로젝트 간트차트)
+  const { upcoming, taskCounts, gantt } = box.window.dash;
+  const up = upcoming([...data.events, { id: 'g', date: '2026-10-13', start: '10:00' }, { id: 'h', date: '2026-10-14' }], at(9));
+  check('이번 주 일정: 내일부터 딱 7일째까지(오늘·8일째 제외), 여러 날 일정은 걸친 날에 · 날짜·시간순', up.map((e) => `${e.id}@${e.day}`).join() === 'd@2026-10-07,b@2026-10-07,g@2026-10-13');
+  const tcs = taskCounts(data.tasks);
+  check('할 일 현황: 상태별 개수(깨진 항목 제외)', tcs['할 일'] === 4 && tcs.진행중 === 1 && tcs.완료 === 1 && taskCounts(junk).완료 === 0);
+  const gt = gantt([{ id: 'g1', status: '진행중', start: '2026-09-15', due: '2026-11-10', progress: 40 }, { id: 'g2', status: '계획', start: '2026-10-20', due: '2026-12-05', progress: 150 },
+    { id: 'x1', status: '완료', start: '2026-01-01', due: '2026-02-01' }, { id: 'x2', start: 'x', due: '2026-11-01' }, { id: 'x3', start: '2026-11-01', due: '2026-10-01' }, null, { id: 'g3', status: '진행중', start: '2026-08-01', due: '2026-10-01' }], at(9));
+  check('간트차트: 끝나지 않고 날짜가 맞는 프로젝트만 시작순(완료·날짜 틀림·시작>마감 제외) · 기간은 첫 시작 달~마지막 마감 다음 달 · 진행률 0~100 · 마감 지난 것 표시 · 오늘 선은 기간 안',
+    gt.rows.map((r) => r.id).join() === 'g3,g1,g2' && gt.months.map((m) => m.label).join() === '2026.8월,9월,10월,11월,12월' && gt.months[0].left === 0
+    && gt.rows[2].progress === 100 && gt.rows[0].late && !gt.rows[1].late && gt.today > gt.rows[1].left && gt.today < 50 && gt.rows.every((r) => r.width > 0 && r.left + r.width <= 100.1));
+  check('간트차트: 프로젝트가 없거나 이상한 자료면 빈 결과(멈추지 않음)', gantt([], at(9)).rows.length === 0 && gantt(junk, at(9)).today === null);
 }
 
 // 휴대폰·PWA (9편 첫 단계): 홈 화면에 추가할 수 있는 manifest·아이콘, 좁은 폭에서 접히는 메뉴와 한 칸씩 보이는 채팅·대시보드·일정
@@ -1976,6 +1988,22 @@ async function runUsers(ck) {
   check('다른 사람의 개인 폴더는 비서가 읽지도 고치지도 못함: 김민준의 비서는 관리자·이서연·chief 폴더가 막히고 자기 폴더(minjun)는 안 막힘, 관리자의 비서는 김민준·이서연 폴더가 막힘',
     ['tester', 'seoyeon', 'chief'].every(dmDeny) && !dm.deny.some((x) => x.includes('./users/minjun/')) && ['minjun', 'seoyeon'].every(daDeny) && !da.deny.some((x) => x.includes('./users/tester/')));
   check('연습용 임시 비밀번호 파일(임시비밀번호.txt)도 비서가 읽지·고치지 못함', ['Read', 'Edit', 'Write'].every((t) => dm.deny.includes(`${t}(./임시비밀번호.txt)`) && da.deny.includes(`${t}(./임시비밀번호.txt)`)));
+
+  check('지운 사용자의 개인 폴더 보관함(삭제된사용자/)도 비서가 읽지·고치지 못함', ['Read', 'Edit', 'Write'].every((t) => dm.deny.includes(`${t}(./삭제된사용자/**)`) && da.deny.includes(`${t}(./삭제된사용자/**)`)));
+
+  // 사용자 지우기 (관리자만): 일반 사용자 403 · 자기 자신 400 · 없는 아이디 404 → 지우면 로그인·기존 로그인 모두 끊기고 개인 폴더는 보관함으로
+  const TB = 'temp-bye-pass-1', NB = 'new-bye-pass-12', del = (u, c = ck) => call('DELETE', `/api/users/${u}`, c);
+  await add({ name: '떠날사람', username: 'byebye', password: TB, dept: '임시', role: 'user' });
+  const lB = await login('byebye', TB); await chg(TB, NB, lB.c);
+  const bchat = await newChatAs(lB.c); await sayAs(lB.c, bchat, '떠나기 전 대화');
+  check('사용자 지우기: 일반 사용자는 403 · 자기 자신은 400 · 없는 아이디는 404 — 아무도 안 지워짐',
+    (await del('byebye', CM)).status === 403 && (await del('tester')).status === 400 && (await del('nobody-here')).status === 404 && usersJson().some((u) => u.username === 'byebye') && usersJson().some((u) => u.username === 'tester'));
+  const dB = await del('byebye'), dBj = await dB.json(), kept = fs.existsSync(path.join(dir, '삭제된사용자')) ? fs.readdirSync(path.join(dir, '삭제된사용자')).filter((n) => n.startsWith('byebye-')) : [];
+  check('관리자가 지우면 200 · 목록에서 빠지고 · 새로 로그인도(401) 이미 열린 로그인도(401) 안 됨 · 개인 폴더는 지우지 않고 삭제된사용자/byebye-시각/ 으로 옮겨 대화가 남음',
+    dB.status === 200 && !usersJson().some((u) => u.username === 'byebye') && (await login('byebye', NB)).r.status === 401 && (await call('GET', '/api/me', lB.c)).status === 401
+    && !fs.existsSync(path.join(dir, 'users', 'byebye')) && kept.length === 1 && dBj.moved === `삭제된사용자/${kept[0]}` && fs.readdirSync(path.join(dir, '삭제된사용자', kept[0], 'chats')).length >= 1);
+  await add({ name: '새사람', username: 'byebye', password: TB, dept: '임시', role: 'user' });
+  check('같은 아이디로 새로 만든 사람은 옛 대화·기억을 물려받지 않음(빈 대화 폴더)', fs.readdirSync(path.join(dir, 'users', 'byebye', 'chats')).length === 0 && (await del('byebye')).status === 200);
 
   // 화면
   const html = await (await fetch(BASE + '/', { headers: { Cookie: CM } })).text();

@@ -24,9 +24,9 @@
   /* 위쪽 바 */
   header { flex: none; height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
     background: #fff; border-bottom: 1px solid var(--line); position: relative; z-index: 10; }
-  header .brand { font-weight: 700; font-size: 17px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  header .brand span { color: var(--blue); }
-  header .brand .bn { color: inherit; }
+  header .brand { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 18px; letter-spacing: -.2px; white-space: nowrap; min-width: 0; }
+  header .brand span { background: linear-gradient(90deg, #2563eb, #7c3aed); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .brand .logo { flex: none; width: 26px; height: 26px; }
   header .space { flex: 1; }
   .icon-btn { display: none; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 18px; }
   .chip { flex: none; white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border: 1px solid var(--line);
@@ -246,6 +246,31 @@
   .stat.wide { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px; padding: 5px 12px; } /* 결재할 문서: 한 줄짜리 카드 (대시보드 높이를 많이 늘리지 않게) */
   .stat.wide b { display: inline; font-size: 18px; }
   .lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .dash > .more, .dash > .gantt { grid-column: 1 / -1; }
+  .more { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .lcard h3 small, .gantt h3 small { margin-left: 4px; font-size: 11px; font-weight: 400; color: var(--sub); }
+  .tbar { display: flex; height: 10px; margin: 6px 12px; border-radius: 99px; overflow: hidden; background: #f2f4f7; }
+  .tbar i, .tleg i { display: block; } :is(.tbar, .tleg) .todo { background: #98a2b3; } :is(.tbar, .tleg) .doing { background: var(--blue); } :is(.tbar, .tleg) .done { background: #12b76a; }
+  .tleg { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 0 12px 4px; font-size: 12px; color: var(--sub); }
+  .tleg span { display: flex; align-items: center; gap: 4px; } .tleg i { width: 8px; height: 8px; border-radius: 2px; } .tleg b { color: var(--text); }
+  .lcard li.unread .tt { font-weight: 700; }
+  .gantt { padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .gantt h3 { margin: 0 0 6px; font-size: 13px; }
+  .g-row { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 10px; min-height: 36px; padding: 0 4px; border-radius: 6px; color: inherit; text-decoration: none; }
+  a.g-row:hover { background: #f8fafc; }
+  .g-name { min-width: 0; } .g-name b, .g-name small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .g-name b { font-size: 13px; } .g-name small { font-size: 11px; color: var(--sub); }
+  .g-track { position: relative; height: 22px; } .g-head { min-height: 18px; } .g-head .g-track { height: 16px; }
+  .g-m { position: absolute; top: 0; padding-left: 3px; font-size: 11px; color: var(--sub); white-space: nowrap; }
+  .g-line { position: absolute; top: -7px; bottom: -7px; border-left: 1px dashed #eaecf0; }
+  .g-today { position: absolute; top: -7px; bottom: -7px; z-index: 2; border-left: 2px solid #f04438; }
+  .g-bar { position: absolute; top: 3px; height: 16px; overflow: hidden; border-radius: 99px; background: #dbe7ff; }
+  .g-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #2563eb, #7c3aed); }
+  .g-bar > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; font-size: 10px; font-weight: 700; color: #1d2939; }
+  .g-bar.plan { background: #eef0f3; } .g-bar.plan > i { background: #98a2b3; }
+  .g-bar.late { box-shadow: inset 0 0 0 2px #f04438; }
+  .utable .udel { padding: 3px 10px; border: 1px solid #fda29b; border-radius: 6px; background: #fff; color: #b42318; font-size: 12px; cursor: pointer; }
+  .utable .udel:hover { background: #fef3f2; } .utable .udel:disabled { opacity: .5; }
   .lcard { display: flex; flex-direction: column; min-height: 0; max-height: 176px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
   .lcard h3 { flex: none; margin: 0; padding: 8px 12px 4px; font-size: 13px; color: var(--sub); }
   .lcard ul { flex: 1; overflow-y: auto; margin: 0; padding: 0 6px 6px; list-style: none; }
@@ -361,7 +386,6 @@
     body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
     header { gap: 6px; padding: 0 10px; }
     header .brand { font-size: 15px; }
-    header .brand .bn { display: none; } /* 좁으면 "Sancho" 만 */
     .bell { width: 38px; height: 38px; }
     .chip { gap: 6px; font-size: 13px; }
     #whoName { display: inline-block; max-width: 7em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
@@ -383,7 +407,8 @@
     .home[data-v="dash"] #chat { display: none; }
     .home[data-v="dash"] .dash { flex: 1; min-height: 0; max-height: none; align-content: start; overflow-y: auto; }
     .dash { grid-template-columns: 1fr; padding: 12px; }
-    .lists { grid-template-columns: 1fr; }
+    .lists, .more { grid-template-columns: 1fr; }
+    .g-row { grid-template-columns: 96px 1fr; }
     .lcard { max-height: none; }
     #msgs { padding: 14px 10px; }
     .bubble { max-width: 92%; }
@@ -399,7 +424,7 @@
 <body>
   <header>
     <button class="icon-btn" id="menuBtn" aria-label="메뉴">☰</button>
-    <div class="brand"><span class="bn">나의 AI 비서 </span><span>Sancho</span></div>
+    <div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="sgLogo" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#sgLogo)"/><path d="M21 10.6c-1.2-1.4-3-2.2-5-2.2-3 0-5 1.6-5 3.9 0 5 10 2.6 10 7.7 0 2.3-2.2 3.9-5.2 3.9-2.1 0-4-.8-5.3-2.3" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><circle cx="21" cy="10.6" r="2" fill="#fff"/><circle cx="10.5" cy="21.6" r="2" fill="#fff"/><path d="M25.6 3.6l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z" fill="#fde68a"/></svg><span>Sancho</span></div>
     <div class="space"></div>
     <button class="voice" id="voiceBar" data-state="" role="status" aria-live="polite" hidden><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="voiceTxt"></span></button>
     <button class="bell" id="bell" title="알림" aria-label="알림" aria-haspopup="dialog" aria-expanded="false">🔔<span class="badge" id="bellN" hidden></span></button>
@@ -852,7 +877,7 @@
 
   // ---------- 대시보드 (채팅 위): 자료는 db.js 로 받고, 파일이 바뀌면 바로 다시 그린다 ----------
   const DASH_DATA = ['events', 'projects', 'tasks']; // 알림(notices)은 🔔 가 받아 두고 대시보드 카드도 그걸 쓴다 (아래 "🔔 알림")
-  let me = '', myRole = 'user', dashData = { bad: [] }, dashSeq = 0, dashOff = [], apprTodo = 0; // apprTodo: 내가 결재할 차례인 문서 수 (결재 메뉴와 같은 계산을 서버가 해 준다)
+  let me = '', myUsername = '', myRole = 'user', dashData = { bad: [] }, dashSeq = 0, dashOff = [], apprTodo = 0; // apprTodo: 내가 결재할 차례인 문서 수 (결재 메뉴와 같은 계산을 서버가 해 준다)
   const safe = (v) => esc(String(v ?? '')); // 파일에서 온 글자는 화면에 넣기 전에 꼭 거른다
 
   async function loadDash() {
@@ -882,6 +907,11 @@
     const list = (rows, none) => rows.length ? `<ul>${rows.join('')}</ul>` : `<div class="none">${none}</div>`;
     const bad = [...dashData.bad, ...(noticeBad ? ['notices'] : [])].map((n) => LABELS[n]).join('·');
     const probs = cal.problems(dashData.events, dashData.tasks);
+    const up = dash.upcoming(dashData.events, now), tc = dash.taskCounts(dashData.tasks), tTotal = tc['할 일'] + tc.진행중 + tc.완료, g = dash.gantt(dashData.projects, now);
+    const md = (d) => { const x = new Date(d + 'T00:00'); return `${x.getMonth() + 1}/${x.getDate()}(${'일월화수목금토'[x.getDay()]})`; };
+    const pName = Object.fromEntries(dashData.projects.filter((p) => p && p.id).map((p) => [p.id, p.name])), left = {};
+    for (const t of dashData.tasks) if (t && t.status !== '완료' && t.projectId) left[pName[t.projectId] || '(프로젝트 없음)'] = (left[pName[t.projectId] || '(프로젝트 없음)'] || 0) + 1;
+    const byProj = Object.entries(left).sort((a, b) => b[1] - a[1]);
     el.innerHTML = `
       <div>
         <div class="hello"><h2>${safe(dash.greeting(now, me))}</h2><span class="date">${now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' })}</span></div>
@@ -903,7 +933,24 @@
           return `<li><span class="k ${d.endsWith('지남') ? 'late' : ''}">${safe(d)}</span><span class="tt">${safe(t.title)}</span></li>`; }), '7일 안에 마감인 할 일이 없어요.')}</div>
         <div class="lcard"><h3>최근 대화</h3>${list(chats.slice(0, 3).map((c) =>
           `<li data-chat="${safe(c.id)}"><span class="k">${when(c.updatedAt)}</span><span class="tt">${safe(c.title)}</span></li>`), '아직 대화가 없어요.')}</div>
-      </div>`;
+      </div>
+      <div class="more">
+        <div class="lcard"><h3>이번 주 일정 <small>내일부터 7일</small></h3>${list(up.slice(0, 8).map((e) =>
+          `<li title="${safe(e.place)}"><span class="k">${md(e.day)} ${safe(e.start || '종일')}</span><span class="tt">${safe(e.title)}</span></li>`), '앞으로 7일 동안 일정이 없어요.')}</div>
+        <div class="lcard"><h3>할 일 현황 <small>전체 ${tTotal}개</small></h3>
+          <div class="tbar">${[['todo', '할 일'], ['doing', '진행중'], ['done', '완료']].map(([k, n]) => (tc[n] ? `<i class="${k}" style="width:${(tc[n] / tTotal) * 100}%"></i>` : '')).join('')}</div>
+          <div class="tleg"><span><i class="todo"></i>할 일 <b>${tc['할 일']}</b></span><span><i class="doing"></i>진행중 <b>${tc.진행중}</b></span><span><i class="done"></i>완료 <b>${tc.완료}</b></span></div>
+          ${list(byProj.slice(0, 4).map(([name, n]) => `<li><span class="k">${n}개 남음</span><span class="tt">${safe(name)}</span></li>`), '남은 할 일이 없어요.')}</div>
+        <div class="lcard"><h3>최근 알림</h3>${list(inbox.notices(noticeRaw).slice(0, 5).map((x) =>
+          `<li class="${x.read ? '' : 'unread'}"><span class="k">${safe(inbox.when(x.at, now))}</span><span class="tt">${safe(x.title)}</span></li>`), '아직 알림이 없어요.')}</div>
+      </div>
+      <div class="gantt"><h3>프로젝트 일정 <small>끝나지 않은 프로젝트 · 막대 안 색은 진행률 · 빨간 선은 오늘</small></h3>${g.rows.length ? `
+        <div class="g-row g-head"><div class="g-name"></div><div class="g-track">${g.months.map((m) => `<span class="g-m" style="left:${m.left}%">${m.label}</span>`).join('')}</div></div>
+        ${g.rows.map((r) => `<a class="g-row" href="#프로젝트" title="${safe(r.name)} · ${safe(r.start)} ~ ${safe(r.due)} · 진행 ${r.progress}%${r.late ? ' · 마감 지남' : ''}">
+          <div class="g-name"><b>${safe(r.name)}</b><small>${safe(r.client || '')}${r.owner ? ' · ' + safe(r.owner) : ''}</small></div>
+          <div class="g-track">${g.months.map((m) => `<i class="g-line" style="left:${m.left}%"></i>`).join('')}${g.today === null ? '' : `<i class="g-today" style="left:${g.today}%"></i>`}
+            <div class="g-bar${r.status === '계획' ? ' plan' : ''}${r.late ? ' late' : ''}" style="left:${r.left}%;width:${r.width}%"><i style="width:${r.progress}%"></i><span>${r.progress}%</span></div></div></a>`).join('')}`
+        : '<div class="none">끝나지 않은 프로젝트가 없어요. 프로젝트 메뉴에서 시작일·마감일을 넣으면 여기에 막대로 보여요.</div>'}</div>`;
     el.querySelectorAll('[data-chat]').forEach((li) => (li.onclick = () => { if (!busy) { chatId = li.dataset.chat; goTab('chat'); } })); // AI작업실로 가서 그 대화를 연다
   }
 
@@ -1272,7 +1319,7 @@
   // ---------- 설정 › 사용자 (관리자만): 목록 + 계정 추가 ----------
   const usersHtml = () => `
     <div class="card"><h3>사용자 <small>(관리자만 볼 수 있어요)</small></h3>
-      <p>같은 비서를 여러 사람이 씁니다. 대화 기록·기억·예약은 사람마다 따로 보관되고(<code>data/users/아이디/</code>), 일정·프로젝트·WBS 같은 업무 자료는 함께 씁니다. 일반 사용자는 설정·사용자 관리·권한 스위치가 보이지 않아요.</p>
+      <p>같은 비서를 여러 사람이 씁니다. 대화 기록·기억·예약은 사람마다 따로 보관되고(<code>data/users/아이디/</code>), 일정·프로젝트·WBS 같은 업무 자료는 함께 씁니다. 일반 사용자는 설정·사용자 관리·권한 스위치가 보이지 않아요. 필요 없어진 사람은 <b>삭제</b>로 지워요(로그인이 끊기고, 대화·기억은 <code>data/삭제된사용자/</code> 에 보관).</p>
       <div class="utable" id="userList">불러오는 중…</div></div>
     <div class="card"><h3>새 사용자 추가</h3>
       <p>임시 비밀번호는 만든 사람이 직접 전해 주세요. 새 사용자는 <b>처음 로그인할 때 비밀번호를 꼭 바꿔야</b> 쓸 수 있어요.</p>
@@ -1290,10 +1337,19 @@
     try {
       const r = await api('/api/users'), j = await r.json();
       if (!r.ok) throw new Error(j.error || '목록을 읽지 못했어요.');
-      el.innerHTML = `<table><thead><tr><th>이름</th><th>아이디</th><th>부서</th><th>역할</th><th>상태</th></tr></thead><tbody>${j.map((u) => `<tr>
+      el.innerHTML = `<table><thead><tr><th>이름</th><th>아이디</th><th>부서</th><th>역할</th><th>상태</th><th></th></tr></thead><tbody>${j.map((u) => `<tr>
         <td>${safe(u.name)}</td><td>${safe(u.username)}</td><td>${safe(u.dept) || '-'}</td>
         <td><span class="role ${u.role === 'admin' ? 'admin' : ''}">${u.role === 'admin' ? '관리자' : '일반'}</span></td>
-        <td>${u.mustChange ? '<span class="first">처음 로그인 전 (비밀번호 변경 필요)</span>' : '사용 중'}</td></tr>`).join('')}</tbody></table>`;
+        <td>${u.mustChange ? '<span class="first">처음 로그인 전 (비밀번호 변경 필요)</span>' : '사용 중'}</td>
+        <td>${u.username === myUsername ? '<span class="first">나</span>' : `<button type="button" class="udel" data-u="${safe(u.username)}" data-n="${safe(u.name)}">삭제</button>`}</td></tr>`).join('')}</tbody></table>`;
+      el.querySelectorAll('.udel').forEach((b) => (b.onclick = async () => { // 지우기: 로그인이 끊기고, 대화·기억·예약은 지우지 않고 보관함으로 (서버가 자기 자신은 막는다)
+        const who = `${b.dataset.n}(${b.dataset.u})`;
+        if (!confirm(`${who} 님을 지울까요?\n\n이 사람은 더 이상 로그인할 수 없어요. 대화·기억·예약은 지우지 않고 data/삭제된사용자/ 폴더로 옮겨 보관해요.`)) return;
+        b.disabled = true;
+        const r = await api('/api/users/' + encodeURIComponent(b.dataset.u), { method: 'DELETE' }), j = await r.json().catch(() => ({}));
+        const m = $('userMsg'); if (m) { m.textContent = r.ok ? `✓ ${who} 님을 지웠어요.${j.moved ? ` 개인 폴더는 data/${j.moved} 에 보관했어요.` : ''}` : `⚠ ${j.error || '지우지 못했어요.'}`; m.className = r.ok ? '' : 'err'; }
+        loadUsers();
+      }));
     } catch (e) { if (e.message !== 'login' && $('userList')) $('userList').textContent = `⚠ ${e.message}`; }
   }
   function showUsers() {
@@ -1574,7 +1630,7 @@
   }
   fetch('/api/me').then((r) => (r.ok ? r.json() : Promise.reject()))
     .then((u) => {
-      me = u.name; myRole = u.role; $('whoName').textContent = u.dept ? `${u.name} · ${u.dept}` : u.name; $('who').title = `${u.role === 'admin' ? '관리자' : '일반 사용자'} · 누르면 로그아웃`;
+      me = u.name; myUsername = u.username; myRole = u.role; $('whoName').textContent = u.dept ? `${u.name} · ${u.dept}` : u.name; $('who').title = `${u.role === 'admin' ? '관리자' : '일반 사용자'} · 누르면 로그아웃`;
       if (u.mustChange) return askNewPassword();
       loadNotices(); db.watch('notices', loadNotices); route(); voiceBoot();
     })

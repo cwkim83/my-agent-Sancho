@@ -427,7 +427,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', 'connector.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json', 'db/workflows.json', 'db/workflowruns.json']; // (워크플로: 서버 권한으로 자동 실행되는 것이라 비서는 초안 파일만 놓고 서버가 검사해 만든다 — 직접 고치면 "자동 실행"을 몰래 켜거나 검사를 건너뛸 수 있다) (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
+const PRIVATE_FILES = ['삭제된사용자/**', 'users.json', 'sessions.json', 'share.json', 'settings.json', 'connector.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json', 'db/workflows.json', 'db/workflowruns.json']; // (워크플로: 서버 권한으로 자동 실행되는 것이라 비서는 초안 파일만 놓고 서버가 검사해 만든다 — 직접 고치면 "자동 실행"을 몰래 켜거나 검사를 건너뛸 수 있다) (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
 const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json', 'selfmod-log.json', '.rollback.json', 'logs/**']; // (8편: 자기 수정 기록·감시자가 남기는 되돌림 표시·로그도 비서가 꾸미지 못하게) // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
@@ -2398,6 +2398,28 @@ async function handle(req, res) {
         return send(res, 200, { ok: true, user: pubUser(u) });
       }
       return send(res, 405, { error: '허용되지 않는 요청입니다.' });
+    }
+    // DELETE /api/users/<아이디> → 계정 지우기(관리자만, 자기 자신은 안 됨). 로그인이 모두 끊기고, 개인 폴더(대화·기억·예약)는 지우지 않고
+    // data/삭제된사용자/<아이디>-<시각>/ 으로 옮긴다 — 묻지 않고 지우지 않는다 · 같은 아이디로 새로 만든 사람이 옛 대화를 물려받지 않게
+    const um = p.match(/^\/api\/users\/([^/]+)$/);
+    if (um && req.method === 'DELETE') {
+      const users = readJson(USERS_FILE, []), i = users.findIndex((x) => x.username === decodeURIComponent(um[1]));
+      if (i < 0) return send(res, 404, { error: '없는 사용자입니다.' });
+      const u = users[i];
+      if (u.id === user.id) return send(res, 400, { error: '자기 자신은 지울 수 없어요. 다른 관리자에게 부탁하세요.' });
+      let moved = '';
+      const from = userDir(u);
+      if (fs.existsSync(from)) { // 폴더를 먼저 옮긴다: 못 옮기면(파일이 열려 있는 등) 계정도 그대로 둔다
+        const box = path.join(DATA_DIR, '삭제된사용자'); fs.mkdirSync(box, { recursive: true });
+        let to = path.join(box, `${u.username}-${guard.stampNow()}`);
+        for (let k = 1; fs.existsSync(to); k++) to = path.join(box, `${u.username}-${guard.stampNow()}-${k}`); // 같은 초에 두 번 지우면 -1, -2 …
+        try { fs.renameSync(from, to); } catch (e) { return send(res, 409, { error: `개인 폴더를 옮기지 못해서 지우지 않았어요. 그 사람의 대화가 진행 중이면 끝난 뒤에 다시 해 주세요. (${e.code || e.message})` }); }
+        moved = path.relative(DATA_DIR, to).split(path.sep).join('/');
+      }
+      users.splice(i, 1); writeJson(USERS_FILE, users);
+      for (const [h, ss] of Object.entries(sessions)) if (ss.userId === u.id) delete sessions[h];
+      writeJson(SESSIONS_FILE, sessions);
+      return send(res, 200, { ok: true, moved });
     }
 
     if (p === '/api/events' && req.method === 'GET') {
