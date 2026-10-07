@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>지식노트</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; overflow-y: auto; }
+  button { font: inherit; cursor: pointer; }
+  [hidden] { display: none !important; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 14px 16px 18px; }
+  .top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 10px; }
+  .top h2 { margin: 0; font-size: 20px; }
+  .top .sub { color: var(--sub); font-size: 13px; }
+  .sp { flex: 1; }
+  .seg { display: inline-flex; padding: 3px; gap: 3px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+  .seg button { padding: 6px 12px; border: 0; border-radius: 8px; background: none; color: #344054; font-weight: 600; }
+  .seg button:hover { background: #f2f4f7; }
+  .seg button.on { background: var(--blue); color: #fff; }
+  .ghost { padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 9px; background: #fff; color: #344054; }
+  .ghost:hover { background: #f2f4f7; }
+  .tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 8px; }
+  .lg { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 12px; color: #344054; }
+  .lg i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+  .lg.off { opacity: .45; } .lg.off i { background: #d0d5dd; }
+  .lg b { font-weight: 600; color: var(--sub); }
+  .find { position: relative; }
+  .find input { width: 190px; padding: 5px 10px; border: 1px solid #d0d5dd; border-radius: 9px; font: inherit; background: #fff; }
+  .find input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .found { position: absolute; z-index: 6; top: 100%; left: 0; width: 260px; margin-top: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 8px 24px rgba(16, 24, 40, .14); }
+  .found button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px; border: 0; border-radius: 7px; background: none; text-align: left; font-size: 13px; }
+  .found button:hover { background: #f2f4f7; }
+  .found i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+  .found span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { color: var(--sub); font-size: 12px; }
+
+  .stage { position: relative; height: calc(100vh - 150px); min-height: 360px; border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  .stage canvas:active { cursor: grabbing; }
+  .zoom { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: #fff; overflow: hidden; }
+  .zoom button { width: 34px; height: 32px; border: 0; background: #fff; font-size: 16px; color: #344054; }
+  .zoom button + button { border-top: 1px solid var(--line); }
+  .zoom button:hover { background: #f2f4f7; }
+  .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; text-align: center; color: var(--sub); pointer-events: none; }
+  .peek { position: absolute; z-index: 5; top: 10px; right: 10px; width: 300px; max-height: calc(100% - 20px); display: flex; flex-direction: column; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .97); box-shadow: 0 10px 30px rgba(16, 24, 40, .16); }
+  .peek .ph { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .peek .badge { padding: 1px 10px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 700; }
+  .peek .x { width: 28px; height: 28px; border: 0; border-radius: 7px; background: none; color: var(--sub); }
+  .peek .x:hover { background: #f2f4f7; }
+  .peek h3 { margin: 2px 0 6px; font-size: 16px; overflow-wrap: anywhere; }
+  .peek .facts { margin: 0 0 8px; padding: 0; list-style: none; color: #475467; font-size: 12.5px; }
+  .peek .ptext { flex: 0 1 auto; min-height: 0; overflow-y: auto; max-height: 220px; margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; background: #f8f9fb; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .peek .ptext:empty { display: none; }
+  .peek .pl { margin: 2px 0 4px; font-size: 12px; font-weight: 600; color: var(--sub); }
+  .peek .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; max-height: 96px; overflow-y: auto; }
+  .chip { padding: 2px 9px; border: 1px solid var(--c); border-radius: 999px; background: #fff; color: #344054; font-size: 12px; }
+  .chip:hover { background: #f2f4f7; }
+  .open { align-self: flex-start; padding: 6px 14px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font-weight: 600; }
+
+  /* 🧠 오브 */
+  .stage.dark { border-color: #1d2a4a; background: radial-gradient(circle at 50% 46%, #15234a 0%, #0a1226 55%, #050810 100%); height: clamp(300px, calc(100vh - 330px), 520px); }
+  .stats { position: absolute; z-index: 2; left: 12px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .stats span { padding: 2px 10px; border: 1px solid rgba(160, 190, 255, .25); border-radius: 999px; background: rgba(20, 34, 70, .6); color: #c9d8ff; font-size: 12px; }
+  .orbstate { position: absolute; z-index: 2; left: 0; right: 0; bottom: 14px; text-align: center; color: #9fb4e8; font-size: 13px; letter-spacing: .02em; }
+  .orbstate[data-state="thinking"] { color: #ffd479; } .orbstate[data-state="speaking"] { color: #8fe3ff; }
+  .chat { display: flex; gap: 8px; margin-top: 10px; }
+  .chat input { flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 10px; font: inherit; background: #fff; }
+  .chat input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .chat button { padding: 8px 18px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font-weight: 600; }
+  .chat button.stop { background: #475467; }
+  .reply { margin-top: 8px; max-height: 150px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .reply:empty { display: none; }
+  @media (max-width: 700px) {
+    .peek { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 52%; }
+    .zoom { bottom: auto; top: 10px; }
+    .find input { width: 140px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h2>지식노트</h2><span class="sub" id="sub"></span><span class="sp"></span>
+    <button class="ghost" id="reload" title="자료를 다시 읽어 와요">↻ 새로 읽기</button>
+    <div class="seg" role="tablist" aria-label="보기 고르기">
+      <button id="bMap" class="on" role="tab" aria-selected="true">🗺 지식 지도</button>
+      <button id="bBrain" role="tab" aria-selected="false">🧠 뇌 그래프</button>
+    </div>
+  </header>
+
+  <section id="vMap">
+    <div class="tools"><span id="legendMap" class="tools"></span>
+      <span class="find"><input id="q" type="text" placeholder="점 찾기…" aria-label="점 찾기" autocomplete="off"><div class="found" id="found" hidden></div></span>
+      <span class="hint">끌어서 옮기고 · 휠이나 두 손가락으로 확대 · 점을 누르면 미리보기</span></div>
+    <div class="stage" id="stageMap"><canvas id="cMap" role="img" aria-label="프로젝트·회의·결재·할 일·위키·사람이 서로 언급한 관계를 점과 선으로 그린 지식 지도"></canvas>
+      <div class="zoom"><button data-z="in" aria-label="확대">＋</button><button data-z="out" aria-label="축소">－</button><button data-z="fit" aria-label="전체 보기" title="전체 보기">⤢</button></div>
+      <div class="empty" id="emptyMap" hidden></div></div>
+  </section>
+
+  <section id="vBrain" hidden>
+    <div class="tools"><div class="seg" role="tablist" aria-label="오브와 그래프 전환"><button id="bOrb" class="on" role="tab" aria-selected="true">◉ 오브</button><button id="bGraph" role="tab" aria-selected="false">✦ 그래프</button></div>
+      <span id="legendBrain" class="tools"></span><span class="hint" id="brainHint">비서가 생각하면 빨라지고, 말하면 출렁여요. 아래에서 말을 걸어 보세요.</span></div>
+    <div class="stage dark" id="stageOrb"><canvas id="cOrb" role="img" aria-label="비서의 상태를 보여 주는 둥근 오브"></canvas><div class="stats" id="stats"></div><div class="orbstate" id="orbState" data-state="idle" role="status">대기 중</div></div>
+    <div class="stage" id="stageBrain" hidden><canvas id="cBrain" role="img" aria-label="기억·위키·스킬·대화·예약을 하나로 이은 뇌 그래프"></canvas>
+      <div class="zoom"><button data-z="in" aria-label="확대">＋</button><button data-z="out" aria-label="축소">－</button><button data-z="fit" aria-label="전체 보기" title="전체 보기">⤢</button></div>
+      <div class="empty" id="emptyBrain" hidden></div></div>
+    <div class="reply" id="reply" aria-live="polite"></div>
+    <div class="chat"><input id="say" type="text" placeholder="비서에게 말해 보세요 (예: 오늘 일정 알려 줘)" aria-label="비서에게 말하기" autocomplete="off" enterkeyhint="send"><button id="sendBtn">보내기</button></div>
+  </section>
+
+  <aside class="peek" id="peek" hidden></aside>
+</div>
+
+<script src="/m/db.js"></script>
+<script src="/m/inbox.js"></script>
+<script src="/m/knowledge-calc.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const clip = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const toParent = (hash) => { if (parent !== window) parent.location.hash = hash; else location.hash = hash; };
+  const jget = async (u) => { try { const r = await fetch(u); if (r.status === 401) { (parent !== window ? parent : window).location.replace('/'); return null; } return r.ok ? await r.json() : null; } catch { return null; } };
+  const colorOf = (t) => kn.COLORS[t] || '#98a2b3';
+
+  // ---------- 점과 선을 그리는 판 (캔버스, 그림 라이브러리 없음) — 지식 지도와 뇌 그래프가 같이 쓴다 ----------
+  // 그리는 때: 점이 움직이는 동안, 그리고 끌기·확대·고르기 같은 일이 있을 때만. 가만히 있으면 아무것도 안 그린다 (점이 많아도 느려지지 않게)
+  class GraphView {
+    constructor(canvas, stage, onSelect) {
+      this.c = canvas; this.ctx = canvas.getContext('2d'); this.stage = stage; this.onSelect = onSelect;
+      Object.assign(this, { nodes: [], links: [], adj: new Map(), k: 1, tx: 0, ty: 0, w: 0, h: 0, dpr: 1, hidden: new Set(), sel: null, hover: null, match: null, sim: null, on: false, raf: 0, dirty: false, auto: true, pointers: new Map(), drag: null, pinch: null, down: null });
+      new ResizeObserver(() => this.resize()).observe(stage);
+      const c = canvas;
+      c.addEventListener('pointerdown', (e) => this.down_(e));
+      c.addEventListener('pointermove', (e) => this.move_(e));
+      c.addEventListener('pointerup', (e) => this.up_(e));
+      c.addEventListener('pointercancel', (e) => this.up_(e, true));
+      c.addEventListener('pointerleave', () => { if (this.hover) { this.hover = null; this.redraw(); } });
+      c.addEventListener('wheel', (e) => { e.preventDefault(); const p = this.pt(e); this.zoomTo(this.k * Math.exp(-e.deltaY * 0.0015), p.x, p.y); this.auto = false; }, { passive: false });
+      c.addEventListener('dblclick', (e) => { const n = this.hit(this.pt(e)); if (n && n.pinned) { n.pinned = false; this.sim && this.sim.reheat(0.3); this.kick(); } });
+      stage.querySelectorAll('.zoom [data-z]').forEach((b) => (b.onclick = () => { const z = b.dataset.z; this.auto = false; if (z === 'fit') { this.fit(); this.redraw(); } else this.zoomTo(this.k * (z === 'in' ? 1.35 : 1 / 1.35), this.w / 2, this.h / 2); }));
+    }
+    resize() {
+      const r = this.stage.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return;
+      this.dpr = Math.min(window.devicePixelRatio || 1, 2); this.w = r.width; this.h = r.height;
+      this.c.width = Math.round(r.width * this.dpr); this.c.height = Math.round(r.height * this.dpr);
+      if (this.auto && this.nodes.length) this.fit();
+      this.redraw();
+    }
+    setOn(on) { this.on = on; if (on) { this.resize(); this.kick(); } }
+    setData({ nodes, edges }) {
+      const by = new Map(nodes.map((n) => [n.id, n]));
+      this.nodes = nodes; this.links = edges.map((e) => ({ a: by.get(e.a), b: by.get(e.b), kind: e.kind })).filter((l) => l.a && l.b);
+      this.adj = new Map(nodes.map((n) => [n, new Set()])); for (const l of this.links) { this.adj.get(l.a).add(l.b); this.adj.get(l.b).add(l.a); }
+      this.sim = kn.sim(nodes, edges); this.sel = this.hover = null; this.match = null; this.auto = true; this.kick();
+    }
+    kick() { if (this.on && !this.raf) this.raf = requestAnimationFrame(() => this.frame()); }
+    redraw() { this.dirty = true; this.kick(); }
+    frame() {
+      this.raf = 0; if (!this.on) return;
+      let busy = false;
+      if (this.sim && this.sim.alpha > 0.02) { // 점 배치가 아직 안 끝났으면 한 프레임에 8ms 만큼만 계산한다 (화면이 멈추지 않게)
+        const t0 = performance.now(); let n = 0;
+        do { this.sim.step(1); n++; } while (n < 12 && performance.now() - t0 < 8 && this.sim.alpha > 0.02);
+        busy = this.dirty = true; if (this.auto) this.fit();
+      }
+      if (this.dirty) { this.dirty = false; this.draw(); }
+      if (busy) this.kick();
+    }
+    vis() { return this.nodes.filter((n) => !this.hidden.has(n.type)); }
+    fit() {
+      const v = this.vis(); if (!v.length || !this.w) return;
+      const b = kn.bounds(v), bw = Math.max(b.x1 - b.x0, 80), bh = Math.max(b.y1 - b.y0, 80);
+      this.k = clamp(Math.min((this.w - 90) / bw, (this.h - 90) / bh), 0.1, 2.2);
+      this.tx = this.w / 2 - ((b.x0 + b.x1) / 2) * this.k; this.ty = this.h / 2 - ((b.y0 + b.y1) / 2) * this.k;
+    }
+    zoomTo(nk, px, py) { nk = clamp(nk, 0.08, 6); const wx = (px - this.tx) / this.k, wy = (py - this.ty) / this.k; this.k = nk; this.tx = px - wx * nk; this.ty = py - wy * nk; this.redraw(); }
+    focus(n) { this.auto = false; this.k = Math.max(this.k, 1); this.tx = this.w / 2 - n.x * this.k; this.ty = this.h / 2 - n.y * this.k; this.select(n); }
+    select(n) { this.sel = n; this.onSelect(n); this.redraw(); }
+    pt(e) { const r = this.c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+    world(p) { return { x: (p.x - this.tx) / this.k, y: (p.y - this.ty) / this.k }; }
+    radius(n) { return n.type === '뇌' ? 17 : n.hub ? 11 + Math.min(n.deg, 40) * 0.12 : 4.5 + Math.min(Math.sqrt(n.deg), 5) * 1.5; }
+    hit(p) {
+      const w = this.world(p);
+      for (let i = this.nodes.length - 1; i >= 0; i--) { const n = this.nodes[i]; if (this.hidden.has(n.type)) continue; const r = Math.max(this.radius(n), 9 / this.k); if ((n.x - w.x) ** 2 + (n.y - w.y) ** 2 <= r * r) return n; }
+      return null;
+    }
+    down_(e) {
+      this.c.setPointerCapture(e.pointerId); const p = this.pt(e); this.pointers.set(e.pointerId, { x: p.x, y: p.y });
+      if (this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.drag = null; this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, k: this.k }; return; }
+      const hit = this.hit(p); this.down = { x: p.x, y: p.y, hit }; this.drag = { node: hit, moved: false };
+    }
+    move_(e) {
+      const p = this.pt(e), rec = this.pointers.get(e.pointerId);
+      if (!rec) { const h = this.hit(p); if (h !== this.hover) { this.hover = h; this.c.style.cursor = h ? 'pointer' : ''; this.redraw(); } return; }
+      const dx = p.x - rec.x, dy = p.y - rec.y; rec.x = p.x; rec.y = p.y;
+      if (this.pinch && this.pointers.size === 2) { const [a, b] = [...this.pointers.values()]; this.auto = false; this.zoomTo(this.pinch.k * (Math.hypot(a.x - b.x, a.y - b.y) / this.pinch.d), (a.x + b.x) / 2, (a.y + b.y) / 2); return; }
+      if (!this.drag) return;
+      if (!this.drag.moved && Math.hypot(p.x - this.down.x, p.y - this.down.y) < 4) return; // 살짝 떨린 건 "누름"
+      this.drag.moved = true; this.auto = false;
+      if (this.drag.node) { const w = this.world(p), n = this.drag.node; n.x = w.x; n.y = w.y; n.pinned = true; this.sim && this.sim.reheat(0.25); this.kick(); this.redraw(); }
+      else { this.tx += dx; this.ty += dy; this.redraw(); }
+    }
+    up_(e, cancel) {
+      const was = this.drag; this.pointers.delete(e.pointerId); if (this.pointers.size < 2) this.pinch = null; this.drag = null;
+      if (was && !was.moved && !cancel) this.select(this.down.hit); // 점을 누르면 미리보기, 빈 곳을 누르면 닫기
+    }
+    draw() {
+      const { ctx, k, tx, ty, w, h } = this; if (!w) return;
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+      ctx.save(); ctx.translate(tx, ty); ctx.scale(k, k);
+      const focus = this.sel || this.hover, near = focus ? this.adj.get(focus) : null, M = this.match;
+      const lit = (n) => (!focus || n === focus || near.has(n)) && (!M || M.has(n)); // 강조할 점: 고른 점·그 이웃, 찾기에 걸린 점
+      ctx.lineWidth = 1 / k;
+      for (const l of this.links) {
+        if (this.hidden.has(l.a.type) || this.hidden.has(l.b.type)) continue;
+        const on = focus ? l.a === focus || l.b === focus : M ? M.has(l.a) || M.has(l.b) : true;
+        ctx.globalAlpha = on ? (focus ? 0.85 : l.kind === 'mention' ? 0.3 : 0.5) : 0.05;
+        ctx.strokeStyle = focus && on ? '#2f6fed' : l.kind === 'mention' ? '#b7a6f7' : '#98a2b3';
+        ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+      }
+      const vx0 = -tx / k - 40, vy0 = -ty / k - 40, vx1 = (w - tx) / k + 40, vy1 = (h - ty) / k + 40, cand = [];
+      for (const n of this.nodes) {
+        if (this.hidden.has(n.type) || n.x < vx0 || n.x > vx1 || n.y < vy0 || n.y > vy1) continue;
+        const r = this.radius(n), on = lit(n);
+        ctx.globalAlpha = on ? 1 : 0.14; ctx.fillStyle = colorOf(n.type);
+        ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 6.2832); ctx.fill();
+        ctx.lineWidth = 1.5 / k; ctx.strokeStyle = '#fff'; ctx.stroke();
+        if (n === this.sel) { ctx.globalAlpha = 1; ctx.lineWidth = 2.5 / k; ctx.strokeStyle = '#1d2939'; ctx.beginPath(); ctx.arc(n.x, n.y, r + 4 / k, 0, 6.2832); ctx.stroke(); }
+        if (on) cand.push([n === focus ? 1e6 : n.type === '뇌' ? 9e5 : n.hub ? 8e5 : focus && near.has(n) ? 7e5 : M && M.has(n) ? 6e5 : n.deg, n]); // 이름표 후보 (중요한 것부터)
+      }
+      ctx.globalAlpha = 1; ctx.font = `${12 / k}px "Malgun Gothic", system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+      cand.sort((a, b) => b[0] - a[0]); const placed = []; // 이름표는 먼저 놓은 것과 겹치지 않을 때만 — 점이 몰려 있어도 읽히고, 확대할수록 더 나타난다
+      for (const [, n] of cand.slice(0, 160)) {
+        const t = clip(n.title, n.hub ? 20 : 16), tw = ctx.measureText(t).width, x0 = n.x - tw / 2, y0 = n.y + this.radius(n) + 2 / k, hh = 14 / k;
+        if (placed.some((p) => x0 < p[2] && x0 + tw > p[0] && y0 < p[3] && y0 + hh > p[1])) continue;
+        placed.push([x0, y0, x0 + tw, y0 + hh]); ctx.lineWidth = 3.2 / k; ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.strokeText(t, n.x, n.y + this.radius(n) + 12 / k); ctx.fillStyle = n === focus ? '#0b3aa8' : '#344054'; ctx.fillText(t, n.x, n.y + this.radius(n) + 12 / k);
+      }
+      ctx.restore();
+    }
+  }
+
+  // ---------- 미리보기 (점을 누르면) ----------
+  const peek = $('peek'); let peekView = null;
+  const openHash = (n) => ({ 프로젝트: n.ref && '#WBS/' + encodeURIComponent(n.ref), 회의: '#회의록', 결재: n.ref && '#결재/' + encodeURIComponent(n.ref), '할 일': '#일정', 대화: '#대시보드', 예약: '#대시보드' }[n.type] || '');
+  function showPeek(view, n) {
+    peekView = view; if (!n) { peek.hidden = true; return; }
+    const nb = [...(view.adj.get(n) || [])].sort((a, b) => b.deg - a.deg).slice(0, 18), go = openHash(n);
+    peek.innerHTML = `<div class="ph"><span class="badge" style="background:${colorOf(n.type)}">${esc(n.type)}</span><button class="x" aria-label="닫기">✕</button></div><h3>${esc(n.title)}</h3>`
+      + (n.facts.length ? `<ul class="facts">${n.facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : '') + `<div class="ptext" id="ptext">${esc(n.text)}</div>`
+      + (nb.length ? `<div class="pl">이어진 점 ${view.adj.get(n).size}개</div><div class="chips">${nb.map((m, i) => `<button class="chip" data-i="${i}" style="--c:${colorOf(m.type)}">${esc(clip(m.title, 14))}</button>`).join('')}</div>` : '')
+      + (go ? '<button class="open">열기 →</button>' : '');
+    view.stage.appendChild(peek); peek.hidden = false;
+    peek.querySelector('.x').onclick = () => view.select(null);
+    peek.querySelectorAll('.chip').forEach((b) => (b.onclick = () => view.focus(nb[+b.dataset.i])));
+    const o = peek.querySelector('.open'); if (o) o.onclick = () => toParent(go);
+    if (view === brainView && (n.type === '위키' || n.type === '스킬') && !n.hub) { // 뇌 그래프의 위키·스킬은 내용을 가져와 보여 준다
+      $('ptext').textContent = '불러오는 중…';
+      jget(`/api/${n.type === '위키' ? 'wiki' : 'skills'}/${encodeURIComponent(n.ref)}`).then((j) => { if (view.sel === n) $('ptext').textContent = j ? clip(String(j.text).replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, ''), 1500) : ''; });
+    }
+  }
+
+  function legend(el, view, types, nodes) { // 종류별 색 · 개수 — 누르면 그 종류를 숨기거나 보임
+    const cnt = {}; for (const n of nodes) if (!n.hub) cnt[n.type] = (cnt[n.type] || 0) + 1;
+    el.innerHTML = types.map((t) => `<button class="lg ${view.hidden.has(t) ? 'off' : ''}" data-t="${t}" style="--c:${colorOf(t)}" title="누르면 ${t}을(를) 숨기거나 보여요"><i></i>${t} <b>${cnt[t] || 0}</b></button>`).join('');
+    el.querySelectorAll('.lg').forEach((b) => (b.onclick = () => { const t = b.dataset.t; view.hidden.has(t) ? view.hidden.delete(t) : view.hidden.add(t); b.classList.toggle('off'); if (view.sel && view.hidden.has(view.sel.type)) view.select(null); view.redraw(); }));
+  }
+
+  // ---------- 지식 지도 ----------
+  const mapView = new GraphView($('cMap'), $('stageMap'), (n) => showPeek(mapView, n));
+  let mapLoaded = false, mapSub = '';
+  async function loadMap() {
+    $('sub').textContent = '자료를 읽는 중…';
+    const [projects, tasks, meetings] = await Promise.all(['projects', 'tasks', 'meetings'].map((n) => db.list(n).catch(() => [])));
+    const [appr, people, wiki] = await Promise.all([jget('/api/approvals'), jget('/api/approvals/people'), jget('/api/wiki')]);
+    const wl = ((wiki && wiki.items) || []).slice(0, kn.CAP.map.위키), wikiDocs = [];
+    for (let i = 0; i < wl.length; i += 6) await Promise.all(wl.slice(i, i + 6).map(async (w) => { const j = await jget('/api/wiki/' + encodeURIComponent(w.name)); wikiDocs.push({ name: w.name, text: j ? j.text : '' }); }));
+    const g = kn.buildMap({ projects, tasks, meetings, approvals: (appr && appr.items) || [], people: Array.isArray(people) ? people : [], wiki: wikiDocs });
+    mapView.hidden.clear(); mapView.setData(g); mapLoaded = true;
+    legend($('legendMap'), mapView, g.types, g.nodes);
+    const om = Object.entries(g.omitted).map(([t, n]) => `${t} ${n}개`).join(' · ');
+    mapSub = $('sub').textContent = `점 ${g.nodes.length}개 · 선 ${g.edges.length}개${om ? ` (많아서 일부만 그림: ${om} 생략)` : ''}`;
+    $('emptyMap').hidden = g.nodes.length > 0; $('emptyMap').textContent = '아직 점이 없어요. 프로젝트·할 일·회의·결재·위키를 만들면 여기에 나타나요.';
+    showPeek(mapView, null);
+  }
+  $('q').addEventListener('input', () => { // 점 찾기: 이름에 글자가 들어 있는 점만 또렷하게
+    const q = kn.norm($('q').value), box = $('found');
+    if (!q) { mapView.match = null; box.hidden = true; mapView.redraw(); return; }
+    const hits = mapView.vis().filter((n) => kn.norm(n.title).includes(q));
+    mapView.match = new Set(hits); mapView.redraw();
+    box.innerHTML = hits.slice(0, 7).map((n, i) => `<button data-i="${i}" style="--c:${colorOf(n.type)}"><i></i><span>${esc(n.title)}</span></button>`).join('') || '<div class="hint" style="padding:6px 8px">찾는 점이 없어요</div>'; box.hidden = false;
+    box.querySelectorAll('button').forEach((b) => (b.onclick = () => { mapView.focus(hits[+b.dataset.i]); box.hidden = true; }));
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.find')) $('found').hidden = true; });
+
+  // ---------- 🧠 뇌 그래프: 오브(기본) ↔ 그래프 ----------
+  const brainView = new GraphView($('cBrain'), $('stageBrain'), (n) => showPeek(brainView, n));
+  let brain = null; // 방금 읽은 기억·위키·스킬·대화·예약 (오브의 숫자와 그래프가 같이 쓴다)
+  async function loadBrain() {
+    const [mem, wiki, skills, chats, sched] = await Promise.all(['/api/memory', '/api/wiki', '/api/skills', '/api/chats', '/api/schedule'].map(jget));
+    brain = { memory: ((mem && mem.items) || []).map((m) => m.text), wiki: (wiki && wiki.items) || [], skills: (skills && skills.items) || [], chats: Array.isArray(chats) ? chats : [],
+      schedule: ((sched && sched.items) || []).map((e) => ({ id: e.id, 이름: e.이름, 지시문: e.지시문, when: window.inbox ? inbox.scheduleText(e.언제) : '' })) };
+    $('stats').innerHTML = [['기억', brain.memory.length], ['위키', brain.wiki.length], ['스킬', brain.skills.length], ['대화', brain.chats.length], ['예약', brain.schedule.length]].map(([t, n]) => `<span>${t} ${n}</span>`).join('');
+  }
+  function showGraph() { // 그래프는 이 단추를 누를 때만 만들고 그린다
+    const g = kn.buildBrain(brain || {});
+    brainView.hidden.clear(); brainView.setData(g); legend($('legendBrain'), brainView, g.types, g.nodes);
+    $('emptyBrain').hidden = g.nodes.length > 1; $('emptyBrain').textContent = '아직 쌓인 게 없어요.';
+    const om = Object.entries(g.omitted).map(([t, n]) => `${t} ${n}개`).join(' · ');
+    $('brainHint').textContent = `점 ${g.nodes.length}개 · 선 ${g.edges.length}개${om ? ` (최근 것만 그림: ${om} 생략)` : ''} · 끌어서 옮기고 점을 누르면 미리보기`;
+  }
+
+  // 오브: 링·호·입자가 숨 쉬듯 움직인다. 평소엔 느리고, 비서가 생각하면 빨라지고, 말하면 출렁인다
+  const orb = (() => {
+    const c = $('cOrb'), ctx = c.getContext('2d'), stage = $('stageOrb');
+    const rnd = (() => { let s = 11; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+    const PARTS = Array.from({ length: 90 }, () => ({ a: rnd() * 6.2832, r: 0.5 + rnd() * 1.1, s: (0.25 + rnd() * 0.75) * (rnd() < 0.5 ? -1 : 1), ph: rnd() * 6.2832, z: 0.4 + rnd() * 0.9 }));
+    const RINGS = [{ r: 1.22, tilt: 0.38, rot: 0.2, s: 0.16 }, { r: 1.45, tilt: -0.55, rot: 1.6, s: -0.1 }, { r: 1.72, tilt: 0.9, rot: 2.6, s: 0.07 }];
+    const ARCS = Array.from({ length: 8 }, (_, i) => ({ r: 1.08 + (i % 4) * 0.17, a: rnd() * 6.2832, len: 0.5 + rnd() * 1.3, s: (0.35 + rnd() * 0.5) * (i % 2 ? -1 : 1), w: 1.5 + (i % 3) }));
+    const STATE = { idle: { speed: 0.35, amp: 0.012, glow: 0.55, text: '대기 중' }, thinking: { speed: 2.9, amp: 0.03, glow: 1, text: '생각 중…' }, speaking: { speed: 1.15, amp: 0.085, glow: 0.9, text: '말하는 중…' } };
+    let w = 0, h = 0, dpr = 1, raf = 0, last = 0, phase = 0, st = 'idle', speed = 0.35, amp = 0.012, glow = 0.55, impulse = 0, ripple = 0, shown = '';
+    const ripples = [];
+    function size() { const r = stage.getBoundingClientRect(); if (r.width < 2) return; dpr = Math.min(devicePixelRatio || 1, 2); w = r.width; h = r.height; c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    new ResizeObserver(size).observe(stage);
+    function setState(s) { st = s; const e = $('orbState'); e.dataset.state = s; e.textContent = STATE[s].text; c.dataset.state = s; }
+    function pulse(n) { impulse = Math.min(1, impulse + Math.min(n, 30) / 40); if (ripple <= 0 && !REDUCED) { ripples.push({ r: 1.1, a: 0.55 }); ripple = 0.4; } } // 글자가 흘러나올 때마다 한 번씩 출렁
+    function frame(now) {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
+      const T = STATE[st], mot = REDUCED ? 0.4 : 1, k = 1 - Math.exp(-dt * 3.2);
+      speed += (T.speed * mot - speed) * k; amp += ((T.amp + impulse * 0.06) * mot - amp) * k; glow += (T.glow - glow) * k;
+      impulse = Math.max(0, impulse - dt * 2.4); ripple -= dt; phase += dt * speed;
+      const sp = speed.toFixed(1); if (c.dataset.speed !== sp) c.dataset.speed = sp; // 화면 밖에서도 속도가 보이게 (점검용)
+      draw();
+    }
+    function draw() {
+      if (!w) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+      const cx = w / 2, cy = h / 2 - 6, R = Math.min(w, h) * 0.2 * (1 + 0.035 * Math.sin(phase * 1.7));
+      const halo = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 2.8); halo.addColorStop(0, `rgba(96,140,255,${0.42 * glow})`); halo.addColorStop(0.5, `rgba(110,70,240,${0.16 * glow})`); halo.addColorStop(1, 'rgba(10,18,38,0)');
+      ctx.fillStyle = halo; ctx.fillRect(0, 0, w, h);
+      ctx.lineCap = 'round';
+      for (const g of RINGS) { ctx.save(); ctx.translate(cx, cy); ctx.rotate(g.rot + phase * g.s * 2); ctx.scale(1, Math.abs(Math.cos(g.tilt)) * 0.55 + 0.25); ctx.strokeStyle = `rgba(160,190,255,${0.2 + 0.25 * glow})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(0, 0, R * g.r, 0, 6.2832); ctx.stroke(); ctx.restore(); }
+      for (const g of ARCS) { const a0 = g.a + phase * g.s; ctx.strokeStyle = `rgba(${st === 'thinking' ? '255,205,110' : '140,190,255'},${0.35 + 0.4 * glow})`; ctx.lineWidth = g.w; ctx.beginPath(); ctx.arc(cx, cy, R * g.r, a0, a0 + g.len); ctx.stroke(); }
+      for (const p of PARTS) { // 입자: 궤도를 돌며 깜박이고, 말하는 동안엔 반지름이 출렁인다
+        const a = p.a + phase * p.s * 0.8, rr = R * p.r * (1 + amp * 1.6 * Math.sin(p.a * 4 + phase * 3.2)), tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(phase * 2.2 + p.ph));
+        ctx.globalAlpha = tw * (0.5 + 0.5 * glow) * p.z; ctx.fillStyle = st === 'thinking' ? '#ffe2a0' : '#bcd2ff'; const s = 1.2 + p.z * 1.6; ctx.fillRect(cx + Math.cos(a) * rr - s / 2, cy + Math.sin(a) * rr * 0.86 - s / 2, s, s);
+      }
+      ctx.globalAlpha = 1;
+      for (let i = ripples.length - 1; i >= 0; i--) { const q = ripples[i]; q.r += 0.016 * (1 + speed); q.a -= 0.012; if (q.a <= 0) { ripples.splice(i, 1); continue; } ctx.strokeStyle = `rgba(140,220,255,${q.a})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, R * q.r, 0, 6.2832); ctx.stroke(); }
+      ctx.beginPath(); // 핵: 말할 때 가장자리가 출렁이는 둥근 덩어리
+      for (let i = 0; i <= 64; i++) { const t = (i / 64) * 6.2832, r = R * (1 + amp * (0.6 * Math.sin(3 * t + phase * 2.2) + 0.4 * Math.sin(5 * t - phase * 3.1) + 0.3 * Math.sin(2 * t + phase * 1.4))); i ? ctx.lineTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r) : ctx.moveTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r); }
+      ctx.closePath(); const core = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, R * 0.1, cx, cy, R * 1.05);
+      core.addColorStop(0, '#d7e6ff'); core.addColorStop(0.35, '#6f9bff'); core.addColorStop(0.75, '#5b45e8'); core.addColorStop(1, '#2a1b8f'); ctx.fillStyle = core; ctx.fill();
+      ctx.strokeStyle = `rgba(190,215,255,${0.5 + 0.3 * glow})`; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    setState('idle');
+    return { start() { size(); if (!raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }, stop() { cancelAnimationFrame(raf); raf = 0; }, setState, pulse, get state() { return st; } };
+  })();
+  document.addEventListener('visibilitychange', () => { if (document.hidden) orb.stop(); else if (brainOn && showing === 'orb') orb.start(); });
+
+  // ---------- 오브 아래 채팅: 같은 비서와 대화한다 (대화는 채팅 목록에 남는다) ----------
+  let chatId = null, busy = false, ctl = null, hold = 0;
+  async function say() {
+    const text = $('say').value.trim(); if (!text || busy) return;
+    clearTimeout(hold); busy = true; $('say').value = ''; $('reply').textContent = ''; $('sendBtn').textContent = '■ 중지'; $('sendBtn').classList.add('stop'); orb.setState('thinking'); ctl = new AbortController();
+    let got = '';
+    try {
+      if (!chatId) { const r = await fetch('/api/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); if (r.status === 401) return jget('/api/me'); chatId = (await r.json()).id; }
+      const r = await fetch(`/api/chats/${chatId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }), signal: ctl.signal });
+      if (!r.ok) { $('reply').textContent = '⚠ ' + ((await r.json().catch(() => ({}))).error || '말을 보내지 못했어요.'); }
+      else {
+        const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+        for (;;) {
+          const { done, value } = await rd.read(); if (done) break;
+          buf += dec.decode(value, { stream: true }); let k;
+          while ((k = buf.indexOf('\n\n')) >= 0) {
+            const ev = buf.slice(0, k); buf = buf.slice(k + 2); const d = ev.split('\n').find((x) => x.startsWith('data: '));
+            if (ev.startsWith('event:') || !d) continue;
+            const t = JSON.parse(d.slice(6)).t; got += t; $('reply').textContent = got; $('reply').scrollTop = 1e9;
+            if (/^\s*⏺ /.test(t)) orb.setState('thinking'); else { orb.setState('speaking'); orb.pulse(t.length); } // 도구를 쓰는 줄은 "생각 중", 글이 흘러나오면 "말하는 중"
+          }
+        }
+      }
+    } catch (e) { if (e.name !== 'AbortError') $('reply').textContent = got + '\n(연결이 끊어졌어요.)'; }
+    busy = false; ctl = null; $('sendBtn').textContent = '보내기'; $('sendBtn').classList.remove('stop');
+    if (orb.state === 'speaking') hold = setTimeout(() => orb.setState('idle'), clamp(got.length * 6, 800, 4000)); else orb.setState('idle'); // 답이 한꺼번에 와도 길이에 비례해 잠깐 더 출렁인다
+    if (brainOn) loadBrain(); // 방금 나눈 대화·기억이 숫자에 반영되게
+  }
+  $('sendBtn').onclick = () => (busy ? ctl && ctl.abort() : say());
+  $('say').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!busy) say(); } });
+
+  // ---------- 화면 고르기 ----------
+  let brainOn = false, showing = 'orb';
+  function setShow(s) { // 오브 ↔ 그래프
+    showing = s; $('bOrb').classList.toggle('on', s === 'orb'); $('bGraph').classList.toggle('on', s === 'graph'); $('bOrb').setAttribute('aria-selected', s === 'orb'); $('bGraph').setAttribute('aria-selected', s === 'graph');
+    $('stageOrb').hidden = s !== 'orb'; $('stageBrain').hidden = s !== 'graph'; $('legendBrain').hidden = s !== 'graph';
+    showPeek(brainView, null);
+    if (s === 'orb') { brainView.setOn(false); orb.start(); $('brainHint').textContent = '비서가 생각하면 빨라지고, 말하면 출렁여요. 아래에서 말을 걸어 보세요.'; }
+    else { orb.stop(); showGraph(); brainView.setOn(true); }
+  }
+  function setMode(m) {
+    brainOn = m === 'brain'; $('bMap').classList.toggle('on', !brainOn); $('bBrain').classList.toggle('on', brainOn); $('bMap').setAttribute('aria-selected', !brainOn); $('bBrain').setAttribute('aria-selected', brainOn);
+    $('vMap').hidden = brainOn; $('vBrain').hidden = !brainOn; $('sub').textContent = brainOn ? '기억·위키·스킬·대화·예약' : mapSub; showPeek(mapView, null);
+    if (brainOn) { mapView.setOn(false); loadBrain().then(() => { if (showing === 'graph') showGraph(); }); setShow(showing); }
+    else { orb.stop(); brainView.setOn(false); mapView.setOn(true); if (!mapLoaded) loadMap(); }
+  }
+  $('bMap').onclick = () => setMode('map'); $('bBrain').onclick = () => setMode('brain');
+  $('bOrb').onclick = () => setShow('orb'); $('bGraph').onclick = () => setShow('graph');
+  $('reload').onclick = () => { if (brainOn) { loadBrain().then(() => { if (showing === 'graph') showGraph(); }); } else loadMap(); };
+  mapView.setOn(true); loadMap();
+</script>
+</body>
+</html>

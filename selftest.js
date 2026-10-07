@@ -177,6 +177,8 @@ async function run() {
   await runMeeting(ck, people);
   await runApprovals(ck, people);
   await runKb(ck, people);
+  runKnowledgeCalc();
+  await runKnowledge(ck);
   await runOkr(ck);
   await runMandays(ck, people);
   await post('/api/auth/logout', {}, ck);
@@ -2548,6 +2550,93 @@ async function runKb(ck, { CM, CC }) { // ck 첫 관리자 · CM 김민준(일�
   fs.rmSync(path.join(wikiDir, '압력용기 수압시험 절차.md'), { force: true });
 }
 
+// 지식노트 (10편 둘째 단계): 지식 지도(점·선 만들기·언급 찾기·배치)와 🧠 뇌 그래프(기억·위키·스킬·대화·예약) 계산 — 서버 없이 (SELFTEST_ONLY=knowledge 로 이것만 빨리 돌릴 수 있다)
+function runKnowledgeCalc() {
+  const kn = require('./public/m/knowledge-calc.js');
+  const pairs = (g) => new Set(g.edges.map((e) => (e.a < e.b ? `${e.a}|${e.b}` : `${e.b}|${e.a}`)));
+  const has = (g, a, b, kind) => g.edges.some((e) => ((e.a === a && e.b === b) || (e.a === b && e.b === a)) && (!kind || e.kind === kind));
+  const data = {
+    projects: [{ id: 'p1', name: '열교환기 제작', client: '라마바화학', status: '진행중', progress: 55, owner: '김가나' }, { id: 'p2', name: '압력용기 개조', owner: '이다라' }],
+    tasks: [{ id: 't1', title: '열교환기 제작도면 최종 확인', projectId: 'p1', owner: '김가나', status: '진행중' }, { id: 't2', title: '무관한 일', projectId: 'nope', owner: '', status: '완료' }],
+    meetings: [{ id: 'm1', title: '압력용기 도면 2차 검토 회의', attendees: ['김민준', '이서연'], projectId: 'p2', transcript: '열교환기 제작 일정도 이야기했다', summary: { agenda: ['도면'] } }],
+    approvals: [{ id: 'a1', title: '비파괴검사 외주 발주', body: '압력용기 개조 프로젝트용 검사', drafterName: '홍길동', line: [{ name: '김민준', dept: '설계' }], status: '완료', amount: 4200000 }],
+    wiki: [{ name: '수압시험 절차', text: '열교환기 제작 후 수압시험을 한다. 압력용기 개조도 같다.' }],
+    people: [{ name: '홍길동', dept: '' }, { name: '김민준', dept: '설계' }],
+  };
+  const m = kn.buildMap(data), cnt = (t) => m.nodes.filter((n) => n.type === t).length;
+  check('지식 지도 점: 프로젝트 2 · 할 일 2 · 회의 1 · 결재 1 · 위키 1 · 사람 5(계정 둘 + 담당자·참석자 셋, 같은 이름은 한 점)', cnt('프로젝트') === 2 && cnt('할 일') === 2 && cnt('회의') === 1 && cnt('결재') === 1 && cnt('위키') === 1 && cnt('사람') === 5 && new Set(m.nodes.map((n) => n.id)).size === m.nodes.length);
+  check('자료가 직접 가리키는 선(ref): 할 일→프로젝트(projectId)·담당자, 프로젝트→담당자, 회의→프로젝트·참석자, 결재→기안자·결재선 — 없는 프로젝트 id 는 선 없이 넘어감',
+    has(m, '할 일:t1', '프로젝트:p1', 'ref') && has(m, '할 일:t1', '사람:김가나', 'ref') && has(m, '프로젝트:p1', '사람:김가나', 'ref') && has(m, '회의:m1', '프로젝트:p2', 'ref') && has(m, '회의:m1', '사람:이서연', 'ref')
+    && has(m, '결재:a1', '사람:홍길동', 'ref') && has(m, '결재:a1', '사람:김민준', 'ref') && !m.edges.some((e) => e.a === '할 일:t2' || e.b === '할 일:t2'));
+  check('글에서 이름이 나오면 선(mention): 위키 본문→프로젝트 둘 · 회의 녹취→프로젝트 · 결재 본문→프로젝트 (부른 쪽 → 불린 쪽)', has(m, '위키:수압시험 절차', '프로젝트:p1', 'mention') && has(m, '위키:수압시험 절차', '프로젝트:p2', 'mention')
+    && has(m, '회의:m1', '프로젝트:p1', 'mention') && has(m, '결재:a1', '프로젝트:p2', 'mention') && m.edges.some((e) => e.a === '위키:수압시험 절차' && e.b === '프로젝트:p1'));
+  check('두 점 사이 선은 하나뿐(자료가 직접 가리킨 선이 우선) · 계정과 참석자로 두 번 나온 사람은 한 점이고 부서가 남음', pairs(m).size === m.edges.length && m.edges.find((e) => e.a === '할 일:t1' && e.b === '프로젝트:p1').kind === 'ref'
+    && m.nodes.find((n) => n.id === '사람:김민준').facts.includes('부서 설계'));
+  const gen = kn.buildMap({ projects: [{ id: 'g', name: '점검 작업' }], tasks: Array.from({ length: 25 }, (_, i) => ({ id: `x${i}`, title: `점검 작업 ${i}번 처리`, status: '진행중' })) });
+  check('너무 흔한 이름("점검 작업"이 점의 30% 넘게 나옴)은 선을 긋지 않음 — 지도가 한 점으로 몰려 시커메지지 않게', gen.edges.length === 0);
+  check('"아침-브리핑" 과 "아침 브리핑 해 줘" 처럼 띄어쓰기·하이픈이 달라도 같은 이름으로 봄', has(kn.buildBrain({ skills: [{ name: '아침-브리핑', description: '아침 일정을 표로' }], chats: [{ id: 'c1', title: '아침 브리핑 해 줘', updatedAt: '2026-10-07T00:00:00Z' }] }), '대화:c1', '스킬:아침-브리핑', 'mention'));
+  const big = kn.buildMap({ tasks: Array.from({ length: 420 }, (_, i) => ({ id: `b${i}`, title: `할 일 ${i}`, status: i % 3 ? '진행중' : '완료' })), wiki: Array.from({ length: 90 }, (_, i) => ({ name: `문서${i}`, text: '' })) });
+  check('점이 많으면 종류마다 자름(할 일 300 · 위키 60) — 안 그려진 개수는 omitted 로 알려 주고, 끝난 일은 뒤로 밀림', big.nodes.filter((n) => n.type === '할 일').length === 300 && big.omitted['할 일'] === 120 && big.omitted['위키'] === 30
+    && big.nodes.filter((n) => n.type === '할 일').filter((n) => n.facts.includes('상태 완료')).length === 20);
+  check('깨진 자료(목록이 아님·null·숫자)가 섞여도 점 만들기가 죽지 않음', kn.buildMap({ projects: 'x', tasks: [null, 5, { id: 1, title: 7 }], meetings: { a: 1 }, approvals: [[]], wiki: [{}], people: [undefined, { name: '' }] }).nodes.length >= 1 && kn.buildBrain({ memory: [null, 7, ''], chats: 3, skills: [{}] }).nodes.length >= 6);
+
+  // ---- 뇌 그래프
+  const b = kn.buildBrain({ memory: ['- 2026-10-06 보고서는 표로 받는 걸 좋아함', '- 수압시험 절차는 위키를 본다'], wiki: [{ name: '수압시험 절차' }], skills: [{ name: '아침-브리핑', description: '아침 7시 브리핑 방법' }],
+    chats: [{ id: 'c1', title: '수압시험 절차를 조사해서 위키에 저장해', updatedAt: '2026-10-07T01:00:00Z' }], schedule: [{ id: 's1', 이름: '아침 7시 브리핑', 지시문: '아침-브리핑 스킬대로 해 줘', when: '매일 07:00' }] });
+  const hubs = b.nodes.filter((n) => n.hub);
+  check('뇌 그래프: 가운데 "산초" 점 + 칸 점 다섯(기억·위키·스킬·대화·예약, 개수 표시)이 이어지고, 항목은 모두 자기 칸에 이어짐(own)', hubs.length === 6 && b.nodes.some((n) => n.id === '뇌:brain') && ['기억', '위키', '스킬', '대화', '예약'].every((t) => has(b, '뇌:brain', `${t}:hub`, 'own'))
+    && b.nodes.filter((n) => !n.hub).every((n) => has(b, n.id, `${n.type}:hub`, 'own')) && b.nodes.find((n) => n.id === '기억:hub').title === '기억 2' && b.edges.filter((e) => e.kind === 'own').length === 5 + 6);
+  check('뇌 그래프 언급: 기억 글·대화 제목이 위키 이름을, 예약 지시문이 스킬 이름을 부르면 선 — 기억의 "- " 표시는 떼고, 칸 점에는 언급 선이 안 붙음', has(b, '기억:1', '위키:수압시험 절차', 'mention') && has(b, '대화:c1', '위키:수압시험 절차', 'mention') && has(b, '예약:s1', '스킬:아침-브리핑', 'mention')
+    && b.nodes.find((n) => n.id === '기억:0').title.startsWith('2026-10-06') && !b.edges.some((e) => e.kind === 'mention' && ([e.a, e.b].some((id) => id.endsWith(':hub') || id === '뇌:brain'))));
+  const many = kn.buildBrain({ chats: Array.from({ length: 150 }, (_, i) => ({ id: `c${i}`, title: `대화 ${i}번`, updatedAt: '2026-10-07' })) });
+  check('뇌 그래프도 종류마다 자름(대화 100) — 칸 점에는 전체 개수(150)와 "가장 최근 100개만 그림" 이 적힘', many.nodes.filter((n) => n.type === '대화' && !n.hub).length === 100 && many.omitted['대화'] === 50 && many.nodes.find((n) => n.id === '대화:hub').title === '대화 150' && many.nodes.find((n) => n.id === '대화:hub').facts[0].includes('100개만'));
+
+  // ---- 점 배치(힘 계산)
+  const g1 = kn.buildMap(data), g2 = kn.buildMap(data), s1 = kn.sim(g1.nodes, g1.edges), s2 = kn.sim(g2.nodes, g2.edges);
+  s1.step(400); s2.step(400);
+  check('점 배치: 같은 점·선이면 늘 같은 모양 · 400걸음 안에 안정(열기 ≤ 0.02) · 좌표가 숫자가 아닌(NaN) 점이 없음', g1.nodes.every((n, i) => n.x === g2.nodes[i].x && n.y === g2.nodes[i].y) && s1.alpha <= 0.02 && g1.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)));
+  const d = (a, c) => Math.hypot(a.x - c.x, a.y - c.y), by = new Map(g1.nodes.map((n) => [n.id, n])), refAvg = g1.edges.filter((e) => e.kind === 'ref').reduce((s, e) => s + d(by.get(e.a), by.get(e.b)), 0) / g1.edges.filter((e) => e.kind === 'ref').length;
+  let all = 0, c2 = 0; for (let i = 0; i < g1.nodes.length; i++) for (let j = i + 1; j < g1.nodes.length; j++) { all += d(g1.nodes[i], g1.nodes[j]); c2++; }
+  check('점 배치: 이어진 점끼리는 아무 두 점보다 평균적으로 가까움(이어진 것끼리 모여 있음) · 겹쳐 붙은 점(거리 < 4)이 없음', refAvg < all / c2 && g1.nodes.every((a, i) => g1.nodes.every((c, j) => i >= j || d(a, c) >= 4)));
+  const pin = g1.nodes[0], px = pin.x, py = pin.y; pin.pinned = true; s1.reheat(1); s1.step(40);
+  check('끌어서 고정한(pinned) 점은 배치를 다시 해도 제자리에 있음', pin.x === px && pin.y === py);
+  const bb = kn.bounds(g1.nodes);
+  check('bounds: 모든 점이 들어가는 사각형(점이 없으면 기본값)', g1.nodes.every((n) => n.x >= bb.x0 && n.x <= bb.x1 && n.y >= bb.y0 && n.y <= bb.y1) && kn.bounds([]).x1 > kn.bounds([]).x0);
+  const nodes = Array.from({ length: 900 }, (_, i) => ({ id: `n${i}`, type: '할 일', title: `점${i}`, hub: false })), edges = nodes.slice(1).map((n, i) => ({ a: n.id, b: nodes[Math.floor(i / 3)].id, kind: 'ref' }));
+  const t0 = Date.now(); kn.sim(nodes, edges).step(40);
+  check(`점이 900개여도 배치 40걸음이 6초 안에 끝남(칸 나눠 가까운 것끼리만 밀기) — 실제 ${Date.now() - t0}ms · NaN 없음`, Date.now() - t0 < 6000 && nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)));
+}
+
+async function runKnowledge(ck) {
+  const get = (u, c = ck) => fetch(BASE + u, { headers: c ? { Cookie: c } : {} });
+  const [pg, js] = await Promise.all([get('/m/knowledge.html', null), get('/m/knowledge-calc.js', null)]);
+  const page = await (await get('/m/knowledge.html')).text(), main = await (await get('/')).text(), calcJs = await (await get('/m/knowledge-calc.js')).text();
+  check('지식노트 화면(public/m/knowledge.html)과 계산 파일은 로그인해야 열림(401) · 로그인하면 열림(200)', pg.status === 401 && js.status === 401 && (await get('/m/knowledge.html')).status === 200 && calcJs.includes('buildBrain'));
+  check('왼쪽 메뉴 "지식노트" 가 "준비 중" 대신 이 화면(/m/knowledge.html)을 띄움', main.includes("showKnowledge()") && main.includes('src="/m/knowledge.html"') && main.includes("current === '지식노트'"));
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]); let ok = scripts.length > 0;
+  for (const s of scripts) { try { new vm.Script(s); } catch { ok = false; } }
+  check('화면 스크립트에 문법 오류가 없음', ok);
+  check('그림 라이브러리 없이 캔버스로 직접 그림: 바깥 주소 스크립트·d3·cytoscape·vis·echarts 없음, 캔버스 셋(지도·오브·뇌 그래프), 이 사이트 파일(db.js·inbox.js·knowledge-calc.js)만 불러옴',
+    !/<script[^>]+src="(https?:)?\/\//.test(page) && !/d3\.|cytoscape|vis-network|echarts|chart\.js/i.test(page) && ['cMap', 'cOrb', 'cBrain'].every((id) => page.includes(`<canvas id="${id}"`)) && (page.match(/getContext\('2d'\)/g) || []).length >= 2
+    && [...page.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]).every((u) => u.startsWith('/m/')));
+  check('지식 지도 조작: 끌기(pointer)·휠 확대·두 손가락 확대(pinch)·＋－⤢ 단추·점 누르면 미리보기(열기 → 메뉴 이동)·점 찾기·종류 숨기기·고정한 점 더블클릭으로 풀기',
+    ['pointerdown', 'pointermove', 'addEventListener(\'wheel\'', 'this.pinch', 'data-z="in"', 'data-z="fit"', 'showPeek', 'toParent(go)', 'id="q"', 'view.hidden', "addEventListener('dblclick'"].every((x) => page.includes(x)));
+  check('🧠 단추 · 오브 ↔ 그래프 전환 단추 · 오브 아래 채팅(/api/chats 로 같은 비서와 대화) · 사용자 말은 JSON 으로 보내고 ■ 중지 가능', ['🧠 뇌 그래프', 'id="bOrb"', 'id="bGraph"', "'/api/chats'", '/messages', 'ctl.abort()', 'AbortController'].every((x) => page.includes(x)));
+  check('그래프는 단추를 누를 때만 만들고 그림: buildBrain 호출은 showGraph 안에 한 번뿐이고, showGraph 는 그래프 전환(setShow) 때와 그래프를 보는 중 새로 읽을 때만 불림 · 오브로 돌아가면 그래프 그리기를 끔(brainView.setOn(false))',
+    (page.match(/buildBrain\(/g) || []).length === 1 && /function showGraph\(\)[^]*?kn\.buildBrain\(/.test(page) && (page.match(/showGraph\(\)/g) || []).length === 4 && page.includes("brainView.setOn(false); orb.start()") && page.includes('if (!this.on) return;'));
+  const sp = (k) => Number((new RegExp(`${k}: \\{ speed: ([0-9.]+)`).exec(page) || [])[1]);
+  check('오브: 생각하면 빨라지고(생각 > 말함 > 대기) 말하면 출렁이고(진폭 amp·글이 흘러나올 때마다 pulse 물결), 쉬면 느리게 숨 쉼 — 그림 도구는 링·호·입자·핵 · 모션을 줄이는 설정(prefers-reduced-motion)을 따르고 화면이 가려지면 멈춤',
+    sp('thinking') > sp('speaking') && sp('speaking') > sp('idle') && sp('idle') > 0 && ['RINGS', 'ARCS', 'PARTS', 'ripples', 'orb.pulse(', "orb.setState('thinking')", "orb.setState('speaking')", 'prefers-reduced-motion', 'visibilitychange', 'cancelAnimationFrame'].every((x) => page.includes(x)));
+  check('화면에 넣는 글(점 이름·본문·찾기 결과·답)은 글자를 거르거나(esc) textContent 로만 넣음 — 점 이름이 <script> 여도 실행되지 않음', page.includes('const esc =') && page.includes('${esc(n.title)}') && page.includes('${esc(n.text)}') && page.includes('<span>${esc(n.title)}</span>')
+    && page.includes("$('reply').textContent = got") && !/innerHTML\s*\+?=\s*got/.test(page) && !/\$\{n\.(title|text)\}/.test(page));
+  // 화면이 읽는 주소들의 모양 (바뀌면 화면이 조용히 비게 되므로 여기서 잡는다)
+  const J = async (u) => (await get(u)).json();
+  const [wk, sk, mem, ch, sc, pe, ap] = await Promise.all(['/api/wiki', '/api/skills', '/api/memory', '/api/chats', '/api/schedule', '/api/approvals/people', '/api/approvals'].map(J));
+  check('화면이 읽는 주소의 모양: 위키·스킬·기억·예약·결재는 { items: [...] } · 대화·사람은 목록 — 지식 지도·뇌 그래프의 자료 그대로', [wk, sk, mem, sc, ap].every((j) => Array.isArray(j.items)) && Array.isArray(ch) && Array.isArray(pe) && (pe.length === 0 || ('name' in pe[0] && 'dept' in pe[0]))
+    && (ch.length === 0 || ('id' in ch[0] && 'title' in ch[0] && 'updatedAt' in ch[0])));
+  for (const n of ['projects', 'tasks', 'meetings']) check(`db 목록(/api/db/${n})도 목록으로 읽힘`, Array.isArray(await J(`/api/db/${n}`)));
+}
+
 // 목표(OKR): 전사 → 부서 → 개인 나무, KR(지표·시작값·목표값·현재값·가중치·기한), 진척 = KR 달성률의 가중 평균·상위는 하위의 평균, 색(순조/주의/위험), 비서 스킬
 async function runOkr(ck) {
   const okr = require('./public/m/okr-calc.js');
@@ -3916,6 +4005,7 @@ srv.ready.then(async () => {
     if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속·커넥터 점검만 빨리 돌릴 때: SELFTEST_ONLY=access (또는 connector) node selftest.js
     else if (process.env.SELFTEST_ONLY === 'connector') await runConnector();
     else if (process.env.SELFTEST_ONLY === 'voice') await runVoice();
+    else if (process.env.SELFTEST_ONLY === 'knowledge') runKnowledgeCalc(); // 서버 없이 지식노트 계산만 (화면 점검은 전체 점검에서)
     else {
       await run();
       await runNoClaude();
