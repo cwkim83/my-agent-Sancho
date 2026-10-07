@@ -174,6 +174,7 @@ async function run() {
   const people = await runUsers(ck);
   await runMessenger(ck, people);
   await runMeeting(ck, people);
+  await runApprovals(ck, people);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -2245,6 +2246,178 @@ async function runMeeting(ck, { CM, CS, CC }) { // CM 김민준(일반) · CS �
 }
 
 // 여러 사람이 쓰기 전의 data/ (chats·memory.md·schedule.json·journal/ 이 data/ 바로 아래) 를 첫 관리자의 개인 폴더로 옮기는가: 옮기기만 하고 지우지 않고, 이미 있는 건 덮어쓰지 않는다
+// 결재: 기안(작성중) → 상신 → 검토자 순서대로 승인/반려 → 승인자 승인/반려/전결. 서명은 결재하는 본인 로그인으로만, 기안자가 고쳐도 서명 기록은 안 바뀐다
+async function runApprovals(ck, { CM, CS, CC }) { // ck 첫 관리자(테스트·승인자) · CM 김민준(설계·일반, 기안자) · CS 이서연(구매·일반, 검토자) · CC 최관리(경영·관리자, 결재선에 안 넣음)
+  const call = (m, u, c, b) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json', Cookie: c }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const J = (r) => r.json();
+  const act = async (m, u, c, b) => { const r = await call(m, u, c, b), j = await J(r); return { status: r.status, d: j.item, err: j.error, j }; };
+  const list = async (c) => (await J(await call('GET', '/api/approvals', c))).items;
+  const get = (c, id) => call('GET', `/api/approvals/${id}`, c);
+  const create = (c, o = {}) => act('POST', '/api/approvals', c, o);
+  const put = (c, id, o) => act('PUT', `/api/approvals/${id}`, c, o);
+  const submit = (c, id) => act('POST', `/api/approvals/${id}/submit`, c, {});
+  const decide = (c, id, o) => act('POST', `/api/approvals/${id}/decide`, c, o);
+  const todo = async (c) => (await J(await call('GET', '/api/approvals/summary', c))).todo;
+  const rawDoc = (id) => JSON.parse(fs.readFileSync(path.join(dir, 'db', 'approvals.json'), 'utf8')).find((x) => x.id === id);
+  const up = (c, id, name, buf) => fetch(`${BASE}/api/approvals/${id}/files?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Cookie: c }, body: buf });
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const base = { title: '비파괴검사 외주 발주', form: '구매 요청', body: '1. 목적: 열교환기 용접부 검사', amount: 4200000 };
+  const t0 = Date.now() - 2000;
+
+  // ---- 화면·막힌 길
+  const noLogin = await Promise.all([['GET', '/api/approvals'], ['POST', '/api/approvals'], ['GET', '/api/approvals/summary'], ['GET', '/api/approvals/people'], ['GET', '/api/approvals/ap00000000'], ['POST', '/api/approvals/ap00000000/decide'], ['GET', '/m/approval.html']]
+    .map(([m, u]) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{}' : undefined })));
+  check('결재: 로그인 없이는 목록·만들기·숫자·사람 목록·문서·결재·화면 모두 401', noLogin.every((r) => r.status === 401));
+  const page = await (await fetch(BASE + '/m/approval.html', { headers: { Cookie: ck } })).text();
+  check('결재 화면(public/m/approval.html): 결재할 문서·내가 올린 문서 칸, 승인·반려·전결 단추와 두 번 확인, 결재란(도장), 인쇄 양식(@media print·window.print)이 있음',
+    ['결재할 문서', '내가 올린 문서', 'data-k="approve"', 'data-k="reject"', 'data-k="final"', '되돌릴 수 없어요', '결재란', '@media print', 'window.print()', '/api/approvals', "db.watch('approvals'"].every((x) => page.includes(x))
+    && ['approve', 'final', 'reject', 'submit'].every((t) => new RegExp(`const MARK = \\{[^}]*\\b${t}: '`).test(page)) // 서명 기록 종류마다 화면에 쓸 글자가 있음 (시연에서 결재 기록에 undefined 가 보인 일이 있었다)
+    && page.includes("replace(/[,\\s]/g, '')") && page.includes('/^\\d+$/.test(raw)')); // 금액 칸의 정규식(쉼표·공백 빼기, 숫자만): 시연에서 역슬래시가 빠져 "4,200,000" 이 거절되던 일이 있었다
+  const mainHtml = await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text();
+  check('메인 화면: 결재 메뉴가 /m/approval.html 을 띄우고, 대시보드에 "결재할 문서" 카드(#결재)가 있고 서버가 센 숫자(/api/approvals/summary)를 읽어 approvals 바뀜에 따라 다시 그림',
+    mainHtml.includes('showApproval(arg)') && mainHtml.includes('/m/approval.html') && mainHtml.includes('href="#결재"') && mainHtml.includes('결재할 문서</span>') && mainHtml.includes('/api/approvals/summary') && mainHtml.includes("db.watch('approvals', loadApprTodo)"));
+  check('일반 업무 자료 주소(/api/db/approvals)로는 결재 문서를 읽지도 고치지도 지우지도 못함(404) — 서명은 결재 주소로만 남음',
+    (await Promise.all([['GET', '/api/db/approvals'], ['PUT', '/api/db/approvals/x'], ['DELETE', '/api/db/approvals/x']].map(([m, u]) => call(m, u, ck, m === 'PUT' ? { status: '완료' } : undefined)))).every((r) => r.status === 404));
+  const ppl = await J(await call('GET', '/api/approvals/people', CM));
+  check('결재선에 고를 사람 목록: 이름·부서·아이디만(비밀번호·역할 칸 없음)', ppl.length >= 4 && ppl.every((x) => Object.keys(x).sort().join() === 'dept,name,username') && ppl.some((x) => x.username === 'minjun' && x.name === '김민준' && x.dept === '설계'));
+
+  // ---- 기안(작성중)
+  const a = await create(CM, base);
+  check('새 기안: 작성중 · 기안자는 로그인한 사람(김민준·설계) · 문서번호 기안-<해>-0001 · 서명 기록(log) 없음 · 올린 적 없음(round 0) · 내가 고치고 지울 수 있음',
+    a.status === 200 && a.d.status === '작성중' && a.d.drafter === 'minjun' && a.d.drafterName === '김민준' && a.d.drafterDept === '설계' && a.d.no === `기안-${new Date().getFullYear()}-0001`
+    && a.d.log.length === 0 && a.d.round === 0 && a.d.form === '구매 요청' && a.d.amount === 4200000 && a.d.mine === true && a.d.canEdit === true && a.d.canDelete === true);
+  const bads = [{ form: '휴가' }, { amount: -1 }, { amount: 1.5 }, { amount: 'abc' }, { amount: 1e13 }, { title: '가'.repeat(101) }, { body: '가'.repeat(5001) }, { reviewers: ['minjun'] }, { reviewers: ['nobody'] }, { reviewers: ['seoyeon', 'seoyeon'] },
+    { reviewers: ['seoyeon'], approver: 'seoyeon' }, { reviewers: ['a', 'b', 'c', 'd', 'e', 'f'] }, { approver: 5 }, { approver: 'nobody' }, { attachments: ['없는파일.txt'] }];
+  const badRes = await Promise.all(bads.map((o) => call('POST', '/api/approvals', CM, { ...base, ...o })));
+  check('기안 입력 검사: 이상한 양식·음수/소수/글자/너무 큰 금액·긴 제목·긴 본문·기안자가 검토자·없는 사람·같은 사람 두 번·검토자 6명·없는 첨부는 모두 400 이고 문서가 늘지 않음', badRes.every((r) => r.status === 400) && (await list(CM)).length === 1);
+  const forgedNew = await create(CM, { ...base, title: '위조 시도', status: '완료', drafter: 'seoyeon', drafterName: '가짜', round: 9, step: 3, line: [{ username: 'seoyeon', role: 'approve' }], log: [{ type: 'approve', by: 'seoyeon' }], id: 'apffffffff', no: '기안-1999-0001' });
+  check('새 기안에 상태·기안자·결재선·서명·번호를 끼워 보내도 서버가 버림(작성중·기안자는 나·서명 없음·서버가 정한 id/번호)', forgedNew.status === 200 && forgedNew.d.status === '작성중' && forgedNew.d.drafter === 'minjun' && forgedNew.d.log.length === 0 && forgedNew.d.line.length === 0
+    && forgedNew.d.round === 0 && forgedNew.d.id !== 'apffffffff' && /^기안-\d{4}-0002$/.test(forgedNew.d.no));
+  await call('DELETE', `/api/approvals/${forgedNew.d.id}`, CM);
+  const seenBy = await Promise.all([CS, CC, ck].map(async (c) => ({ listed: (await list(c)).some((x) => x.id === a.d.id), st: (await get(c, a.d.id)).status })));
+  check('작성중 기안은 기안자만 봄: 다른 일반 사용자·관리자(첫 관리자·chief)도 목록에 없고 열어도 "없는 문서"(404)', seenBy.every((x) => !x.listed && x.st === 404) && (await get(CM, a.d.id)).status === 200);
+  const e1 = await put(CM, a.d.id, { title: '비파괴검사 외주 발주 (수정)', reviewers: ['seoyeon'], approver: 'tester' });
+  check('작성중은 기안자가 고칠 수 있음(제목·검토자·승인자), 결재 후보(plan)에 이름이 풀려서 보임', e1.status === 200 && e1.d.title.endsWith('(수정)') && e1.d.reviewers.join() === 'seoyeon' && e1.d.approver === 'tester' && e1.d.plan.map((p) => `${p.role}:${p.name}`).join() === 'review:이서연,approve:테스트');
+  const forged = await put(CM, a.d.id, { status: '완료', step: 9, round: 9, drafter: 'seoyeon', drafterName: '가짜', line: [{ username: 'minjun', name: '가짜', role: 'approve' }], log: [{ round: 1, type: 'approve', by: 'seoyeon', name: '가짜', at: '2020-01-01T00:00:00.000Z' }], id: 'apffffffff', no: '가짜' });
+  const rawA = rawDoc(a.d.id);
+  check('기안자가 서명·상태·결재선(line)·단계·기안자·번호를 본문에 끼워 고쳐 보내도 서버가 버림(작성중 그대로·서명 기록 없음)', forged.status === 200 && rawA.status === '작성중' && rawA.log.length === 0 && rawA.line.length === 0 && rawA.round === 0 && rawA.drafter === 'minjun' && rawA.no === a.d.no && rawA.id === a.d.id && rawA.step === null);
+  check('다른 사람은 남의 작성중 기안을 고치지도 올리지도 지우지도 못함(404)', (await put(CS, a.d.id, { title: '남의 것' })).status === 404 && (await submit(CS, a.d.id)).status === 404 && (await call('DELETE', `/api/approvals/${a.d.id}`, CS)).status === 404 && rawDoc(a.d.id).title.endsWith('(수정)'));
+
+  // ---- 상신 검사 · 지우기
+  const z = (await create(CM, {})).d, s1 = await submit(CM, z.id);
+  await put(CM, z.id, { title: '검증용' }); const s2 = await submit(CM, z.id);
+  await put(CM, z.id, { body: '본문' }); const s3 = await submit(CM, z.id);
+  check('상신 검사: 제목·본문·승인자가 비어 있으면 각각 400 (작성중 그대로, 내용 없는 초안은 저장만 됨)', s1.status === 400 && s2.status === 400 && s3.status === 400 && s3.err.includes('승인자') && rawDoc(z.id).status === '작성중');
+  check('작성중 기안 지우기: 기안자만(남은 404), 지우면 사라짐', (await call('DELETE', `/api/approvals/${z.id}`, CS)).status === 404 && (await call('DELETE', `/api/approvals/${z.id}`, CM)).status === 200 && !(await list(CM)).some((x) => x.id === z.id));
+
+  // ---- 상신 → 검토 승인 → 승인자 전결
+  const sub = await submit(CM, a.d.id);
+  check('상신: 진행 · 1회차 · 결재선이 굳음(검토 이서연 → 승인 테스트) · 지금 차례는 검토자(step 0) · 로그에 상신(기안자 이름·시각) 한 줄',
+    sub.status === 200 && sub.d.status === '진행' && sub.d.round === 1 && sub.d.step === 0 && sub.d.line.map((l) => `${l.role}:${l.username}:${l.name}`).join() === 'review:seoyeon:이서연,approve:tester:테스트'
+    && sub.d.log.length === 1 && sub.d.log[0].type === 'submit' && sub.d.log[0].by === 'minjun' && sub.d.log[0].name === '김민준' && Date.parse(sub.d.log[0].at) >= t0);
+  check('올린 뒤에는 기안자도 못 고치고(409)·지우지 못하고(409)·다시 올리지 못하고(409)·첨부도 못 더함(409)',
+    (await put(CM, a.d.id, { title: '몰래 고침' })).status === 409 && (await call('DELETE', `/api/approvals/${a.d.id}`, CM)).status === 409 && (await submit(CM, a.d.id)).status === 409 && (await up(CM, a.d.id, 'x.txt', Buffer.from('x'))).status === 409 && !rawDoc(a.d.id).title.includes('몰래'));
+  check('올린 문서는 결재선에 든 사람(이서연·테스트)과 기안자에게만 보임: 결재선에 없는 관리자(chief)는 목록에 없고 열면 404',
+    (await get(CS, a.d.id)).status === 200 && (await get(ck, a.d.id)).status === 200 && (await get(CM, a.d.id)).status === 200 && (await get(CC, a.d.id)).status === 404 && !(await list(CC)).some((x) => x.id === a.d.id));
+  check('"결재할 문서" 숫자: 지금 차례인 이서연만 1, 승인자(테스트)·기안자는 0 — 화면 목록의 myTurn 과 같음', await todo(CS) === 1 && await todo(ck) === 0 && await todo(CM) === 0 && (await list(CS)).find((x) => x.id === a.d.id).myTurn === true && (await list(ck)).find((x) => x.id === a.d.id).myTurn === false);
+  const dec = (c, o) => decide(c, a.d.id, o), logLen = () => rawDoc(a.d.id).log.length;
+  const wrong = [await dec(ck, { action: 'approve' }), await dec(CM, { action: 'approve' })];
+  check('차례가 아닌 사람(아직 차례 전인 승인자·기안자)의 결재는 403, 결재선 밖(chief)은 404 — 서명이 하나도 안 남음', wrong.every((r) => r.status === 403) && (await dec(CC, { action: 'approve' })).status === 404 && logLen() === 1);
+  const badBody = [await dec(CS, { action: 'final' }), await dec(CS, { action: 'bogus' }), await dec(CS, {}), await dec(CS, { action: 'reject' }), await dec(CS, { action: 'reject', comment: '   ' }), await dec(CS, { action: 'approve', comment: '가'.repeat(501) })];
+  check('결재 입력 검사: 검토자의 전결·이상한 방법·방법 없음·의견 없는 반려·공백뿐인 반려 의견·501자 의견은 400 이고 서명이 안 남음', badBody.every((r) => r.status === 400) && logLen() === 1);
+  const fake = await dec(CS, { action: 'approve', comment: '확인했습니다', by: 'tester', name: '가짜', dept: '가짜부', at: '2020-01-01T00:00:00.000Z', role: 'approve', round: 9, type: 'final' });
+  const lg = fake.d && fake.d.log[1];
+  check('검토 승인: 서명에는 로그인한 이서연의 이름·부서·시각(지금)을 서버가 찍음 — 본문에 다른 이름·부서·시각·종류·회차를 끼워도 무시. 승인하면 다음(승인자) 차례',
+    fake.status === 200 && lg.type === 'approve' && lg.by === 'seoyeon' && lg.name === '이서연' && lg.dept === '구매' && lg.role === 'review' && lg.round === 1 && lg.comment === '확인했습니다' && Date.parse(lg.at) >= t0 && fake.d.step === 1 && fake.d.status === '진행');
+  check('같은 사람이 또 눌러도(차례가 지남) 403 이라 한 번만 서명됨 · 이제 승인자(테스트) 차례: 숫자 테스트 1·이서연 0', (await dec(CS, { action: 'approve' })).status === 403 && logLen() === 2 && await todo(ck) === 1 && await todo(CS) === 0);
+  const before = JSON.stringify(rawDoc(a.d.id).log);
+  const fin = await dec(ck, { action: 'final', comment: '전결 처리' });
+  check('승인자의 전결: 완료 · 서명이 전결(테스트)로 남음 · 차례 없음(step null) · 완료 시각 · 더는 내 차례가 아님',
+    fin.status === 200 && fin.d.status === '완료' && fin.d.step === null && fin.d.log[2].type === 'final' && fin.d.log[2].name === '테스트' && fin.d.log[2].role === 'approve' && fin.d.log[2].comment === '전결 처리' && !!fin.d.completedAt && fin.d.myTurn === false && await todo(ck) === 0);
+  check('앞선 서명(상신·이서연 승인)은 완료 뒤에도 한 글자도 안 바뀜', JSON.stringify(fin.d.log.slice(0, 2)) === before);
+  const afterLog = JSON.stringify(rawDoc(a.d.id).log);
+  check('완료된 문서는 기안자가 서명 기록까지 고쳐 보내도 409, 결재도 409 — 서명 기록 그대로', (await put(CM, a.d.id, { title: '바꿈', log: [] })).status === 409 && (await dec(ck, { action: 'reject', comment: 'x' })).status === 409 && JSON.stringify(rawDoc(a.d.id).log) === afterLog);
+
+  // ---- 반려 → 고쳐서 다시 올리기(2회차) → 승인
+  const D = (await create(CM, { ...base, title: '출장 신청', form: '출장', amount: 0, reviewers: ['seoyeon'], approver: 'chief' })).d;
+  await submit(CM, D.id);
+  const rj0 = await decide(CS, D.id, { action: 'reject' }), rj = await decide(CS, D.id, { action: 'reject', comment: '일정이 안 맞아요' });
+  check('검토자 반려: 의견이 있어야 하고(없으면 400), 반려되면 상태 반려 · 차례 없음 · 기안자에게 돌아가 다시 고칠 수 있음 · 승인자에게는 내 차례가 아님',
+    rj0.status === 400 && rj.status === 200 && rj.d.status === '반려' && rj.d.step === null && rj.d.log.at(-1).type === 'reject' && rj.d.log.at(-1).comment === '일정이 안 맞아요' && (await J(await get(CM, D.id))).item.canEdit === true && await todo(CC) === 0 && await todo(CS) === 0);
+  const ed = await put(CM, D.id, { body: '일정을 고쳤어요', approver: 'tester' });
+  check('반려된 문서는 고칠 수 있고, 서명 기록과 굳은 결재선(이서연→chief)은 다시 올리기 전까지 안 바뀜', ed.status === 200 && ed.d.body === '일정을 고쳤어요' && ed.d.approver === 'tester' && ed.d.line.map((l) => l.username).join() === 'seoyeon,chief' && ed.d.log.length === 2);
+  const re = await submit(CM, D.id);
+  check('고쳐서 다시 올리면 2회차: 진행 · 결재선이 새로 굳음(이서연 → 테스트) · 처음 차례 · 1회차 기록(반려 의견)은 그대로 남고 상신이 한 줄 더', re.status === 200 && re.d.round === 2 && re.d.status === '진행' && re.d.step === 0
+    && re.d.line.map((l) => l.username).join() === 'seoyeon,tester' && re.d.log.length === 3 && re.d.log[1].type === 'reject' && re.d.log[1].round === 1 && re.d.log[2].type === 'submit' && re.d.log[2].round === 2);
+  check('결재선에서 빠진 chief 는 그 문서를 더는 못 봄(404)', (await get(CC, D.id)).status === 404);
+  await decide(CS, D.id, { action: 'approve' });
+  const fd = await decide(ck, D.id, { action: 'approve', comment: '승인' });
+  check('2회차를 끝까지 승인하면 완료 (승인자는 전결 대신 그냥 승인도 됨, 서명 종류가 approve)', fd.d.status === '완료' && fd.d.log.at(-1).type === 'approve' && fd.d.log.filter((l) => l.round === 2).length === 3);
+
+  // ---- 검토자 없이 기안자 본인이 승인자 · 동시에 두 번
+  const F = (await create(ck, { title: '대표 직접 기안', body: '본문', approver: 'tester' })).d, fs1 = await submit(ck, F.id);
+  check('검토자 없이 기안자 본인이 승인자인 문서(대표가 직접 올림)도 올릴 수 있고 내 차례에 뜸 → 승인하면 바로 완료', fs1.status === 200 && fs1.d.line.length === 1 && fs1.d.line[0].role === 'approve' && fs1.d.myTurn === true && await todo(ck) === 1
+    && (await decide(ck, F.id, { action: 'approve' })).d.status === '완료' && await todo(ck) === 0);
+  const H = (await create(CM, { ...base, title: '동시에 누르기', reviewers: ['seoyeon'], approver: 'tester' })).d; await submit(CM, H.id);
+  const race = await Promise.all([decide(CS, H.id, { action: 'approve' }), decide(CS, H.id, { action: 'approve' })]);
+  check('같은 사람이 동시에 두 번 눌러도 서명은 한 번만(200 하나·403 하나)', race.map((r) => r.status).sort().join() === '200,403' && rawDoc(H.id).log.length === 2 && rawDoc(H.id).step === 1);
+  await decide(ck, H.id, { action: 'reject', comment: '시험 문서 정리' }); // 시험용 문서를 "내 차례"에서 치운다
+
+  // ---- 첨부
+  const E = (await create(CM, { title: '첨부 시험', body: '본문', approver: 'tester' })).d, G = (await create(CM, { title: '다른 문서', body: '본문' })).d;
+  const u1 = await up(CM, E.id, '견적서.txt', Buffer.from('견적 내용 4,200,000원')), u1j = await J(u1), ug = await J(await up(CM, G.id, '남의첨부.txt', Buffer.from('G 문서의 파일')));
+  const bigUp = await up(CM, E.id, 'big.bin', Buffer.alloc(1024 * 1024 + 10, 1));
+  check('첨부 올리기: 기안자만(남은 404) · 이름·크기·종류가 돌아옴 · 실행 파일(.exe)·빈 파일은 400 · 한도(1MB) 넘으면 413',
+    u1.status === 200 && u1j.name === '견적서.txt' && u1j.size > 0 && (await up(CS, E.id, 'a.txt', Buffer.from('x'))).status === 404 && (await up(CM, E.id, '악성.exe', Buffer.from('MZ'))).status === 400 && (await up(CM, E.id, 'empty.txt', Buffer.alloc(0))).status === 400 && bigUp.status === 413);
+  const att = await put(CM, E.id, { attachments: [u1j.file] });
+  check('첨부를 문서에 붙임: 이 문서에 올린 파일만(없는 이름·다른 문서(G)의 파일은 400, 6개는 400)', att.status === 200 && att.d.attachments.length === 1 && att.d.attachments[0].name === '견적서.txt'
+    && (await put(CM, E.id, { attachments: ['없는파일.txt'] })).status === 400 && (await put(CM, E.id, { attachments: [ug.file] })).status === 400 && (await put(CM, E.id, { attachments: Array.from({ length: 6 }, (_, i) => `${i}${u1j.file}`) })).status === 400 && rawDoc(E.id).attachments.length === 1);
+  const dlUrl = (id, f) => `${BASE}/api/approvals/${id}/files/${encodeURIComponent(f)}`, dl = await fetch(dlUrl(E.id, u1j.file), { headers: { Cookie: CM } });
+  const noSee = await Promise.all([CS, CC, ck].map((c) => fetch(dlUrl(E.id, u1j.file), { headers: { Cookie: c } })));
+  check('기안자는 첨부를 받을 수 있고(내용 그대로·내려받기), 아직 못 보는 사람(작성중)은 404', dl.status === 200 && (await dl.text()) === '견적 내용 4,200,000원' && /attachment/.test(dl.headers.get('content-disposition') || '') && noSee.every((r) => r.status === 404));
+  await put(CM, E.id, { reviewers: ['seoyeon'] }); await submit(CM, E.id);
+  const trav = await Promise.all(['..%2F..%2Fusers.json', '..%5C..%5Cusers.json', encodeURIComponent(ug.file)].map((n) => fetch(`${BASE}/api/approvals/${E.id}/files/${n}`, { headers: { Cookie: CS } })));
+  check('올린 뒤에는 결재선(이서연·승인자)이 첨부를 받음 · 결재선 밖(chief)은 404 · 문서에 안 붙은 파일·폴더를 벗어나는 이름은 404',
+    (await fetch(dlUrl(E.id, u1j.file), { headers: { Cookie: CS } })).status === 200 && (await fetch(dlUrl(E.id, u1j.file), { headers: { Cookie: ck } })).status === 200 && (await fetch(dlUrl(E.id, u1j.file), { headers: { Cookie: CC } })).status === 404 && trav.every((r) => r.status === 404));
+  check('작성중 기안 G 는 기안자만 지움(남은 404) · 올린 문서(E)는 지울 수 없음(409)', (await call('DELETE', `/api/approvals/${G.id}`, CS)).status === 404 && (await call('DELETE', `/api/approvals/${G.id}`, CM)).status === 200 && (await call('DELETE', `/api/approvals/${E.id}`, CM)).status === 409);
+  await decide(CS, E.id, { action: 'reject', comment: '시험 문서 정리' }); // 시험용 문서를 "내 차례"에서 치운다
+
+  // ---- 관리자도 결재선이 아니면 못 봄 · 바뀜 알림
+  check('관리자(chief)는 결재선에 든 적이 없으면 어떤 문서도 목록에 없음(관리자라고 다 보지는 못함)', (await list(CC)).length === 0 && await todo(CC) === 0);
+  const ac = new AbortController(), stream = await fetch(BASE + '/api/events', { headers: { Cookie: ck }, signal: ac.signal }), rd = stream.body.getReader(), dec8 = new TextDecoder(); let heard = '';
+  (async () => { for (;;) { const r = await rd.read().catch(() => ({ done: true })); if (r.done) return; heard += dec8.decode(r.value); } })();
+  const I = (await create(CM, { title: '알림 시험', body: '본문' })).d;
+  let ok = false; for (let i = 0; i < 100 && !ok; i++) { ok = /^event: db\ndata: \{"name":"approvals"\}$/m.test(heard); if (!ok) await sleep(30); }
+  ac.abort(); await call('DELETE', `/api/approvals/${I.id}`, CM);
+  check('결재 문서가 바뀌면 열려 있는 화면에 "approvals 가 바뀜" 알림(이름만, 내용 없음)이 감 — 대시보드 카드·결재 화면이 따라 바뀜', ok && !heard.includes('알림 시험'));
+
+  // ---- 비서의 "기안서 써 줘"
+  const sayAs = async (c, id, content) => { const r = await call('POST', `/api/chats/${id}/messages`, c, { content }); return [...(await r.text()).matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join(''); };
+  const chatOf = async (c) => (await J(await call('POST', '/api/chats', c))).id, draftFile = path.join(dir, 'users', 'minjun', 'approval-draft.json');
+  const chM = await chatOf(CM), nBefore = (await list(CM)).length;
+  const say1 = await sayAs(CM, chM, '기안서 써 줘: 비파괴검사 외주 420만 원, 다음 달 압력용기 개조 프로젝트');
+  const mineNow = await list(CM), made = mineNow.find((x) => x.title.startsWith('기안: 비파괴검사 외주'));
+  check('비서의 "기안서 써 줘": 말이 끝나면 서버가 초안 파일을 작성중 기안으로 만들고(제목·양식·본문·금액, 기안자는 말한 사람) 채팅에 📝 알림 줄이 붙음 · 초안 파일은 지워짐 · 결재선은 비어 있음(사람이 고름)',
+    say1.includes('📝 작성중 기안을 만들었어요') && !!made && made.status === '작성중' && made.form === '구매 요청' && made.amount === 4200000 && made.body.includes('압력용기 개조') && made.drafter === 'minjun' && made.reviewers.length === 0 && made.approver === ''
+    && made.log.length === 0 && !fs.existsSync(draftFile) && mineNow.length === nBefore + 1 && !(await list(CS)).some((x) => x.id === made.id));
+  await sayAs(CM, chM, '기안서 써 줘: 몰래 올리기 /결재선');
+  const sneaky = (await list(CM)).find((x) => x.title.startsWith('기안: 몰래'));
+  check('비서가 초안에 기안자·상태·결재선·단계·서명 칸을 끼워 넣어도 서버가 버림(작성중·결재선 없음·서명 없음·기안자는 말한 사람) — 비서는 서명을 꾸밀 수 없음',
+    !!sneaky && sneaky.drafter === 'minjun' && sneaky.status === '작성중' && sneaky.reviewers.length === 0 && sneaky.approver === '' && sneaky.line.length === 0 && sneaky.log.length === 0 && sneaky.step === null && sneaky.round === 0 && !(await list(CS)).some((x) => x.title.startsWith('기안: 몰래')));
+  const nb = (await list(CM)).length, sb = await sayAs(CM, chM, '기안서 써 줘: 깨진 파일 /깨짐'), se = await sayAs(CM, chM, '기안서 써 줘: 제목 없음 /빈제목');
+  check('깨진 초안·제목 없는 초안은 기안을 만들지 않고 채팅에 ⚠ 이유를 알림(초안 파일은 지워짐)', sb.includes('⚠') && se.includes('⚠') && (await list(CM)).length === nb && !fs.existsSync(draftFile));
+  const perm = await sayAs(ck, await chatOf(ck), '/perm');
+  check('비서(두뇌)는 결재 문서와 첨부를 읽지도 쓰지도 못함: 거절 목록에 db/approvals.json·결재파일/** 의 Read·Edit·Write', ['Read', 'Edit', 'Write'].every((t) => perm.includes(`${t}(./db/approvals.json)`) && perm.includes(`${t}(./결재파일/**)`)));
+  const skill = fs.readFileSync(path.join(dir, '.claude', 'skills', 'approval', 'SKILL.md'), 'utf8'), tmpl = fs.readFileSync(path.join(__dirname, 'templates', 'skills', 'approval', 'SKILL.md'), 'utf8'), sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('approval 스킬: 원본(templates/skills/approval)이 data/.claude/skills/approval/ 로 복사됨 · 설명에 "기안서 써 줘" · 초안 파일 위치·결재 문서를 읽을 수 없다는 것·결재선과 상신은 사람이 한다는 규칙이 있음',
+    skill === tmpl && /^---\r?\nname: approval\r?\ndescription: .*기안서 써 줘/.test(skill) && ['approval-draft.json', '읽을 수도 고칠 수도 없다', '결재선', '상신', '`일반 기안` · `구매 요청` · `출장`', '원 단위 정수'].every((x) => skill.includes(x)));
+  const ex = JSON.parse(/```json\r?\n([\s\S]*?)```/.exec(skill)[1]);
+  check('스킬의 작성 예: 네 칸(title·form·body·amount)뿐이고 서버 검사에 맞음(양식 목록·금액 정수·제목 100자·본문 5000자·줄바꿈 \\n)', Object.keys(ex).sort().join() === 'amount,body,form,title' && ['일반 기안', '구매 요청', '출장'].includes(ex.form)
+    && Number.isInteger(ex.amount) && ex.amount >= 0 && ex.title.length > 0 && ex.title.length <= 100 && ex.body.length <= 5000 && ex.body.includes('\n'));
+  check('.system.md: 결재 안내가 맨 끝에 한 번만 더해지고(approval 스킬을 먼저 읽음) 주인이 손본 줄은 그대로', sys.split('<!-- 지침:결재 -->').length === 2 && sys.includes('.claude/skills/approval/SKILL.md') && sys.includes('나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)'));
+  check('결재 점검 끝: 남은 "내 차례" 문서가 하나도 없음(모든 시험 문서가 끝났거나 작성 중)', await todo(CM) === 0 && await todo(CS) === 0 && await todo(ck) === 0 && await todo(CC) === 0);
+}
+
 async function runMigrate() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test4-')), B4 = 'http://127.0.0.1:8795', OWN = path.join(d, 'users', 'olduser');
   const hash = (pw) => { const salt = crypto.randomBytes(16); return `scrypt$${salt.toString('hex')}$${crypto.scryptSync(pw, salt, 64).toString('hex')}`; };

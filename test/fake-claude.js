@@ -112,6 +112,12 @@ async function run(msg) {
   if (msg === '/perm') { const t = `PERM ${perm} | allow=${al.join(',')} | deny=${dn.join(',')}`; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 권한 점검용: 받은 허용·거절 목록을 그대로 돌려준다
   if (msg.startsWith('/tool ')) { out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: msg.slice(6), id: 't9' } } }); delta('끝'); out({ type: 'result', subtype: 'success', is_error: false, result: '끝' }); return; } // 화면에 뜨는 도구 이름표 점검용
   const home = (/users\/([a-z0-9_.-]+)\/memory\.md/.exec(arg('--append-system-prompt') || '') || [])[1]; // 서버가 알려 준 "이 사람의 개인 폴더"
+  if (msg.startsWith('기안서 써 줘')) { // 결재 기안서 흉내: 진짜 비서처럼 users/<아이디>/approval-draft.json 에 초안만 놓는다. /깨짐 → JSON 이 아님, /빈제목 → 제목 없음, /결재선 → 결재선·서명·상태 칸을 몰래 끼운 초안(서버가 버려야 한다)
+    const what = msg.slice(msg.indexOf(':') + 1).trim();
+    const j = msg.includes('/깨짐') ? '{ 깨짐' : JSON.stringify({ title: msg.includes('/빈제목') ? '' : `기안: ${what.slice(0, 30)}`, form: '구매 요청', body: `1. 목적: ${what}`, amount: 4200000,
+      ...(msg.includes('/결재선') ? { drafter: 'seoyeon', status: '완료', approver: 'seoyeon', reviewers: ['seoyeon'], line: [{ username: 'seoyeon', role: 'approve' }], step: 3, log: [{ type: 'approve', by: 'seoyeon', name: '가짜', at: '2020-01-01T00:00:00Z' }] } : {}) });
+    fs.writeFileSync(`users/${home}/approval-draft.json`, j);
+  }
   if (msg.startsWith('기억해:')) fs.appendFileSync(home ? `users/${home}/memory.md` : 'memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내
   const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | tools=[${arg('--tools')}] | nopersist=${a.includes('--no-session-persistence') ? 'Y' : 'N'} | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
   for (let i = 0; i < reply.length; i += 20) { delta(reply.slice(i, i + 20)); await sleep(5); } // 여러 조각으로 흘려보낸다(윈도우는 5ms 가 실제 15ms 쯤이라 조각을 너무 잘게 하면 느려진다)

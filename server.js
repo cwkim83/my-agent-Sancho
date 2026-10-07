@@ -166,6 +166,7 @@ function loadCollection(name) { // 파일이 없으면 빈 목록, 깨져 있으
 // 파일이 바뀌면(우리가 썼든 AI 가 직접 고쳤든) 열려 있는 화면(/api/events)에 "<이름> 이 바뀜"을 알린다
 const streams = new Set();
 const READONLY_DB = new Set(['rooms', 'meetings', 'bookings']); // 회의실·회의록: 읽기는 모두, 고치기는 회의록 화면의 서버 주소로만 (일반 업무 자료 주소의 PUT·DELETE 는 403)
+const GUARDED_DB = new Set(['approvals']); // 결재 문서: 일반 업무 자료 주소(/api/db)로는 열리지 않는다 (서명은 결재 주소에서만 남기고, 보는 사람은 기안자·결재선뿐). 바뀌었다는 알림(이름만)은 보내서 열려 있는 결재 화면·대시보드가 다시 읽게 한다
 const PRIVATE_DB = new Set(['channels', 'messages']); // 메신저 자료: 일반 업무 자료 주소(/api/db)로는 열리지 않고, 바뀌었다는 알림도 안 보낸다 (채널 멤버만 받는 메신저 전용 연결이 있다)
 const pending = new Map(); // 한 번 쓸 때 이벤트가 여러 번 오므로 50ms 안의 것은 하나로 합친다
 function emitDb(name) { if (PRIVATE_DB.has(name)) return; for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name })}\n\n`); } // 열려 있는 화면에 "<이름> 이 바뀜"
@@ -422,7 +423,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다)
+const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
 const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json']; // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
@@ -547,7 +548,7 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
 // 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
-const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
+const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs·approval)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
 // 여러 사람이 쓰므로 누구의 비서인지도 알려 준다: 개인 폴더(기억·예약·일지가 있는 곳)와 역할. 지침에 적힌 memory.md·schedule.json·journal/ 은 이 폴더 안의 것이다
 const userHint = (u) => `이 사람의 개인 폴더: users/${u.username}/ (작업 폴더 기준). 지침의 memory.md·schedule.json·journal/ 은 모두 이 폴더 안의 것이다: users/${u.username}/memory.md · users/${u.username}/schedule.json · users/${u.username}/journal/<날짜>.md. data/ 바로 아래의 memory.md·schedule.json·journal/ 은 쓰지 않는다. 다른 사람의 폴더(users/ 아래 다른 이름)는 열지 않는다. 역할: ${isAdmin(u) ? '관리자' : '일반 사용자'}${u.dept ? `, 부서: ${u.dept}` : ''}.`;
 const brainCtx = (u, d = new Date()) => `주인 이름: ${u.name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${userHint(u)} ${SKILL_HINT}`;
@@ -717,6 +718,8 @@ function streamReply(res, chat, content, user, atts = []) {
       if (result && !result.is_error) { if (!sent.trim() && result.result) emit(result.result); }
       else emit(`${gap()}⚠ ${explain()}`);
     }
+    let drafted = ''; try { drafted = takeApprovalDraft(user, aborted); } catch (e) { drafted = `⚠ 기안 초안을 처리하지 못했어요: ${e.message}`; } // 비서가 "기안서 써 줘"로 놓고 간 초안 → 작성중 기안
+    if (drafted) emit(`${gap()}${drafted}`);
     if (!sent.trim()) sent = '(중지했습니다.)';
     let files = []; try { files = boxNew(boxBefore); } catch { /* 파일함을 못 읽으면 카드만 없다 */ }
     chat.messages.push({ role: 'assistant', content: sent, at: nowIso(), ...(files.length ? { files } : {}) }); // 중지해도 지금까지 받은 만큼 저장
@@ -1442,6 +1445,194 @@ function meetingApi(req, res, user, p, b) {
   return false;
 }
 
+// ---------- 결재 (data/db/approvals.json · 첨부는 data/결재파일/<문서id>/) ----------
+// 문서 하나: { id, no(문서번호), title, form, body, amount(원), attachments, drafter(기안자 아이디), drafterName, drafterDept,
+//   reviewers(검토자 아이디들, 순서대로), approver(승인자 아이디), status('작성중'|'진행'|'완료'|'반려'),
+//   line(상신할 때 굳힌 결재선 [{username,name,dept,role:'review'|'approve'}]), step(지금 차례인 line 번호), round(몇 번째 상신), log, createdAt, updatedAt }
+// 서명 = log 에 쌓이는 한 줄: { round, type: submit(상신)|approve(승인)|final(전결)|reject(반려), by(아이디), name, dept, role, comment, at }.
+//   이 줄은 decide 주소에서만, 그 순간 로그인한(세션) 본인의 이름·시각으로 서버가 덧붙인다. 이미 쌓인 줄은 어디서도 고치거나 지우지 못한다.
+//   기안자가 문서를 고치는 길(PUT)은 제목·양식·본문·금액·첨부·검토자·승인자 칸만 받고 line·step·status·log 는 본문에 있어도 쓰지 않으며, 올린 뒤(진행·완료)에는 아예 못 고친다.
+// 보는 사람: 작성중은 기안자만, 올린 뒤에는 기안자와 결재선에 든 사람 (관리자도 결재선에 없으면 못 본다). 일반 업무 자료 주소(/api/db/approvals)와 비서(두뇌)는 열지 못한다.
+// 비서의 "기안서 써 줘": 비서는 users/<아이디>/approval-draft.json 에 초안(제목·양식·본문·금액)만 놓고, 말이 끝나면 서버가 검사해 그 사람의 작성중 기안으로 만든다. 결재선·상신은 사람이 한다.
+// ponytail: 문서를 파일 하나에 다 둔다(읽을 때마다 통째로). 수천 건이 넘어 느려지면 연도별 파일로 나눈다
+const APPR_FORMS = ['일반 기안', '구매 요청', '출장'];
+const APPR_MAX = { title: 100, body: 5000, comment: 500, reviewers: 5, files: 5, amount: 1e12 };
+const APPR_DIR = path.join(DATA_DIR, '결재파일'); // 첨부: <문서id>/<날짜-시각-무작위_이름>. /api/files 로는 열리지 않고 보는 사람 확인을 거치는 주소로만 나간다
+fs.mkdirSync(APPR_DIR, { recursive: true });
+const APPR_REAL = fs.realpathSync(APPR_DIR);
+const apprFileDir = (id) => path.join(APPR_DIR, id);
+const loadApprovals = () => loadCollection('approvals');
+const userByName = (users, n) => users.find((x) => x.username === n);
+const personOf = (x, role) => ({ username: x.username, name: x.name, dept: x.dept || '', role });
+const apprSeen = (d, u) => d.drafter === u.username || (d.status !== '작성중' && Array.isArray(d.line) && d.line.some((l) => l.username === u.username));
+const apprTurn = (d, u) => d.status === '진행' && Array.isArray(d.line) && !!d.line[d.step] && d.line[d.step].username === u.username; // 지금 내가 결재할 차례
+function apprView(d, u, users) { // 화면에 보내는 모습: 문서 + 결재 후보(plan, 이름 풀이) + "나는 지금 무엇을 할 수 있나" 표시
+  const plan = [...(d.reviewers || []).map((n) => [n, 'review']), ...(d.approver ? [[d.approver, 'approve']] : [])]
+    .map(([n, role]) => { const x = userByName(users, n); return x ? personOf(x, role) : { username: n, name: n, dept: '', role }; });
+  const turn = apprTurn(d, u), mine = d.drafter === u.username;
+  return { ...d, plan, mine, myTurn: turn, myRole: turn ? d.line[d.step].role : null, canEdit: mine && (d.status === '작성중' || d.status === '반려'), canDelete: mine && d.status === '작성중' };
+}
+// 본문 b 에서 고칠 수 있는 칸만 골라 검사한다 (본문에 없는 칸은 건드리지 않는다). → { f: 검사를 통과한 칸들 } 또는 { error }
+// d: 지금 문서(새 문서면 기본값을 채운 것). 결재 후보는 문서에 이미 있는 값과 합쳐서 본다
+function apprFields(b, d, users) {
+  const f = {}, err = (error) => ({ error });
+  if ('title' in b) { f.title = cleanText(b.title).replace(/\s+/g, ' '); if (f.title.length > APPR_MAX.title) return err(`제목은 ${APPR_MAX.title}자까지 쓸 수 있어요.`); }
+  if ('form' in b) { if (!APPR_FORMS.includes(b.form)) return err(`양식은 ${APPR_FORMS.join('·')} 중에서 골라 주세요.`); f.form = b.form; }
+  if ('body' in b) { f.body = cleanText(b.body); if (f.body.length > APPR_MAX.body) return err(`본문은 ${APPR_MAX.body.toLocaleString('ko-KR')}자까지 쓸 수 있어요.`); }
+  if ('amount' in b) {
+    const a = b.amount === null || b.amount === '' ? 0 : b.amount;
+    if (!Number.isInteger(a) || a < 0 || a > APPR_MAX.amount) return err('금액은 0 이상의 정수(원)로 적어 주세요.');
+    f.amount = a;
+  }
+  if ('reviewers' in b || 'approver' in b) {
+    const reviewers = 'reviewers' in b ? b.reviewers : d.reviewers, approver = 'approver' in b ? b.approver : d.approver;
+    if (!Array.isArray(reviewers) || reviewers.length > APPR_MAX.reviewers) return err(`검토자는 ${APPR_MAX.reviewers}명까지 고를 수 있어요.`);
+    if (typeof approver !== 'string' || ![...reviewers, ...(approver ? [approver] : [])].every((n) => typeof n === 'string' && userByName(users, n))) return err('결재선에 없는 사람이 있어요. 사용자 목록에서 골라 주세요.');
+    if (reviewers.includes(d.drafter)) return err('기안자 본인은 검토자가 될 수 없어요. (승인자로는 정할 수 있어요)');
+    if (new Set([...reviewers, ...(approver ? [approver] : [])]).size !== reviewers.length + (approver ? 1 : 0)) return err('같은 사람을 결재선에 두 번 넣을 수 없어요.');
+    f.reviewers = [...reviewers]; f.approver = approver;
+  }
+  if ('attachments' in b) {
+    const asked = Array.isArray(b.attachments) ? b.attachments.map((x) => String(x && typeof x === 'object' ? x.file : x)) : null;
+    if (!asked || asked.length > APPR_MAX.files) return err(`첨부는 ${APPR_MAX.files}개까지 붙일 수 있어요.`);
+    f.attachments = [];
+    for (const file of new Set(asked)) { // 이 문서에 올려 둔 파일만 (다른 문서의 파일 이름을 대도 안 된다)
+      const full = fileIn(apprFileDir(d.id), path.join(APPR_REAL, d.id), file);
+      if (!full) return err('첨부한 파일을 찾지 못했어요. 다시 첨부해 주세요.');
+      f.attachments.push({ file, name: shownName(file), size: fs.statSync(full).size, type: mimeOf(file) });
+    }
+  }
+  return { f };
+}
+// 새 작성중 기안을 items 에 넣고 저장한다 (화면의 "새 기안"과 비서의 초안이 같이 쓴다). → { d } 또는 { error }
+function createApproval(items, user, b, users, needTitle) {
+  const now = new Date(), pre = `기안-${now.getFullYear()}-`;
+  const n = items.reduce((m, x) => Math.max(m, x && typeof x.no === 'string' && x.no.startsWith(pre) ? Number(x.no.slice(pre.length)) || 0 : 0), 0) + 1; // 문서번호: 그 해의 다음 번호
+  const d = { id: `ap${crypto.randomBytes(4).toString('hex')}`, no: `${pre}${String(n).padStart(4, '0')}`, title: '', form: APPR_FORMS[0], body: '', amount: 0, attachments: [],
+    drafter: user.username, drafterName: user.name, drafterDept: user.dept || '', reviewers: [], approver: '', status: '작성중', line: [], step: null, round: 0, log: [], createdAt: nowIso(), updatedAt: nowIso() };
+  const r = apprFields(b, d, users);
+  if (r.error) return r;
+  Object.assign(d, r.f);
+  if (needTitle && !d.title) return { error: '제목이 비어 있어요.' };
+  items.push(d); writeJson(dbFile('approvals'), items);
+  return { d };
+}
+const apprDraftFile = (u) => userFile(u, 'approval-draft.json');
+function takeApprovalDraft(user, drop) { // 비서가 놓고 간 초안 파일을 작성중 기안으로 만든다 → 채팅에 덧붙일 한 줄 ('' 이면 파일이 없었음). 파일은 한 번 보고 지운다 (서버가 만든 임시 전달 파일이다)
+  const file = apprDraftFile(user); let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return ''; }
+  fs.rmSync(file, { force: true });
+  if (drop) return ''; // 주인이 ■ 로 중지한 대화: 만들지 않는다
+  let j; try { if (raw.length > 30_000) throw new Error('too big'); j = JSON.parse(raw.replace(/^﻿/, '')); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('not an object'); }
+  catch { return '⚠ 비서가 적어 둔 기안 초안의 모양이 맞지 않아 기안을 만들지 못했어요. 한 번 더 시켜 주세요.'; }
+  let items; try { items = loadApprovals(); } catch { return '⚠ data/db/approvals.json 이 올바른 목록이 아니라 기안을 만들지 못했어요. (덮어쓰지 않았어요)'; }
+  const asked = {}; for (const k of ['title', 'form', 'body', 'amount']) if (j[k] !== undefined) asked[k] = j[k]; // 비서가 줄 수 있는 칸은 이 네 가지뿐 (결재선·서명은 못 줌)
+  const r = createApproval(items, user, asked, readJson(USERS_FILE, []), true);
+  return r.error ? `⚠ 기안을 만들지 못했어요: ${r.error}` : `📝 작성중 기안을 만들었어요: 「${r.d.title}」 — 왼쪽 메뉴 **결재**에서 결재선을 고르고 올려 주세요. (올리기 전에는 나에게만 보여요)`;
+}
+
+// /api/approvals[/summary|/people|/<id>[/submit|/decide|/files[/<파일>]]] — 처리했으면 true
+//   GET → { items } (내가 볼 수 있는 문서) · POST → 새 작성중 기안 · GET /<id> · PUT /<id> 고치기 · DELETE /<id> (작성중만) · POST /<id>/submit 상신 · POST /<id>/decide { action: approve|reject|final, comment }
+//   POST /<id>/files?name= 첨부 올리기 · GET /<id>/files/<파일> 첨부 받기 · GET summary → { todo: 내가 결재할 차례인 문서 수 } · GET people → 결재선에 고를 사람들(이름·부서만)
+async function approvalApi(req, res, user, p, url) {
+  const M = req.method, done = (status, body) => { send(res, status, body); return true; }, bad = (m) => done(400, { error: m || '요청이 올바르지 않습니다.' });
+  const am = p.match(/^\/api\/approvals(?:\/(summary|people)|\/(ap[0-9a-f]{8})(?:\/(submit|decide|files)(?:\/([^/]+))?)?)?$/);
+  if (!am) return false;
+  const [, top, id, sub, fname] = am;
+  const upload = sub === 'files' && !fname && M === 'POST';
+  // 본문을 먼저 다 받고(await), 그 다음 읽기→검사→쓰기는 await 없이 한 번에 한다 (두 사람이 동시에 눌러도 한 번만 결재되게)
+  let b = {}, buf;
+  if (upload) buf = await readRaw(req, UPLOAD_MAX).catch(() => undefined);
+  else if (M === 'POST' || M === 'PUT') { try { b = await readBody(req, 60_000); } catch { return bad(); } if (!b || typeof b !== 'object' || Array.isArray(b)) b = {}; }
+  const users = readJson(USERS_FILE, []);
+  if (top === 'people') return M === 'GET' ? done(200, users.map((x) => ({ username: x.username, name: x.name, dept: x.dept || '' }))) : false; // 이름·부서만
+  let items; try { items = loadApprovals(); } catch { return done(500, { error: 'data/db/approvals.json 이 올바른 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  if (top === 'summary') return M === 'GET' ? done(200, { todo: items.filter((d) => d && apprTurn(d, user)).length }) : false;
+  if (!id) {
+    if (M === 'GET') return done(200, { items: items.filter((d) => d && apprSeen(d, user)).map((d) => apprView(d, user, users)).sort((x, y) => String(y.updatedAt).localeCompare(String(x.updatedAt))) });
+    if (M !== 'POST') return false;
+    const r = createApproval(items, user, b, users, false);
+    return r.error ? bad(r.error) : done(200, { item: apprView(r.d, user, users) });
+  }
+  const i = items.findIndex((x) => x && x.id === id), d = items[i];
+  if (!d || !apprSeen(d, user)) return done(404, { error: '없는 문서예요.' }); // 볼 수 없는 문서도 똑같이 "없음"
+  const mine = d.drafter === user.username, editable = d.status === '작성중' || d.status === '반려', save = () => writeJson(dbFile('approvals'), items);
+  const view = () => done(200, { item: apprView(d, user, users) });
+
+  if (!sub) {
+    if (M === 'GET') return view();
+    if (M === 'PUT') {
+      if (!mine) return done(403, { error: '기안자만 고칠 수 있어요.' });
+      if (!editable) return done(409, { error: '이미 올린 문서는 고칠 수 없어요. (결재 중이거나 끝난 문서예요)' });
+      const r = apprFields(b, d, users);
+      if (r.error) return bad(r.error);
+      Object.assign(d, r.f, { updatedAt: nowIso() }); save();
+      return view();
+    }
+    if (M === 'DELETE') { // 작성중인 기안만, 기안자만 (올린 문서와 그 서명은 기록으로 남는다). 첨부 파일은 지우지 않는다
+      if (!mine) return done(403, { error: '기안자만 지울 수 있어요.' });
+      if (d.status !== '작성중') return done(409, { error: '올린 적 있는 문서는 지울 수 없어요. (결재 기록이 남아야 해요)' });
+      items.splice(i, 1); save();
+      return done(200, { ok: true });
+    }
+    return false;
+  }
+
+  if (sub === 'submit' && M === 'POST') { // 상신: 결재선을 굳히고 첫 사람에게 넘긴다. 반려된 문서를 고쳐 다시 올리면 새 회차(round)로 처음부터 다시 결재
+    if (!mine) return done(403, { error: '기안자만 올릴 수 있어요.' });
+    if (!editable) return done(409, { error: '이미 올린 문서예요.' });
+    if (!d.title) return bad('제목을 적어 주세요.');
+    if (!d.body) return bad('본문을 적어 주세요.');
+    if (!d.approver) return bad('승인자를 골라 주세요.');
+    const line = [...d.reviewers.map((n) => [n, 'review']), [d.approver, 'approve']].map(([n, role]) => { const x = userByName(users, n); return x && personOf(x, role); });
+    if (line.some((x) => !x)) return bad('결재선에 없는 사람이 있어요. 결재선을 다시 골라 주세요.');
+    const at = nowIso(); d.round = (d.round || 0) + 1;
+    Object.assign(d, { line, step: 0, status: '진행', updatedAt: at });
+    d.log.push({ round: d.round, type: 'submit', by: user.username, name: user.name, dept: user.dept || '', role: 'draft', comment: '', at });
+    save();
+    return view();
+  }
+
+  if (sub === 'decide' && M === 'POST') { // 승인·반려·전결 — 지금 차례인 그 사람 본인만. 이름·시각은 로그인(세션)에서 서버가 정한다 (본문에 이름을 적어 보내도 쓰지 않는다)
+    if (d.status !== '진행' || !Array.isArray(d.line) || !d.line[d.step]) return done(409, { error: '지금 결재할 수 있는 문서가 아니에요.' });
+    const cur = d.line[d.step];
+    if (cur.username !== user.username) return done(403, { error: '지금은 당신이 결재할 차례가 아니에요.' });
+    const action = b.action, comment = cleanText(b.comment);
+    if (!['approve', 'reject', 'final'].includes(action)) return bad('결재 방법은 승인(approve)·반려(reject)·전결(final) 중 하나예요.');
+    if (action === 'final' && cur.role !== 'approve') return bad('전결은 승인자만 할 수 있어요.');
+    if (comment.length > APPR_MAX.comment) return bad(`의견은 ${APPR_MAX.comment}자까지 쓸 수 있어요.`);
+    if (action === 'reject' && !comment) return bad('반려할 때는 의견을 적어 주세요.');
+    const at = nowIso();
+    d.log.push({ round: d.round, type: action, by: user.username, name: user.name, dept: user.dept || '', role: cur.role, comment, at });
+    if (action === 'reject') Object.assign(d, { status: '반려', step: null }); // 기안자에게 돌아간다 (고쳐서 다시 올릴 수 있다)
+    else if (cur.role === 'review') d.step += 1; // 검토 승인 → 다음 사람 (마지막은 승인자)
+    else Object.assign(d, { status: '완료', step: null, completedAt: at });
+    d.updatedAt = at; save();
+    return view();
+  }
+
+  if (sub === 'files' && M === 'POST' && !fname) { // 첨부 올리기: 기안자가 고칠 수 있는 문서에만
+    if (!mine) return done(403, { error: '기안자만 첨부할 수 있어요.' });
+    if (!editable) return done(409, { error: '이미 올린 문서에는 첨부를 더할 수 없어요.' });
+    const name = safeName(url.searchParams.get('name'));
+    if (buf === undefined) return bad('파일을 받지 못했어요. 다시 시도해 주세요.');
+    if (buf === null) return done(413, { error: `파일이 너무 커요. ${Math.floor(UPLOAD_MAX / 1048576) || '1 미만의 '}MB 까지 올릴 수 있어요.` });
+    if (BLOCKED_EXT.test(name)) return bad('실행 파일 같은 종류는 첨부할 수 없어요.');
+    if (!buf.length) return bad('빈 파일이에요.');
+    const dir = apprFileDir(d.id); fs.mkdirSync(dir, { recursive: true });
+    if (fs.realpathSync(APPR_DIR) !== APPR_REAL || fs.realpathSync(dir) !== path.join(APPR_REAL, d.id)) return done(500, { error: 'data/결재파일 폴더가 다른 곳으로 바뀌어 있어서 저장하지 않았어요. 폴더를 확인해 주세요.' });
+    const now = new Date(), file = `${now.toLocaleDateString('sv-SE').replace(/-/g, '')}-${now.toTimeString().slice(0, 8).replace(/:/g, '')}-${crypto.randomBytes(2).toString('hex')}_${name}`;
+    fs.writeFileSync(path.join(dir, file), buf, { flag: 'wx' });
+    return done(200, { file, name, size: buf.length, type: mimeOf(name) });
+  }
+  if (sub === 'files' && M === 'GET' && fname) { // 첨부 받기: 이 문서를 볼 수 있는 사람만, 문서에 붙은 파일만
+    let name; try { name = decodeURIComponent(fname); } catch { return bad('주소가 올바르지 않습니다.'); }
+    const full = (d.attachments || []).some((a) => a && a.file === name) && fileIn(apprFileDir(d.id), path.join(APPR_REAL, d.id), name);
+    return full ? (sendFile(res, full, name, url.searchParams, `/api/approvals/${d.id}/files/${encodeURIComponent(name)}`), true) : done(404, { error: '없는 파일이에요.' });
+  }
+  return false;
+}
+
 // ---------- 요청 처리 ----------
 async function handle(req, res) {
   // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다
@@ -1553,7 +1744,7 @@ async function handle(req, res) {
       return;
     }
     const dm = p.match(/^\/api\/db\/([a-z][a-z0-9_-]{0,39})(?:\/([A-Za-z0-9_-]{1,64}))?$/);
-    if (dm && !PRIVATE_DB.has(dm[1]) && !/^(con|prn|aux|nul|com\d|lpt\d)$/.test(dm[1])) { // 윈도우 장치 이름(nul 등)은 파일이 아니라서 거절
+    if (dm && !PRIVATE_DB.has(dm[1]) && !GUARDED_DB.has(dm[1]) && !/^(con|prn|aux|nul|com\d|lpt\d)$/.test(dm[1])) { // 윈도우 장치 이름(nul 등)은 파일이 아니라서 거절
       const [, name, id] = dm;
       // 본문을 먼저 다 받고, 그 다음 읽기→고치기→쓰기를 await 없이 한 번에 한다.
       // 읽은 뒤 본문을 기다리면 그 틈에 끝난 다른 저장(또는 비서가 고친 내용)을 옛 내용으로 덮어써 버린다
@@ -1589,6 +1780,7 @@ async function handle(req, res) {
       }
     }
 
+    if (p.startsWith('/api/approvals') && await approvalApi(req, res, user, p, url)) return;
     if (p.startsWith('/api/messenger/') && await messengerApi(req, res, user, url)) return;
     const rmm = p.match(/^\/api\/(rooms|meetings)(?:\/|$)/);
     if (rmm) { // 회의실 예약·회의록: 본문을 먼저 다 받고(await), 그 다음 읽기→고치기→쓰기는 await 없이

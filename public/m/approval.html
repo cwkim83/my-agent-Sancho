@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>결재</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --amber: #b54708; --amber-bg: #fef0c7; --green: #067647; --green-bg: #dcfae6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; overflow-y: auto; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  [hidden] { display: none !important; }
+  .page { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  .top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 12px; }
+  .top h2 { margin: 0; font-size: 20px; }
+  .top .sub { color: var(--sub); font-size: 13px; }
+  .top .sp { flex: 1; }
+  .card { margin-bottom: 16px; padding: 14px 16px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+  .card.todo { border-color: #f7c76a; background: #fffcf3; }
+  .card h3 { margin: 0; font-size: 16px; }
+  .cardhead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+  .cnt { color: var(--amber); font-weight: 700; }
+  .none { padding: 8px 2px; color: var(--sub); font-size: 13px; }
+  .errbar { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; background: var(--red-bg); color: var(--red); font-size: 13px; }
+  .btn { padding: 7px 14px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font-weight: 600; }
+  .btn:disabled { background: #98a2b3; }
+  .btn.ghost { background: #fff; color: #344054; border: 1px solid #d0d5dd; }
+  .btn.ghost:hover:not(:disabled) { background: #f2f4f7; }
+  .btn.green { background: #079455; } .btn.red { background: #d92d20; } .btn.amber { background: #dc6803; } .btn.dark { background: #475467; }
+  .mini { padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; }
+  .mini:hover:not(:disabled) { background: var(--blue-bg); }
+  .mini:disabled { color: #98a2b3; }
+  input[type=text], select, textarea { width: 100%; padding: 7px 10px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; background: #fff; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  label.f, .f > .fl { display: block; font-size: 12px; font-weight: 600; color: #344054; }
+  label.f > :not(span), .f > .fl ~ * { margin-top: 3px; font-weight: 400; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chipb { padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: #475467; font-size: 12px; line-height: 24px; }
+  .chipb.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+
+  /* 목록 */
+  .row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; margin: 0 0 6px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; color: inherit; }
+  .row:hover { border-color: var(--blue); background: var(--blue-bg); }
+  .row .tt { flex: 1; min-width: 0; }
+  .row .tt b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .tt small { display: block; color: var(--sub); font-size: 12px; }
+  .row .where { flex: none; max-width: 40%; color: #344054; font-size: 12px; text-align: right; }
+  .st { flex: none; min-width: 52px; padding: 0 8px; border-radius: 999px; text-align: center; font-size: 12px; font-weight: 700; line-height: 22px; }
+  .st.s작성중 { background: #f2f4f7; color: #475467; } .st.s진행 { background: var(--blue-bg); color: var(--blue); }
+  .st.s완료 { background: var(--green-bg); color: var(--green); } .st.s반려 { background: var(--red-bg); color: var(--red); }
+
+  /* 창 */
+  .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16px; overflow-y: auto; background: rgba(16, 24, 40, .45); }
+  .mcard { width: min(820px, 100%); margin: auto; padding: 18px 20px; background: #fff; border-radius: 14px; box-shadow: 0 12px 40px rgba(16, 24, 40, .3); }
+  .mhead { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .mhead h3 { flex: 1; margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+  .mhead .x { border: 0; background: none; font-size: 18px; color: var(--sub); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 14px; margin: 8px 0 12px; }
+  .facts div span { display: block; font-size: 12px; color: var(--sub); }
+  .facts div b { font-weight: 600; }
+  .bodybox { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 60px; }
+  h4 { margin: 14px 0 6px; font-size: 14px; }
+  .files a, .files span { display: inline-block; margin: 0 6px 4px 0; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--blue); font-size: 13px; text-decoration: none; }
+  .files .none2 { color: var(--sub); border: 0; padding-left: 0; }
+
+  /* 결재란 (도장) */
+  .signs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cell { width: 118px; border: 1px solid #c7cdd6; border-radius: 10px; background: #fff; overflow: hidden; text-align: center; }
+  .cell .h { padding: 3px 0; background: #f2f4f7; border-bottom: 1px solid #c7cdd6; font-size: 12px; font-weight: 700; color: #344054; }
+  .cell .b { min-height: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6px 4px; font-size: 12px; color: var(--sub); }
+  .cell .who { font-size: 12px; color: #344054; margin-bottom: 2px; }
+  .stamp { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 76px; height: 76px; border: 2.5px solid #d92d20; border-radius: 50%; color: #d92d20; line-height: 1.2; transform: rotate(-7deg); }
+  .stamp b { font-size: 15px; } .stamp i { font-style: normal; font-size: 11px; font-weight: 700; } .stamp small { font-size: 9.5px; }
+  .stamp.rej { border-color: #475467; color: #475467; border-style: double; border-width: 4px; }
+  .stamp.fin { border-color: #b54708; color: #b54708; }
+  .stamp.draft { border-color: #2f6fed; color: #2f6fed; }
+  .turn { padding: 2px 8px; border: 1.5px dashed #dc6803; border-radius: 8px; color: var(--amber); font-weight: 700; }
+  .cell .cm { margin-top: 2px; font-size: 11px; color: #475467; overflow-wrap: anywhere; }
+
+  /* 이력 */
+  .tl { margin: 0; padding: 0; list-style: none; }
+  .tl li { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .tl time { flex: none; width: 92px; color: var(--sub); font-variant-numeric: tabular-nums; }
+  .tl .what { flex: 1; overflow-wrap: anywhere; }
+  .tl .rj { color: var(--red); font-weight: 600; } .tl .okc { color: var(--green); font-weight: 600; } .tl .fn { color: var(--amber); font-weight: 600; }
+
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .actions .sp { flex: 1; }
+  .decide textarea { margin: 6px 0 8px; }
+  .askline { flex: 1; min-width: 200px; padding: 8px 12px; border-radius: 8px; background: var(--amber-bg); color: #7a2e0e; }
+  .msg { min-height: 1.4em; margin-top: 8px; color: var(--red); font-size: 13px; }
+  .notice { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: var(--red-bg); color: var(--red); font-size: 13px; }
+
+  /* 기안 창 */
+  .grid3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .lrow { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+  .lrow .tag { flex: none; width: 52px; padding: 1px 0; border-radius: 6px; background: #f2f4f7; text-align: center; font-size: 12px; font-weight: 700; color: #344054; }
+  .lrow .tag.ap { background: var(--amber-bg); color: var(--amber); }
+  .lrow select { flex: 1; width: auto; }
+  .lrow .me { flex: 1; color: #344054; }
+  .arrow { margin: 0 0 0 20px; color: #98a2b3; font-size: 12px; line-height: 1; }
+
+  /* 인쇄 양식 */
+  .sheet { background: #fff; color: #000; font-family: "Malgun Gothic", "Apple SD Gothic Neo", serif; padding: 6px 4px; }
+  .sh-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .sh-title { flex: 1; padding-top: 8px; }
+  .sh-title h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: .35em; }
+  .sh-title .no { font-size: 12px; color: #333; }
+  table.sg { border-collapse: collapse; }
+  table.sg th, table.sg td { border: 1px solid #000; text-align: center; font-size: 12px; }
+  table.sg th { padding: 3px 0; background: #eee; }
+  table.sg th.vt { width: 26px; padding: 0; line-height: 1.3; }
+  table.sg td { width: 92px; height: 72px; padding: 4px 2px; vertical-align: middle; }
+  table.sg td .nm { font-size: 14px; font-weight: 700; }
+  table.sg td .tm { font-size: 10px; color: #333; }
+  table.sg td .mk { display: inline-block; margin-top: 2px; padding: 0 6px; border: 1.5px solid #000; border-radius: 3px; font-size: 11px; font-weight: 700; }
+  table.info { width: 100%; margin-top: 14px; border-collapse: collapse; }
+  table.info th, table.info td { border: 1px solid #000; padding: 6px 9px; font-size: 13px; text-align: left; vertical-align: top; }
+  table.info th { width: 96px; background: #f3f3f3; white-space: nowrap; }
+  .sh-body { min-height: 260px; margin-top: -1px; padding: 12px 14px; border: 1px solid #000; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .sh-sec { margin-top: 12px; font-size: 13px; font-weight: 700; }
+  table.cm { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.cm th, table.cm td { border: 1px solid #000; padding: 4px 8px; font-size: 12px; text-align: left; }
+  table.cm th { background: #f3f3f3; }
+  .sh-foot { margin-top: 14px; font-size: 11px; color: #444; }
+  .sh-warn { margin: 8px 0 0; padding: 4px 10px; border: 1.5px dashed #000; font-size: 12px; font-weight: 700; text-align: center; }
+  .printbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .printbar .sp { flex: 1; color: var(--sub); font-size: 13px; }
+  #sheetCard { width: min(860px, 100%); }
+  #sheet { padding: 8mm 7mm; border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(16, 24, 40, .12); }
+
+  @media (max-width: 640px) { .grid3 { grid-template-columns: 1fr; } .row .where { display: none; } }
+  @media print {
+    @page { size: A4; margin: 13mm; }
+    html, body { height: auto; background: #fff; overflow: visible; }
+    body > *:not(#sheetWrap) { display: none !important; }
+    #sheetWrap:not([hidden]) { position: static; display: block !important; padding: 0; background: none; overflow: visible; }
+    #sheetCard { width: auto; padding: 0; margin: 0; box-shadow: none; border-radius: 0; }
+    .noprint { display: none !important; }
+    #sheet { padding: 0; border: 0; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top"><h2>결재</h2><span class="sub" id="sub"></span><span class="sp"></span><button class="btn" id="newBtn">＋ 새 기안</button></div>
+  <div class="errbar" id="err" hidden></div>
+
+  <section class="card todo" id="todoCard">
+    <div class="cardhead"><h3>결재할 문서 <span class="cnt" id="todoN"></span></h3></div>
+    <div id="todoList"></div>
+  </section>
+  <section class="card">
+    <div class="cardhead"><h3>내가 올린 문서</h3><div class="chips" id="filters"></div></div>
+    <div id="mineList"></div>
+  </section>
+  <section class="card">
+    <div class="cardhead"><h3>결재선에 든 다른 사람의 문서</h3></div>
+    <div id="otherList"></div>
+  </section>
+</div>
+
+<!-- 문서 보기 -->
+<div class="modal" id="dtWrap" hidden><div class="mcard" role="dialog" aria-modal="true" aria-labelledby="dtTitle" id="dtCard"></div></div>
+
+<!-- 기안 쓰기·고치기 -->
+<div class="modal" id="edWrap" hidden>
+  <div class="mcard" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+    <div class="mhead"><h3 id="edTitle">새 기안</h3><button class="x" id="edX" aria-label="닫기">✕</button></div>
+    <div class="grid3">
+      <label class="f"><span>제목</span><input type="text" id="fTitle" maxlength="100" placeholder="무엇에 대한 기안인지 한 줄로"></label>
+      <label class="f"><span>양식</span><select id="fForm"></select></label>
+      <label class="f"><span>금액 (원)</span><input type="text" id="fAmount" inputmode="numeric" placeholder="숫자만 (예: 4200000)"></label>
+    </div>
+    <label class="f"><span>본문</span><textarea id="fBody" rows="9" maxlength="5000" placeholder="목적·내용·일정 등을 적어 주세요"></textarea></label>
+    <div class="f" style="margin-top:10px"><span class="fl">첨부 <small style="font-weight:400;color:var(--sub)">(5개까지)</small></span>
+      <div class="files" id="fFiles"></div>
+      <button class="mini" id="addFile" type="button">＋ 파일 붙이기</button><input type="file" id="fileIn" multiple hidden>
+    </div>
+    <div class="f" style="margin-top:12px"><span class="fl">결재선 <small style="font-weight:400;color:var(--sub)">(검토자는 순서대로 → 마지막에 승인자)</small></span>
+      <div id="lineBox"></div>
+    </div>
+    <div class="msg" id="edMsg" role="alert"></div>
+    <div class="actions"><button class="btn ghost" id="edCancel">닫기</button><span class="sp"></span><button class="btn dark" id="edSave">저장 (작성중으로)</button><button class="btn" id="edSubmit">저장하고 올리기</button></div>
+  </div>
+</div>
+
+<!-- 인쇄 양식 -->
+<div class="modal" id="sheetWrap" hidden>
+  <div class="mcard" id="sheetCard" role="dialog" aria-modal="true" aria-label="인쇄 양식">
+    <div class="printbar noprint"><button class="btn" id="printBtn">🖨 인쇄 (PDF로 저장 가능)</button><span class="sp">인쇄 창에서 "대상"을 PDF 로 저장으로 고르면 파일로 받을 수 있어요.</span><button class="btn ghost" id="sheetX">닫기</button></div>
+    <div class="sheet" id="sheet"></div>
+  </div>
+</div>
+
+<script src="/m/db.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const money = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+  const p2 = (n) => String(n).padStart(2, '0');
+  const dt = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+  const dtFull = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+  const FORMS = ['일반 기안', '구매 요청', '출장'];
+  const SHEET_TITLE = { '일반 기안': '기 안 서', '구매 요청': '구 매 요 청 서', '출장': '출 장 신 청 서' };
+  const ROLE = { review: '검토', approve: '승인' };
+  const LOGROLE = { review: '검토', approve: '최종' }; // 결재 기록·의견 표에서는 승인자의 승인이 "승인 승인"으로 읽히지 않게 "최종 승인"
+  let me = {}, items = [], people = [], filter = '전체', openId = null, edit = null, ask = null; // ask: 상세 창 아래의 "정말 …할까요?" 확인 줄 { kind }
+
+  async function api(method, url, body, raw) {
+    const r = await fetch(url, { method, headers: body && !raw ? { 'Content-Type': 'application/json' } : (raw ? { 'Content-Type': raw } : {}), body: body && !raw ? JSON.stringify(body) : body });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `요청에 실패했어요. (${r.status})`);
+    return j;
+  }
+  const showErr = (m) => { $('err').hidden = !m; $('err').textContent = m || ''; };
+
+  // ---------- 목록 ----------
+  const whereText = (d) => {
+    if (d.status === '진행') { const c = d.line[d.step]; return c ? `▶ ${c.name} ${ROLE[c.role]} 차례` : ''; }
+    if (d.status === '완료') return `✔ ${dt(d.completedAt)} 완료`;
+    if (d.status === '반려') { const r = [...d.log].reverse().find((l) => l.type === 'reject'); return r ? `↩ ${r.name} 반려 — 고쳐서 다시 올리세요` : '↩ 반려'; }
+    return d.plan.length ? `✎ 작성 중 · 결재선 ${d.plan.length}명` : '✎ 작성 중 · 결재선 정해 주세요';
+  };
+  const rowHtml = (d) => `<button class="row" data-id="${esc(d.id)}"><span class="st s${esc(d.status)}">${esc(d.status)}</span>
+    <span class="tt"><b>${esc(d.title || '(제목 없음)')}</b><small>${esc(d.form)}${d.amount ? ` · ${money(d.amount)}` : ''} · 기안 ${esc(d.drafterName)}${d.drafterDept ? `(${esc(d.drafterDept)})` : ''} · ${esc(dt(d.updatedAt))}</small></span>
+    <span class="where">${esc(whereText(d))}</span></button>`;
+  const listHtml = (rows, none) => (rows.length ? rows.map(rowHtml).join('') : `<div class="none">${none}</div>`);
+
+  function render() {
+    const todo = items.filter((d) => d.myTurn), mine = items.filter((d) => d.mine), other = items.filter((d) => !d.mine && !d.myTurn);
+    $('todoN').textContent = todo.length ? `(${todo.length})` : '';
+    $('todoCard').classList.toggle('todo', todo.length > 0);
+    $('todoList').innerHTML = listHtml(todo, '지금 내가 결재할 문서는 없어요.');
+    $('filters').innerHTML = ['전체', '작성중', '진행', '완료', '반려'].map((s) => `<button class="chipb ${s === filter ? 'on' : ''}" data-f="${s}">${s}${s === '전체' ? '' : ` ${mine.filter((d) => d.status === s).length}`}</button>`).join('');
+    $('mineList').innerHTML = listHtml(mine.filter((d) => filter === '전체' || d.status === filter), '아직 올린 문서가 없어요. 오른쪽 위 "＋ 새 기안"을 눌러 보세요.');
+    $('otherList').innerHTML = listHtml(other, '결재선에 든 다른 사람의 문서가 없어요.');
+    $('sub').textContent = `${me.name || ''}님의 결재함`;
+  }
+
+  async function load() {
+    try { items = (await api('GET', '/api/approvals')).items; showErr(''); }
+    catch (e) { showErr(`결재 문서를 읽지 못했어요: ${e.message}`); items = []; }
+    render();
+    if (openId) { const d = items.find((x) => x.id === openId); if (d) renderDetail(d); else closeDetail(); } // 열려 있는 문서도 바뀐 내용으로
+  }
+
+  // ---------- 결재란(도장) ----------
+  // 이번 회차(round)의 기록으로 칸마다 상태를 가린다: 도장 찍음(승인·전결·반려) / 지금 차례 / 대기
+  function cellsOf(d) {
+    const logs = d.log.filter((l) => l.round === d.round), sub = logs.find((l) => l.type === 'submit');
+    const out = [{ role: '기안', name: d.drafterName, dept: d.drafterDept, kind: sub ? 'draft' : 'plan', at: sub && sub.at, comment: '' }];
+    const line = d.status === '작성중' || !d.line.length ? d.plan : d.line;
+    line.forEach((p, k) => {
+      const l = [...logs].reverse().find((x) => x.by === p.username && x.type !== 'submit');
+      const c = { role: ROLE[p.role], name: p.name, dept: p.dept, kind: 'wait', at: null, comment: '' };
+      if (l) Object.assign(c, { kind: l.type === 'reject' ? 'rej' : l.type === 'final' ? 'fin' : 'ok', at: l.at, comment: l.comment });
+      else if (d.status === '진행' && d.step === k) c.kind = 'turn';
+      else if (d.status === '작성중') c.kind = 'plan';
+      out.push(c);
+    });
+    return out;
+  }
+  const MARK = { ok: '승인', fin: '전결', rej: '반려', draft: '상신', approve: '승인', final: '전결', reject: '반려', submit: '상신' }; // 앞의 넷은 결재란 도장 종류(cellsOf), 뒤의 넷은 서명 기록(log)의 type
+  function signsHtml(d) {
+    return `<div class="signs">${cellsOf(d).map((c) => `<div class="cell"><div class="h">${esc(c.role)}</div><div class="b">
+      ${c.at ? `<div class="stamp ${c.kind === 'rej' ? 'rej' : c.kind === 'fin' ? 'fin' : c.kind === 'draft' ? 'draft' : ''}"><b>${esc(c.name)}</b><i>${MARK[c.kind]}</i><small>${esc(dt(c.at))}</small></div>`
+        : `<div class="who">${esc(c.name)}${c.dept ? `<br><small>${esc(c.dept)}</small>` : ''}</div>${c.kind === 'turn' ? '<span class="turn">결재 차례</span>' : c.kind === 'wait' ? '(미결재)' : c.role === '기안' ? '(작성 중)' : '(미정)'}`}
+      ${c.comment ? `<div class="cm">“${esc(c.comment)}”</div>` : ''}</div></div>`).join('')}</div>`;
+  }
+
+  // ---------- 문서 보기 ----------
+  function openDetail(id) { openId = id; ask = null; const d = items.find((x) => x.id === id); if (!d) return; $('dtWrap').hidden = false; renderDetail(d); }
+  function closeDetail() { openId = null; ask = null; $('dtWrap').hidden = true; }
+  const ASK = { approve: ['승인하면 내 이름과 시각이 서명으로 남고 되돌릴 수 없어요. 승인할까요?', '네, 승인합니다', 'green'], final: ['전결로 최종 결재하면 내 이름과 시각이 "전결"로 남고 문서가 완료돼요. 되돌릴 수 없어요. 전결할까요?', '네, 전결합니다', 'amber'],
+    reject: ['반려하면 문서가 기안자에게 돌아가요. 위에 적은 의견과 함께 반려할까요?', '네, 반려합니다', 'red'], submit: ['올리면 결재선(첫 사람)에게 넘어가고 내용을 고칠 수 없어요. 올릴까요?', '네, 올립니다', ''], del: ['이 작성중 기안을 지울까요? 되돌릴 수 없어요.', '네, 지웁니다', 'red'] };
+
+  function renderDetail(d) {
+    const keep = $('cmt') ? $('cmt').value : '';
+    $('dtCard').innerHTML = `
+      <div class="mhead"><h3 id="dtTitle">${esc(d.title || '(제목 없음)')}</h3><span class="st s${esc(d.status)}">${esc(d.status)}</span><button class="x" id="dtX" aria-label="닫기">✕</button></div>
+      <div class="facts"><div><span>문서번호</span><b>${esc(d.no)}</b></div><div><span>양식</span><b>${esc(d.form)}</b></div><div><span>금액</span><b>${d.amount ? money(d.amount) : '-'}</b></div>
+        <div><span>기안자</span><b>${esc(d.drafterName)}${d.drafterDept ? ` (${esc(d.drafterDept)})` : ''}</b></div><div><span>작성</span><b>${esc(dtFull(d.createdAt))}</b></div></div>
+      ${d.status === '반려' ? `<div class="notice">반려됐어요. 의견을 보고 [수정]해서 다시 올릴 수 있어요. (다시 올리면 처음 검토자부터 새로 결재해요)</div>` : ''}
+      <h4>결재란</h4>${signsHtml(d)}
+      <h4>본문</h4><div class="bodybox">${esc(d.body) || '<span style="color:var(--sub)">(본문 없음)</span>'}</div>
+      <h4>첨부</h4><div class="files">${d.attachments.length ? d.attachments.map((a) => `<a href="/api/approvals/${esc(d.id)}/files/${encodeURIComponent(a.file)}?dl=1" download>📎 ${esc(a.name)}</a>`).join('') : '<span class="none2">첨부 없음</span>'}</div>
+      <h4>결재 기록</h4><ul class="tl">${d.log.length ? [...d.log].map((l) => `<li><time>${esc(dtFull(l.at).slice(5))}</time><span class="what">${d.log.some((x) => x.round > 1) ? `[${l.round}차] ` : ''}${l.type === 'submit' ? `<b>${esc(l.name)}</b> 상신` : `<b>${esc(l.name)}</b> ${LOGROLE[l.role] || ''} <span class="${l.type === 'reject' ? 'rj' : l.type === 'final' ? 'fn' : 'okc'}">${MARK[l.type]}</span>${l.comment ? ` — ${esc(l.comment)}` : ''}`}</span></li>`).join('')
+        : '<li><span class="what" style="color:var(--sub)">아직 올리지 않았어요.</span></li>'}</ul>
+      <div id="act"></div>`;
+    renderAct(d, keep);
+    $('dtX').onclick = closeDetail;
+  }
+
+  function renderAct(d, keep) {
+    const a = $('act'); let h = '';
+    if (ask) { // 두 번 확인: 눌렀을 때 바로 실행하지 않고 한 번 더 묻는다 (서명·상신은 되돌릴 수 없어서)
+      const [text, ok, color] = ASK[ask.kind];
+      h = `<div class="actions"><div class="askline">${esc(text)}</div><button class="btn ${color}" id="askOk">${esc(ok)}</button><button class="btn ghost" id="askNo">취소</button></div><div class="msg" id="actMsg" role="alert"></div>`;
+    } else {
+      if (d.myTurn) h += `<div class="decide"><h4>내 결재</h4><textarea id="cmt" rows="2" maxlength="500" placeholder="의견 (반려할 때는 꼭 적어 주세요)"></textarea></div>
+        <div class="actions"><button class="btn green" data-k="approve">승인</button><button class="btn red" data-k="reject">반려</button>${d.myRole === 'approve' ? '<button class="btn amber" data-k="final">전결</button>' : ''}<span class="sp"></span><button class="btn ghost" id="pr">🖨 인쇄 양식</button></div>`;
+      else h += `<div class="actions">${d.canEdit ? '<button class="btn dark" id="ed">수정</button><button class="btn" data-k="submit">올리기 (상신)</button>' : ''}${d.canDelete ? '<button class="btn ghost" data-k="del">지우기</button>' : ''}<span class="sp"></span><button class="btn ghost" id="pr">🖨 인쇄 양식</button></div>`;
+      h += '<div class="msg" id="actMsg" role="alert"></div>';
+    }
+    a.innerHTML = h;
+    if ($('cmt')) $('cmt').value = keep || '';
+    const msg = (m) => { $('actMsg').textContent = m || ''; };
+    if (ask) {
+      $('askNo').onclick = () => { ask = null; renderDetail(d); if (keep && $('cmt')) $('cmt').value = keep; };
+      $('askOk').onclick = async () => {
+        $('askOk').disabled = true; msg('');
+        try {
+          const k = ask.kind, comment = ask.comment || '';
+          if (k === 'del') { await api('DELETE', `/api/approvals/${d.id}`); closeDetail(); }
+          else if (k === 'submit') await api('POST', `/api/approvals/${d.id}/submit`, {});
+          else await api('POST', `/api/approvals/${d.id}/decide`, { action: k, comment });
+          ask = null; await load();
+        } catch (e) { msg(e.message); $('askOk').disabled = false; }
+      };
+      return;
+    }
+    a.querySelectorAll('[data-k]').forEach((b) => (b.onclick = () => {
+      const k = b.dataset.k, comment = $('cmt') ? $('cmt').value.trim() : '';
+      if (k === 'reject' && !comment) return msg('반려할 때는 의견을 적어 주세요.');
+      ask = { kind: k, comment }; renderAct(d, comment);
+    }));
+    if ($('ed')) $('ed').onclick = () => openEditor(d);
+    $('pr').onclick = () => openSheet(d);
+  }
+
+  // ---------- 기안 쓰기·고치기 ----------
+  const personLabel = (p) => `${p.name}${p.dept ? ` (${p.dept})` : ''}`;
+  function openEditor(d) {
+    edit = d ? { id: d.id, title: d.title, form: d.form, body: d.body, amount: d.amount, attachments: [...d.attachments], reviewers: [...d.reviewers], approver: d.approver }
+      : { id: null, title: '', form: FORMS[0], body: '', amount: 0, attachments: [], reviewers: [], approver: '' };
+    $('edTitle').textContent = d ? '기안 고치기' : '새 기안';
+    $('fForm').innerHTML = FORMS.map((f) => `<option>${f}</option>`).join('');
+    $('fTitle').value = edit.title; $('fForm').value = edit.form; $('fBody').value = edit.body; $('fAmount').value = edit.amount ? edit.amount.toLocaleString('ko-KR') : '';
+    $('edMsg').textContent = ''; $('edWrap').hidden = false; renderFiles(); renderLine(); $('fTitle').focus();
+  }
+  const closeEditor = () => { $('edWrap').hidden = true; edit = null; };
+  function readForm() {
+    edit.title = $('fTitle').value; edit.form = $('fForm').value; edit.body = $('fBody').value;
+    const raw = $('fAmount').value.trim().replace(/[,\s]/g, '').replace(/원$/, '');
+    if (raw && !/^\d+$/.test(raw)) throw new Error('금액은 숫자만 적어 주세요. (예: 4200000)');
+    edit.amount = raw ? Number(raw) : 0;
+  }
+  function renderFiles() {
+    $('fFiles').innerHTML = edit.attachments.map((a, i) => `<span>📎 ${esc(a.name)} <button class="mini" data-rm="${i}" aria-label="첨부 빼기" style="padding:0 6px">✕</button></span>`).join('');
+    $('fFiles').querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => { edit.attachments.splice(Number(b.dataset.rm), 1); renderFiles(); }));
+    $('addFile').disabled = edit.attachments.length >= 5;
+  }
+  function renderLine() {
+    const others = people.filter((p) => p.username !== me.username);
+    const opts = (list, sel, blank) => `${blank ? `<option value="">${blank}</option>` : ''}${list.map((p) => `<option value="${esc(p.username)}" ${p.username === sel ? 'selected' : ''}>${esc(personLabel(p))}</option>`).join('')}`;
+    $('lineBox').innerHTML = `<div class="lrow"><span class="tag">기안</span><span class="me">${esc(personLabel(me))} (나)</span></div>
+      ${edit.reviewers.map((r, i) => `<div class="arrow">↓</div><div class="lrow"><span class="tag">검토 ${i + 1}</span><select data-rv="${i}" aria-label="검토자 ${i + 1}">${opts(others, r, '사람을 고르세요')}</select>
+        <button class="mini" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="위로">↑</button><button class="mini" data-dn="${i}" ${i === edit.reviewers.length - 1 ? 'disabled' : ''} aria-label="아래로">↓</button><button class="mini" data-del="${i}" aria-label="빼기">✕</button></div>`).join('')}
+      <div style="margin:4px 0 4px 58px"><button class="mini" id="addRev" ${edit.reviewers.length >= 5 ? 'disabled' : ''}>＋ 검토자 추가</button></div>
+      <div class="arrow">↓</div><div class="lrow"><span class="tag ap">승인</span><select id="fApprover" aria-label="승인자">${opts(people, edit.approver, '사람을 고르세요')}</select></div>`;
+    const box = $('lineBox'), pick = () => { box.querySelectorAll('[data-rv]').forEach((s) => (edit.reviewers[Number(s.dataset.rv)] = s.value)); edit.approver = $('fApprover').value; };
+    box.querySelectorAll('[data-rv]').forEach((s) => (s.onchange = pick));
+    $('fApprover').onchange = pick;
+    $('addRev').onclick = () => { pick(); edit.reviewers.push(''); renderLine(); };
+    box.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => { pick(); edit.reviewers.splice(Number(b.dataset.del), 1); renderLine(); }));
+    box.querySelectorAll('[data-up],[data-dn]').forEach((b) => (b.onclick = () => { pick(); const i = Number(b.dataset.up ?? b.dataset.dn), j = b.dataset.up !== undefined ? i - 1 : i + 1; [edit.reviewers[i], edit.reviewers[j]] = [edit.reviewers[j], edit.reviewers[i]]; renderLine(); }));
+  }
+  // 저장: 처음이면 새로 만들고, 있으면 고친다. 빈 검토자 칸은 빼고 보낸다
+  async function saveDraft() {
+    readForm();
+    const body = { title: edit.title, form: edit.form, body: edit.body, amount: edit.amount, reviewers: edit.reviewers.filter(Boolean), approver: edit.approver, attachments: edit.attachments.map((a) => a.file) };
+    if (!edit.id) { delete body.attachments; const r = await api('POST', '/api/approvals', body); edit.id = r.item.id; if (edit.attachments.length) await api('PUT', `/api/approvals/${edit.id}`, { attachments: edit.attachments.map((a) => a.file) }); return r.item; }
+    return (await api('PUT', `/api/approvals/${edit.id}`, body)).item;
+  }
+  async function doSave(andSubmit) {
+    $('edMsg').textContent = ''; $('edSave').disabled = $('edSubmit').disabled = true;
+    try {
+      const it = await saveDraft();
+      if (andSubmit) await api('POST', `/api/approvals/${it.id}/submit`, {});
+      closeEditor(); await load(); openDetail(it.id);
+    } catch (e) { $('edMsg').textContent = e.message; }
+    $('edSave').disabled = $('edSubmit').disabled = false;
+  }
+  async function attach(files) {
+    $('edMsg').textContent = '';
+    try {
+      if (!edit.id) await saveDraft(); // 첨부는 문서에 붙으니 먼저 작성중으로 저장해 둔다
+      for (const f of files) {
+        if (edit.attachments.length >= 5) break;
+        const j = await api('POST', `/api/approvals/${edit.id}/files?name=${encodeURIComponent(f.name)}`, f, f.type || 'application/octet-stream');
+        edit.attachments.push({ file: j.file, name: j.name, size: j.size, type: j.type });
+      }
+      await api('PUT', `/api/approvals/${edit.id}`, { attachments: edit.attachments.map((a) => a.file) });
+      renderFiles();
+    } catch (e) { $('edMsg').textContent = e.message; }
+  }
+
+  // ---------- 인쇄 양식 ----------
+  function openSheet(d) {
+    const cells = cellsOf(d), decided = d.log.filter((l) => l.round === d.round && l.type !== 'submit' && l.comment);
+    const mk = (c) => (c.kind === 'fin' ? '전결' : c.kind === 'rej' ? '반려' : '');
+    $('sheet').innerHTML = `
+      <div class="sh-top"><div class="sh-title"><h1>${esc(SHEET_TITLE[d.form] || d.form)}</h1><div class="no">문서번호 ${esc(d.no)}</div></div>
+        <table class="sg"><tr><th class="vt" rowspan="2">결<br>재</th>${cells.map((c) => `<th>${esc(c.role)}</th>`).join('')}</tr>
+          <tr>${cells.map((c) => `<td>${c.at ? `<div class="nm">${esc(c.name)}</div><div class="tm">${esc(dtFull(c.at))}</div>${mk(c) ? `<div class="mk">${mk(c)}</div>` : ''}` : `<div class="nm" style="font-weight:400;color:#555">${esc(c.name)}</div><div class="tm">${c.kind === 'turn' ? '(결재 대기)' : '(미결재)'}</div>`}</td>`).join('')}</tr></table></div>
+      ${d.status !== '완료' ? `<div class="sh-warn">※ 아직 결재가 끝나지 않은 문서입니다 (현재 상태: ${esc(d.status)})</div>` : ''}
+      <table class="info"><tr><th>제 목</th><td colspan="3">${esc(d.title || '(제목 없음)')}</td></tr>
+        <tr><th>양 식</th><td>${esc(d.form)}</td><th>금 액</th><td>${d.amount ? `금 ${money(d.amount)}` : '-'}</td></tr>
+        <tr><th>기 안 자</th><td>${esc(d.drafterName)}${d.drafterDept ? ` (${esc(d.drafterDept)})` : ''}</td><th>기 안 일</th><td>${esc(dtFull(d.createdAt).slice(0, 10))}</td></tr></table>
+      <div class="sh-body">${esc(d.body)}</div>
+      <div class="sh-sec">첨부 파일</div><div style="font-size:13px">${d.attachments.length ? d.attachments.map((a, i) => `${i + 1}. ${esc(a.name)}`).join('<br>') : '없음'}</div>
+      ${decided.length ? `<div class="sh-sec">결재 의견</div><table class="cm"><tr><th style="width:70px">구분</th><th style="width:90px">결재자</th><th style="width:130px">일시</th><th>의견</th></tr>${decided.map((l) => `<tr><td>${LOGROLE[l.role]} ${MARK[l.type]}</td><td>${esc(l.name)}</td><td>${esc(dtFull(l.at))}</td><td>${esc(l.comment)}</td></tr>`).join('')}</table>` : ''}
+      <div class="sh-foot">Sancho 결재에서 출력 · 출력일시 ${esc(dtFull(new Date().toISOString()))}</div>`;
+    $('sheetWrap').hidden = false;
+  }
+
+  // ---------- 연결 ----------
+  $('newBtn').onclick = () => openEditor(null);
+  $('edX').onclick = $('edCancel').onclick = closeEditor;
+  $('edSave').onclick = () => doSave(false);
+  $('edSubmit').onclick = () => doSave(true);
+  $('addFile').onclick = () => $('fileIn').click();
+  $('fileIn').onchange = (e) => { attach([...e.target.files]); e.target.value = ''; };
+  $('fAmount').onblur = () => { const raw = $('fAmount').value.trim().replace(/[,\s]/g, '').replace(/원$/, ''); if (/^\d+$/.test(raw)) $('fAmount').value = Number(raw) ? Number(raw).toLocaleString('ko-KR') : ''; }; // 숫자면 쉼표를 넣어 보기 좋게 (숫자가 아니면 그대로 두고 저장할 때 알려 준다)
+  $('printBtn').onclick = () => window.print();
+  $('sheetX').onclick = () => { $('sheetWrap').hidden = true; };
+  $('filters').onclick = (e) => { const b = e.target.closest('[data-f]'); if (b) { filter = b.dataset.f; render(); } };
+  document.addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) openDetail(r.dataset.id); });
+  $('dtWrap').addEventListener('mousedown', (e) => { if (e.target === $('dtWrap')) closeDetail(); });
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (!$('sheetWrap').hidden) $('sheetWrap').hidden = true; else if (!$('edWrap').hidden) closeEditor(); else if (!$('dtWrap').hidden) closeDetail(); });
+
+  (async () => {
+    try { me = await api('GET', '/api/me'); people = await api('GET', '/api/approvals/people'); } catch (e) { showErr(e.message); }
+    await load();
+    db.watch('approvals', load); // 다른 사람이 결재하거나 비서가 초안을 만들면 바로 따라 바뀐다
+    const want = new URLSearchParams(location.search).get('d');
+    if (want && items.some((x) => x.id === want)) openDetail(want);
+  })();
+</script>
+</body>
+</html>
