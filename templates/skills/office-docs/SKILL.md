@@ -12,6 +12,7 @@ description: 엑셀(xlsx)·워드(docx)·PPT(pptx) 문서를 만들 때, 그리�
 1. **실행 도구가 있는지 본다.** 파이썬을 돌리려면 Bash(윈도우는 PowerShell도) 도구가 필요하다. 이 도구는 주인이 설정 → 권한 → **명령 실행** 을 켰을 때만 있다.
    도구가 없으면 문서를 만들 수 없다. "설정 → 권한에서 '명령 실행'을 켜 주세요"라고 알리고 멈춘다. 스스로 켜려 하지 않는다.
 2. **`python`** 으로 실행한다. **`python3` 는 이 PC 에서 멈추니 절대 쓰지 않는다.**
+   - `python` 이 없다고 나오면(`command not found`, `Python was not found`, 종료 코드 9009) 파이썬 설치가 필요하다고 알리고 멈춘다: "python.org 에서 파이썬을 설치하고 설치 첫 화면의 'Add python.exe to PATH' 를 체크해 주세요." 스스로 설치하지 않는다.
 3. 쓸 라이브러리가 있는지 먼저 확인한다: `python -c "import openpyxl, docx; print('ok')"`
    - 엑셀 = **openpyxl**, 워드 = **python-docx** (`import docx`). 이 PC 에 있다.
    - PPT 는 **python-pptx** 가 필요한데 **이 PC 에는 없다** (`python -c "import pptx"` 로 확인).
@@ -34,6 +35,9 @@ python 작업/make_report.py
 
 - 스크립트 맨 위에 `import sys; sys.stdout.reconfigure(encoding='utf-8')` 를 넣는다 (한글을 출력할 때 윈도우에서 오류가 나는 것을 막는다).
 - 한 번에 하나씩: 스크립트 쓰기 → 실행 → 결과 확인. 오류가 나면 메시지를 읽고 스크립트를 고쳐 다시 실행한다.
+- **같은 오류로 두 번 실패하면 멈추고** 무엇이 안 되는지 주인에게 쉬운 말로 알린다 (끝없이 다시 시도하지 않는다).
+- 스크립트는 입력을 기다리지 않게 쓴다 (`input()` 금지). 실행이 1분 넘게 끝나지 않으면 멈췄다고 보고 알린다.
+- 저장할 때 `PermissionError` 가 나면 그 파일이 워드·엑셀에 열려 있는 것이다. 다른 이름(`_2`)으로 저장한다.
 
 ## 읽기 (첨부된 파일)
 

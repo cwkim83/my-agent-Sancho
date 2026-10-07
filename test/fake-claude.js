@@ -12,7 +12,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //   fake-mail-bad.flag → 형식을 어긴다(원문 칸·긴 글·이상한 분류 + 기존 항목 지움) / fake-mail-slow.flag → 1.5초 걸림 / fake-mail-nodraft.flag → 초안을 안 적음
 async function mail(msg) {
   const fs = require('fs'), real = msg.includes('실제 메일함 모드'), has = (f) => fs.existsSync(f);
-  fs.appendFileSync('fake-prompts.log', msg + '\n---\n');
+  const allowed = (() => { const i = a.indexOf('--allowedTools'), o = []; for (let k = i + 1; i >= 0 && k < a.length && !a[k].startsWith('--'); k++) o.push(a[k]); return o; })();
+  fs.appendFileSync('fake-prompts.log', msg + `\nALLOW=${allowed.join(',')}` + '\n---\n'); // 메일정리 실행이 받은 허용 목록도 남긴다 (명령 도구가 없어야 한다)
   if (has('fake-mail-slow.flag')) await sleep(1500);
   const read = (f) => JSON.parse(fs.readFileSync(f, 'utf8')), day = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('sv-SE'); };
   const done = (t) => { delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); };
@@ -44,6 +45,10 @@ async function mail(msg) {
 async function run(msg) {
   out({ type: 'system', subtype: 'init' });
   if (msg.startsWith('[메일 정리]') || msg.startsWith('[답장 초안]')) return mail(msg);
+  if (msg === '/orphan') { // 멈춘 python 흉내: 답을 다 보내고 끝났는데, 띄운 프로그램이 출력 통로를 붙잡은 채 20초 남는다
+    require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true, cwd: require('os').tmpdir() }).unref(); // 점검 폴더를 붙잡지 않게 다른 곳에서
+    delta('다 했어요'); out({ type: 'result', subtype: 'success', is_error: false, result: '다 했어요' }); process.exit(0);
+  }
   if (msg.startsWith('/make-doc')) { // 문서 만들기 흉내: 파일함에 문서를 두고(+ 카드에 안 나와야 하는 임시·숨김 파일), 글로 알린다
     const fs = require('fs'), name = msg.slice(9).trim() || '보고서.docx';
     fs.mkdirSync('파일함', { recursive: true });
@@ -77,10 +82,16 @@ async function run(msg) {
     && arg('--tools') === 'Read,Glob,Grep,Edit,Write,WebSearch,WebFetch' ? 'ok' : 'none';
   // 권한(설정 → 권한)이 명령줄에 어떻게 실렸는지: 플래그 하나가 받는 값들을 모은다
   const vals = (flag) => { const i = a.indexOf(flag), o = []; if (i < 0) return o; for (let k = i + 1; k < a.length && !a[k].startsWith('--'); k++) o.push(a[k]); return o; };
+  // --settings 로 받은 것: 훅 끄기(disableAllHooks) 또는 문지기 훅. 문지기 확인 파일(SANCHO_GATE)이 있으면 그 내용도
+  const settings = (() => { try { return JSON.parse(arg('--settings') || '{}'); } catch { return {}; } })();
+  const gateHook = settings.hooks && settings.hooks.PreToolUse && settings.hooks.PreToolUse[0];
+  const gateInfo = (() => { try { return JSON.parse(fs.readFileSync(process.env.SANCHO_GATE, 'utf8')); } catch { return null; } })();
+  if (msg === '/gatepath') { const t = `GATEPATH ${process.env.SANCHO_GATE || '-'}`; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; }
   const al = vals('--allowedTools'), dn = vals('--disallowedTools'), G = 'mcp__claude_ai_Gmail__', has = (l, t) => (l.includes(t) ? 'Y' : 'N');
   const perm = [`apps=${has(al, G + 'search_threads')}`, `send=${has(al, G + 'send_message')}${has(al, G + 'reply')}${has(al, G + 'forward')}`, `sendDeny=${has(dn, G + 'send_message')}${has(dn, G + 'reply')}${has(dn, G + 'forward')}`,
     `shell=${has(al, 'Bash')}${has(al, 'PowerShell')}`, `toolsShell=${has(vals('--tools')[0].split(','), 'Bash')}`, `home=${a.includes('--add-dir') ? a[a.indexOf('--add-dir') + 1] : 'off'}`,
-    `src=${arg('--setting-sources')}`, `strict=${a.includes('--strict-mcp-config') ? 'Y' : 'N'}`, `hooksOff=${a.includes('--settings') ? 'Y' : 'N'}`, `ts=${has(vals('--tools')[0].split(','), 'ToolSearch')}`].join(' ');
+    `src=${arg('--setting-sources')}`, `strict=${a.includes('--strict-mcp-config') ? 'Y' : 'N'}`, `hooksOff=${settings.disableAllHooks === true ? 'Y' : 'N'}`, `ts=${has(vals('--tools')[0].split(','), 'ToolSearch')}`,
+    `gate=${gateHook ? gateHook.matcher : '-'}`, `gateCmd=${gateHook ? (gateHook.hooks[0].command.includes('mailgate.js') ? 'Y' : 'N') : '-'}`, `gateFile=${gateInfo ? 'Y' : 'N'}`, `gateEmails=${gateInfo ? gateInfo.emails.join(';') || '-' : '-'}`, `gateOnce=${gateInfo ? (gateInfo.once ? 'Y' : 'N') : '-'}`].join(' ');
   if (msg === '/perm') { const t = `PERM ${perm} | allow=${al.join(',')} | deny=${dn.join(',')}`; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 권한 점검용: 받은 허용·거절 목록을 그대로 돌려준다
   if (msg.startsWith('/tool ')) { out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: msg.slice(6), id: 't9' } } }); delta('끝'); out({ type: 'result', subtype: 'success', is_error: false, result: '끝' }); return; } // 화면에 뜨는 도구 이름표 점검용
   if (msg.startsWith('기억해:')) fs.appendFileSync('memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내

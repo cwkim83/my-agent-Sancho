@@ -379,7 +379,22 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
 const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰은 두뇌도 못 보게 막는다
-const READONLY_FILES = ['.system.md', '.claude/**']; // 비서가 자기 지침(성격·스킬)을 스스로 고치지 못하게 막는다 (읽기만 가능)
+// 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
+const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json'];
+// 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
+// 숨은 지침을 그대로 따랐고, 훅은 켤 때마다 명령을 돌렸고, 허용 규칙은 data 밖 파일까지 읽게 했다). 비서나 메일 속 지시가 이런 파일을 심으면 권한을 꺼도 남는다.
+// → claude 를 띄우기 직전에 있으면 이름을 바꿔(지우지 않고) 꺼 두고 알림으로 알린다. 꺼 두지 못하면 실행하지 않는다
+const PLANTED = ['CLAUDE.local.md', '.mcp.json', '.claude/settings.json', '.claude/settings.local.json'];
+function disarmPlanted() { // 문제가 있으면 쉬운 한국어 이유, 없으면 ''
+  for (const rel of PLANTED) {
+    const f = path.join(DATA_DIR, rel);
+    if (!fs.existsSync(f)) continue;
+    const to = `${f}.꺼둠-${Date.now()}`;
+    try { fs.renameSync(f, to); } catch { return `data/${rel} 을(를) 꺼 두지 못해서 실행하지 않았어요. 그 파일을 확인해 주세요.`; }
+    addNotice('비서 설정 파일을 꺼 두었어요', `data/${rel} 이(가) 생겨 있어서 이름을 바꿔(${path.basename(to)}) 꺼 두었어요. 이 파일은 비서에게 숨은 지시나 넓은 권한을 줄 수 있어요. 직접 만든 게 아니면 내용을 확인하고 지워 주세요.`, '주의');
+  }
+  return '';
+}
 const BRAIN_TOOLS = ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebFetch'];
 
 // ---------- 권한 (설정 → 권한): data/settings.json 의 "권한". 기본은 전부 꺼짐 ----------
@@ -398,7 +413,8 @@ const APP_TOOLS = {
       'mark_thread_spam', 'trash_message', 'trash_thread', 'unlabel_message', 'unlabel_thread', 'unmark_message_spam', 'unmark_thread_spam', 'untrash_message', 'untrash_thread',
       'update_label', 'update_message_labels'],
   },
-  Google_Calendar: { use: ['list_calendars', 'list_events', 'get_event', 'search_events', 'suggest_time', 'create_event', 'update_event'], block: ['delete_event', 'respond_to_event'] },
+  // 캘린더 만들기·고치기는 참석자를 넣으면 구글이 초대 메일을 보낸다 (5편 점검) → 메일처럼 주인의 확인("등록할까요?"→"네") 뒤에만
+  Google_Calendar: { use: ['list_calendars', 'list_events', 'get_event', 'search_events', 'suggest_time'], confirm: ['create_event', 'update_event'], block: ['delete_event', 'respond_to_event'] },
   Google_Drive: { use: ['search_files', 'list_recent_files', 'get_file_metadata', 'get_file_permissions', 'read_file_content', 'download_file_content', 'create_file', 'copy_file'],
     block: ['share_file', 'trash_file', 'update_file'] },
 };
@@ -406,16 +422,25 @@ const appNames = (kind) => Object.entries(APP_TOOLS).flatMap(([srv, g]) => (g[ki
 const SHELL_TOOLS = process.platform === 'win32' ? ['Bash', 'PowerShell'] : ['Bash'];
 const HOME_SECRETS = ['.ssh/**', '.aws/**', '.gnupg/**', '.claude/**', '.claude.json', 'AppData/**']; // 홈 폴더를 읽게 해도 로그인 열쇠가 있는 곳은 늘 막는다
 
-// 메일 보내기 문: 직전에 비서가 "보낼까요?" 라고 물었고, 주인이 "네"·"보내 줘" 처럼 짧게 답했을 때만 그 한 차례에 보내기 도구를 연다
-// ("네 근데 제목 바꿔" 처럼 다른 말이 섞이면 열지 않는다 — 비서가 고친 뒤 다시 묻는다)
-const MAIL_YES = /^(?:(?:네|넵|예|응|그래|좋아요?|오케이|ok|okay|yes|y)[\s,.!~]*)?(?:(?:보내|발송)(?:해)?\s*(?:줘|주세요|요|라|봐)?[\s,.!~]*)?$/i;
-function mailConfirmed(chat, content) {
+// 확인 문: 직전에 비서가 "보낼까요?"(메일) 또는 "등록할까요?"(구글 캘린더) 라고 물었고, 주인이 "네"·"보내 줘" 처럼 짧게 답했을 때만
+// 그 한 차례에 그 도구를 연다 ("네 근데 제목 바꿔" 처럼 다른 말이 섞이면 열지 않는다 — 비서가 고친 뒤 다시 묻는다).
+// 5편 점검: 도구를 열기만 하면 그 차례에 메일을 여러 통, 보여 주지 않은 주소로도 보낼 수 있었다 → 문지기(mailgate.js, claude 의 PreToolUse 훅)가
+// 보내기 직전에 받는 사람이 비서가 보여 준 주소 안에 있는지 보고, 메일은 한 통만 통과시킨다
+const MAIL_YES = /^(?:(?:네|넵|예|응|그래|좋아요?|오케이|ok|okay|yes|y)[\s,.!~]*)?(?:(?:보내|발송|등록)(?:해)?\s*(?:줘|주세요|요|라|봐)?[\s,.!~]*)?$/i;
+const GATES = { send: { ask: '보낼까요?', tools: appNames('send'), once: true }, calendar: { ask: '등록할까요?', tools: appNames('confirm'), once: false } };
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const GATE_SCRIPT = path.join(__dirname, 'mailgate.js').replace(/\\/g, '/');
+function confirmedGate(chat, content) { // null | { kind, tools, once, emails(비서가 보여 준 주소들) }
   const last = chat.messages[chat.messages.length - 1], s = content.trim();
-  return !!(last && last.role === 'assistant' && last.content.includes('보낼까요?') && s && MAIL_YES.test(s));
+  if (!last || last.role !== 'assistant' || !s || !MAIL_YES.test(s)) return null;
+  const kind = Object.keys(GATES).find((k) => last.content.includes(GATES[k].ask));
+  return kind ? { kind, tools: GATES[kind].tools, once: GATES[kind].once, emails: [...new Set((last.content.match(EMAIL_RE) || []).map((e) => e.toLowerCase()))] } : null;
 }
 
-function brainArgs({ mailOk = false } = {}) { // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
-  const P = readPerms(), apps = P.연결된앱, sh = P.명령실행 ? SHELL_TOOLS : [];
+// unattended: 주인이 보고 있지 않은 실행(예약·메일정리 단추). 메일 속 지시 같은 것 때문에 명령이 돌지 않게 명령 실행 도구는 권한이 켜져 있어도 주지 않는다 (5편 점검)
+function brainArgs({ gate = null, unattended = false } = {}) { // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
+  const P = readPerms(), apps = P.연결된앱, sh = P.명령실행 && !unattended ? SHELL_TOOLS : [];
+  const gated = apps && gate ? gate.tools : [], held = [...appNames('send'), ...appNames('confirm')].filter((t) => !gated.includes(t));
   return [
     '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
     // 비서는 이 PC 의 Claude Code 를 그대로 쓰지만, 개발할 때의 것은 싣지 않는다 (4편 점검에서 찾음):
@@ -426,17 +451,20 @@ function brainArgs({ mailOk = false } = {}) { // claude 를 띄울 때마다 지
     // 그래서 user 를 읽되 훅은 끄고(disableAllHooks), 허용 목록에 있는 도구만 쓰게 한다 — 나머지 커넥터·플러그인 도구는 허용 목록에 없어 거절된다
     // 연결된 앱을 켜면 ToolSearch(도구 찾기, 읽기만)도 더한다: 다른 커넥터 도구 60여 개의 설명이 통째로 실려 대화 시작마다 토큰이 12배(6.6천 → 8만)로 늘던 것을, 이름만 싣고 필요할 때 찾아 쓰게 해서 1.2만으로 줄인다 (이 PC 에서 측정)
     '--setting-sources', apps ? 'user,local' : 'local', '--disable-slash-commands', '--tools', [...BRAIN_TOOLS, ...(apps ? ['ToolSearch'] : []), ...sh].join(','),
-    ...(apps ? ['--settings', '{"disableAllHooks":true}'] : ['--strict-mcp-config']),
+    ...(apps ? [] : ['--strict-mcp-config']),
+    // 훅은 늘 끈다 (사용자·플러그인·심어진 훅이 돌지 않게). 주인이 "네" 한 그 차례에만 우리 문지기(mailgate.js)를 훅으로 건다
+    '--settings', JSON.stringify(gated.length ? { hooks: { PreToolUse: [{ matcher: gated.join('|'), hooks: [{ type: 'command', command: `node "${GATE_SCRIPT}"` }] }] } } : { disableAllHooks: true }),
     // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 권한을 켰을 때만
     '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch', ...sh,
     ...(P.홈폴더 ? ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/**)`) : []), // 홈 폴더는 읽기만 (고치기·쓰기는 ./** 밖이라 안 됨)
-    ...(apps ? [...appNames('use'), ...(mailOk ? appNames('send') : [])] : []),
+    ...(apps ? [...appNames('use'), ...gated] : []),
     '--disallowedTools', ...(P.명령실행 ? [] : ['Bash', 'PowerShell']), ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
     ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)),
     // 명령을 켜면 셸로 비밀 파일을 열거나 지침을 고칠 수 있다. 이름이 드러난 명령은 막는다 (ponytail: 이름을 돌려 쓰는 꼼수까지는 못 막는다 — 8편 안전장치에서 더 조인다)
-    ...sh.flatMap((t) => [...PRIVATE_FILES, '.system.md', '.claude'].map((f) => `${t}(*${f}*)`)),
+    // 'claude' 가 든 명령도 막는다: 명령 창에서 claude 를 또 띄우면 이 모든 제한이 없는 비서가 되어 메일까지 보낼 수 있다 (5편 점검)
+    ...sh.flatMap((t) => [...PRIVATE_FILES, '.system.md', '.claude', 'claude', 'CLAUDE'].map((f) => `${t}(*${f}*)`)),
     ...(P.홈폴더 ? HOME_SECRETS.flatMap((f) => ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/${f})`)) : []),
-    ...(apps ? [...appNames('block'), ...(mailOk ? [] : appNames('send'))] : []),
+    ...(apps ? [...appNames('block'), ...held] : []),
     ...(P.홈폴더 ? ['--add-dir', os.homedir()] : []),
     '--append-system-prompt-file', SYSTEM_FILE,
   ];
@@ -451,6 +479,7 @@ function toolLabel(name) { // 연결된 앱은 어느 앱인지 보이게 (메�
   return m ? (appNames('send').includes(name) ? '메일 보내는 중' : APP_LABELS[m[1]]) : TOOL_LABELS[name] || '도구 쓰는 중';
 }
 const BRAIN_MAX_MS = Number(process.env.SANCHO_BRAIN_MAX_MS) || 10 * 60 * 1000; // 점검에서만 짧게 줄인다
+const EXIT_GRACE_MS = 1500; // claude 가 끝난 뒤 남은 출력을 기다리는 시간 (그 뒤엔 출력 통로가 안 닫혀도 마무리)
 const running = new Set(); // 지금 답하는 중인 대화
 
 // CLAUDE 로 시작하는 환경변수와 접속 주소·토큰을 지운다 (Claude Code 안에서 서버를 켜도 "로그인 안 됨"이 나지 않게)
@@ -511,10 +540,18 @@ function safeName(raw) { // 폴더 부분·이상한 글자·너무 긴 이름�
   if (n.length > 100) { const e = path.extname(n).slice(0, 12); n = n.slice(0, 100 - e.length) + e; }
   return n;
 }
+const BOX_REAL = Object.fromEntries(Object.entries(BOXES).map(([k, d]) => [k, fs.realpathSync(d)])); // 서버를 켤 때의 진짜 위치
 function boxFile(box, name) { // 그 폴더에 정확히 그 이름의 파일이 있을 때만 전체 경로를 돌려준다 (폴더 밖으로 못 나가고 숨김 파일은 없는 것으로)
   const dir = Object.hasOwn(BOXES, box) ? BOXES[box] : null;
   if (!dir || !name || name.startsWith('.') || /[\\/]/.test(name)) return null;
-  try { if (!fs.readdirSync(dir).includes(name)) return null; const full = path.join(dir, name); return fs.statSync(full).isFile() ? full : null; } catch { return null; }
+  try {
+    if (!fs.readdirSync(dir).includes(name)) return null;
+    // 5편 점검: 폴더 안에 다른 파일을 가리키는 연결(심볼릭·하드 링크)을 두거나 폴더 자체를 다른 곳으로 바꿔치기(정션)하면
+    // 받기 주소로 data 밖이나 비밀 파일(users.json 등)이 샜다 → 진짜 그 폴더 안에 있는 보통 파일만 내보낸다
+    const full = path.join(dir, name), st = fs.lstatSync(full);
+    if (!st.isFile() || st.nlink > 1 || path.dirname(fs.realpathSync(full)) !== BOX_REAL[box]) return null;
+    return full;
+  } catch { return null; }
 }
 const fileInfo = (box, file) => ({ box, file, name: shownName(file), size: fs.statSync(path.join(BOXES[box], file)).size, ext: extOf(file) });
 // 파일함의 지문 { 이름 → 수정시각:크기 }: 대화 전후로 비교해 "이번 대화에서 새로 생기거나 바뀐" 파일을 찾는다
@@ -542,7 +579,8 @@ async function uploadApi(req, res) {
   if (BLOCKED_EXT.test(name)) return send(res, 400, { error: '실행 파일 같은 종류는 첨부할 수 없어요.' }), true;
   if (!buf.length) return send(res, 400, { error: '빈 파일이에요.' }), true;
   const now = new Date(), file = `${now.toLocaleDateString('sv-SE').replace(/-/g, '')}-${now.toTimeString().slice(0, 8).replace(/:/g, '')}-${crypto.randomBytes(2).toString('hex')}_${name}`;
-  fs.writeFileSync(path.join(UPLOADS_DIR, file), buf);
+  if (fs.realpathSync(UPLOADS_DIR) !== BOX_REAL.uploads) return send(res, 500, { error: 'data/uploads 폴더가 다른 곳으로 바뀌어 있어서 저장하지 않았어요. 폴더를 확인해 주세요.' }), true; // 바꿔치기된 폴더로는 쓰지 않는다
+  fs.writeFileSync(path.join(UPLOADS_DIR, file), buf, { flag: 'wx' }); // 같은 이름이 이미 있으면 덮어쓰지 않고 실패
   return send(res, 200, { file, name, size: buf.length, type: mimeOf(name) }), true;
 }
 // GET /api/files/<uploads|파일함>/<이름>[?dl=1 | ?view=1] — 로그인한 사람만. 기본은 그 자리에서 보기(이미지·PDF 만), 나머지는 내려받기, view=1 은 미리보기용 글·표
@@ -575,14 +613,17 @@ const ATTACH_NOTE = (atts) => `\n\n[첨부한 파일] 아래 파일을 도구로
 function streamReply(res, chat, content, user, atts = []) {
   if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
   running.add(chat.id);
-  const mailOk = mailConfirmed(chat, content); // 새 말을 대화에 넣기 전에 본다: 바로 앞이 비서의 "보낼까요?" 였는지
+  const gate = confirmedGate(chat, content); // 새 말을 대화에 넣기 전에 본다: 바로 앞이 비서의 "보낼까요?"·"등록할까요?" 였는지
+  // 문지기에게 넘길 확인 내용(보여 준 주소·한 통만). data 밖 임시 폴더에 둬서 비서의 파일 도구로는 못 고친다. 이번 차례가 끝나면 지운다
+  const gateFile = gate ? path.join(os.tmpdir(), `sancho-gate-${crypto.randomBytes(8).toString('hex')}.json`) : null;
+  if (gateFile) fs.writeFileSync(gateFile, JSON.stringify({ tools: gate.tools, emails: gate.emails, once: gate.once }));
   const boxBefore = boxSnap();
   chat.messages.push({ role: 'user', content, at: nowIso(), ...(atts.length ? { attachments: atts } : {}) });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
   saveChat(chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
 
-  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ mailOk }), '--append-system-prompt', brainCtx(user.name)];
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ gate }), '--append-system-prompt', brainCtx(user.name)];
   let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null, cap = null, child = null;
   let finished = false, aborted = false, timedOut = false;
 
@@ -625,11 +666,14 @@ function streamReply(res, chat, content, user, atts = []) {
     chat.messages.push({ role: 'assistant', content: sent, at: nowIso(), ...(files.length ? { files } : {}) }); // 중지해도 지금까지 받은 만큼 저장
     saveChat(chat);
     running.delete(chat.id);
+    if (gateFile) for (const f of [gateFile, `${gateFile}.used`]) fs.rmSync(f, { force: true });
     if (!res.destroyed) { if (files.length) res.write(`event: files\ndata: ${JSON.stringify(files)}\n\n`); res.write('event: done\ndata: {}\n\n'); res.end(); }
   }
 
   // 실행 자체가 그 자리에서 실패해도 화면이 ■ 에 멈추지 않게 바로 마무리한다
-  try { child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return finish(); }
+  const planted = disarmPlanted(); // 심어진 지침·설정 파일이 있으면 꺼 두고, 못 끄면 실행하지 않는다
+  if (planted) { spawnErr = new Error(planted); return finish(); }
+  try { child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: { ...brainEnv(), ...(gateFile ? { SANCHO_GATE: gateFile } : {}) }, windowsHide: true }); } catch (e) { spawnErr = e; return finish(); }
   cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
   child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
   child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
@@ -637,6 +681,9 @@ function streamReply(res, chat, content, user, atts = []) {
   child.stdin.on('error', () => {});
   child.on('error', (e) => { spawnErr = e; finish(); });
   child.on('close', finish);
+  // 5편 점검: claude 가 끝났는데 claude 가 띄운 프로그램(멈춘 python 등)이 출력 통로를 붙잡고 남으면 'close' 가 오지 않아 화면이 ■ 에 멈췄다.
+  // claude 자체가 끝나면(exit) 남은 출력을 1.5초 더 받고 마무리한다
+  child.on('exit', () => setTimeout(finish, EXIT_GRACE_MS));
   child.stdin.end(atts.length ? content + ATTACH_NOTE(atts) : content); // 사용자 말은 명령줄이 아니라 표준입력으로 (첨부가 있으면 파일 경로를 덧붙여)
   res.on('close', () => { if (!finished) { aborted = true; killTree(child); } }); // ■ 중지 → claude 끄기
 }
@@ -673,7 +720,7 @@ function loadSchedule() { // 파일이 없으면 빈 목록, 깨져 있으면 �
 }
 
 // 화면 없이 두뇌에 한 번 묻고 끝 결과만 받는다. 대화와 같은 두뇌·같은 도구 제한(brainArgs), 새 세션(--resume 없음). 절대 reject 하지 않는다
-// 주인이 없으니 메일 보내기는 늘 막힌다 (brainArgs 의 mailOk 가 꺼진 채로)
+// 주인이 없으니 메일 보내기·캘린더 등록은 늘 막히고(확인 문 없음), 명령 실행 도구도 주지 않는다 (unattended)
 // ponytail: 띄우고 줄 읽는 부분이 streamReply 와 닮았다. 대화는 점검이 촘촘해서 건드리지 않았다. 고칠 곳이 세 군데가 되면 spawnBrain 으로 합친다
 function askBrainOnce(prompt, ctx) {
   return new Promise((resolve) => {
@@ -688,7 +735,9 @@ function askBrainOnce(prompt, ctx) {
       if (buf.trim()) onLine(buf);
       resolve(result && !result.is_error ? { ok: true, text: String(result.result || '').trim() } : { ok: false, text: explainBrain({ spawnErr, timedOut, result, errText, limit }) });
     };
-    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...brainArgs(), '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
+    const planted = disarmPlanted();
+    if (planted) { spawnErr = new Error(planted); return end(); }
+    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...brainArgs({ unattended: true }), '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
     cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
     child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
     child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
@@ -696,6 +745,7 @@ function askBrainOnce(prompt, ctx) {
     child.stdin.on('error', () => {});
     child.on('error', (e) => { spawnErr = e; end(); });
     child.on('close', end);
+    child.on('exit', () => setTimeout(end, EXIT_GRACE_MS)); // 남은 프로그램이 출력 통로를 붙잡아도 멈추지 않게 (대화와 같은 이유)
     child.stdin.end(prompt);
   });
 }
