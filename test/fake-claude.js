@@ -89,6 +89,16 @@ async function run(msg) {
     fs.writeFileSync('파일함/' + name, 'DOC:' + name); fs.writeFileSync('파일함/~$' + name, 'tmp'); fs.writeFileSync('파일함/.숨김', 'x'); fs.writeFileSync('파일함/작업중.tmp', 'x');
     const t = '문서를 만들었어요: ' + name; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return;
   }
+  if (msg.startsWith('/selfmod ')) { // 자기 수정 흉내(8편 점검): "/selfmod <동작> <파일> [글]". 서버가 열어 준 앱 폴더(--add-dir)의 파일을 진짜 비서처럼 직접 고친다. 폴더를 안 열어 줬으면 못 고친다
+    const fs = require('fs'), path = require('path'), [, act, rel, ...txt] = msg.split(' '), i = a.lastIndexOf('--add-dir'), app = i >= 0 ? a[i + 1] : null;
+    const fin = (t, err) => { delta(t); out({ type: 'result', subtype: 'success', is_error: !!err, result: t }); if (err) process.exit(1); };
+    if (!app) return fin('앱 폴더가 열려 있지 않아서 고치지 못했어요');
+    const f = path.join(app, rel || 'x.txt');
+    if (act === 'edit') { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.appendFileSync(f, txt.join(' ') + '\n'); return fin(`고쳤어요: ${rel}`); } // 파일 끝에 한 줄 덧붙임 (없으면 만듦)
+    if (act === 'break') { fs.appendFileSync(f, '\n}}} 문법 오류\n'); return fin(`고쳤어요: ${rel}`); } // 문법을 깨뜨림
+    if (act === 'crash') { fs.appendFileSync(f, '\n// 고치다 말았음\n'); return fin('도중에 죽음', true); } // 고치다 오류로 끝남
+    return fin('아무것도 안 고쳤어요');
+  }
   if (msg === '/login') { out({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }); process.exit(1); }
   if (msg === '/limit') {
     out({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });

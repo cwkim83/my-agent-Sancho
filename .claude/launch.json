@@ -17,6 +17,14 @@
         "server.js"
       ],
       "port": 8790
+    },
+    {
+      "name": "sancho-supervised",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "supervisor.js"
+      ],
+      "port": 8790
     }
   ]
 }

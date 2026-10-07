@@ -9,6 +9,9 @@ const { spawn } = require('child_process');
 const PORT = Number(process.env.SANCHO_PORT) || 8790;
 const HOST = '127.0.0.1'; // 이 PC 에서만 접속 가능
 const DATA_DIR = process.env.SANCHO_DATA || path.join(__dirname, 'data');
+const guard = require('./guard.js'); // 관문·불변 층 (8편): 재시작 검사, 자기 수정의 되돌리기·커밋
+const APP_ROOT = process.env.SANCHO_APP_ROOT || __dirname; // 앱 코드 폴더 (점검에서만 임시 저장소로 바꾼다. 감시자는 이 환경변수를 지우고 켠다)
+const SUPERVISED = process.env.SANCHO_SUPERVISED === '1'; // 감시자(start.bat → supervisor.js)가 켠 서버인가: 아니면 종료 코드 10 으로 죽어도 아무도 다시 켜 주지 않는다
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
@@ -425,7 +428,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
 }
 const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json']; // (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
-const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json']; // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
+const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json', 'selfmod-log.json', '.rollback.json', 'logs/**']; // (8편: 자기 수정 기록·감시자가 남기는 되돌림 표시·로그도 비서가 꾸미지 못하게) // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
 // 숨은 지침을 그대로 따랐고, 훅은 켤 때마다 명령을 돌렸고, 허용 규칙은 data 밖 파일까지 읽게 했다). 비서나 메일 속 지시가 이런 파일을 심으면 권한을 꺼도 남는다.
 // → claude 를 띄우기 직전에 있으면 이름을 바꿔(지우지 않고) 꺼 두고 알림으로 알린다. 꺼 두지 못하면 실행하지 않는다
@@ -444,8 +447,8 @@ const BRAIN_TOOLS = ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebF
 
 // ---------- 권한 (설정 → 권한): data/settings.json 의 "권한". 기본은 전부 꺼짐 ----------
 // settings.json 은 두뇌가 못 읽는 파일(PRIVATE_FILES)이라 비서가 스스로 권한을 켤 수 없다. 켜고 끄는 건 주인이 설정 화면에서만
-const PERM_KEYS = ['연결된앱', '명령실행', '홈폴더'];
-const permsOf = (st) => Object.fromEntries(PERM_KEYS.map((k) => [k, !!(st && st.권한 && st.권한[k] === true)])); // { 연결된앱, 명령실행, 홈폴더 } 모두 true/false (true 가 아니면 꺼짐)
+const PERM_KEYS = ['연결된앱', '명령실행', '홈폴더', '자기수정'];
+const permsOf = (st) => Object.fromEntries(PERM_KEYS.map((k) => [k, !!(st && st.권한 && st.권한[k] === true)])); // { 연결된앱, 명령실행, 홈폴더, 자기수정 } 모두 true/false (true 가 아니면 꺼짐)
 function readPerms() { try { return permsOf(loadSettings()); } catch { return permsOf(null); } } // 파일이 없거나 깨졌으면 전부 꺼짐 (안전한 쪽)
 // 이 스위치들은 주인(관리자)의 Gmail·이 PC 를 여는 열쇠라서 관리자의 비서에게만 적용한다. 일반 사용자의 비서는 스위치가 켜져 있어도 늘 꺼짐
 const permsFor = (u) => (isAdmin(u) ? readPerms() : permsOf(null));
@@ -488,8 +491,9 @@ function confirmedGate(chat, content) { // null | { kind, tools, once, emails(�
 // 다른 사람의 개인 폴더(대화·기억·예약)는 읽지도 고치지도 못하게 한다 — 사람마다 따로라는 약속이 비서를 통해 새지 않게
 const othersDeny = (u) => readJson(USERS_FILE, []).filter((o) => o.username !== u.username && USER_RE.test(o.username))
   .flatMap((o) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./users/${o.username}/**)`));
-function brainArgs({ gate = null, unattended = false, user, noTools = false } = {}) { // noTools: 도구도 권한도 없이 글만 주고받는다 (메신저 답변) // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
-  const P = noTools ? permsOf(null) : permsFor(user), apps = P.연결된앱, sh = P.명령실행 && !unattended ? SHELL_TOOLS : [];
+function brainArgs({ gate = null, unattended = false, user, noTools = false, selfmod = null } = {}) { // noTools: 도구도 권한도 없이 글만 주고받는다 (메신저 답변) // selfmod: 이번 차례에 앱 코드 폴더를 열어 주는가 ({ ok:true } 일 때만) // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
+  const P = noTools ? permsOf(null) : permsFor(user), apps = P.연결된앱, sm = !!(selfmod && selfmod.ok && !noTools && !unattended);
+  const sh = P.명령실행 && !unattended && !sm ? SHELL_TOOLS : []; // 자기 수정 차례에는 명령 도구를 주지 않는다: 명령으로는 허용 폴더·불변 규칙을 돌아갈 수 있어서
   const gated = apps && gate ? gate.tools : [], held = [...appNames('send'), ...appNames('confirm')].filter((t) => !gated.includes(t));
   return [
     '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
@@ -506,16 +510,19 @@ function brainArgs({ gate = null, unattended = false, user, noTools = false } = 
     '--settings', JSON.stringify(gated.length ? { hooks: { PreToolUse: [{ matcher: gated.join('|'), hooks: [{ type: 'command', command: `node "${GATE_SCRIPT}"` }] }] } } : { disableAllHooks: true }),
     // 파일 도구는 data/ 안(./**)으로만 허용한다. 범위 없이 'Read' 만 쓰면 PC 의 모든 파일을 읽고 쓸 수 있다. 명령 실행은 권한을 켰을 때만
     '--allowedTools', ...['Read', 'Glob', 'Grep', 'Edit', 'Write'].map((t) => `${t}(./**)`), 'WebSearch', 'WebFetch', ...sh,
+    ...(sm ? guard.appAllowRules(APP_ROOT) : []), // 8편 자기 수정: 앱 코드 폴더 (아래 거부 규칙이 불변 파일을 뺀다)
     ...(P.홈폴더 ? ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/**)`) : []), // 홈 폴더는 읽기만 (고치기·쓰기는 ./** 밖이라 안 됨)
     ...(apps ? [...appNames('use'), ...gated] : []),
-    '--disallowedTools', ...(P.명령실행 ? [] : ['Bash', 'PowerShell']), ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
+    '--disallowedTools', ...(P.명령실행 && !sm ? [] : ['Bash', 'PowerShell']), ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
     ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)), ...othersDeny(user),
+    ...(sm ? guard.immutableDenyRules(APP_ROOT) : []), // start.bat·supervisor.js·guard.js·selftest.js·mailgate.js·test/·.git·.gitignore·.claude·CLAUDE.md 는 고치지 못한다
     // 명령을 켜면 셸로 비밀 파일을 열거나 지침을 고칠 수 있다. 이름이 드러난 명령은 막는다 (ponytail: 이름을 돌려 쓰는 꼼수까지는 못 막는다 — 8편 안전장치에서 더 조인다)
     // 'claude' 가 든 명령도 막는다: 명령 창에서 claude 를 또 띄우면 이 모든 제한이 없는 비서가 되어 메일까지 보낼 수 있다 (5편 점검)
     ...sh.flatMap((t) => [...PRIVATE_FILES, '.system.md', '.claude', 'claude', 'CLAUDE'].map((f) => `${t}(*${f}*)`)),
     ...(P.홈폴더 ? HOME_SECRETS.flatMap((f) => ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/${f})`)) : []),
     ...(apps ? [...appNames('block'), ...held] : []),
     ...(P.홈폴더 ? ['--add-dir', os.homedir()] : []),
+    ...(sm ? ['--add-dir', APP_ROOT] : []),
     ...(noTools ? ['--no-session-persistence'] : []), // 6편 점검: 메신저 답·회의록 정리는 이어 쓸 일이 없으니 기록(~/.claude)에 남기지 않는다
     '--append-system-prompt-file', SYSTEM_FILE,
   ];
@@ -532,6 +539,7 @@ function toolLabel(name) { // 연결된 앱은 어느 앱인지 보이게 (메�
 const BRAIN_MAX_MS = Number(process.env.SANCHO_BRAIN_MAX_MS) || 10 * 60 * 1000; // 점검에서만 짧게 줄인다
 const EXIT_GRACE_MS = 1500; // claude 가 끝난 뒤 남은 출력을 기다리는 시간 (그 뒤엔 출력 통로가 안 닫혀도 마무리)
 const running = new Set(); // 지금 답하는 중인 대화
+const kids = new Set(); // 지금 도는 claude(두뇌) 프로세스들 — 서버를 다시 켤 때 같이 끈다 (남겨 두면 주인 없는 프로세스가 된다)
 
 // CLAUDE 로 시작하는 환경변수와 접속 주소·토큰을 지운다 (Claude Code 안에서 서버를 켜도 "로그인 안 됨"이 나지 않게)
 function brainEnv() {
@@ -667,6 +675,72 @@ async function openApi(req, res) {
 }
 const ATTACH_NOTE = (atts) => `\n\n[첨부한 파일] 아래 파일을 도구로 읽고 답한다 (경로는 작업 폴더 기준). 이미지·PDF·텍스트·CSV 는 Read 로 바로 읽힌다. 엑셀·워드는 office-docs 스킬(.claude/skills/office-docs/SKILL.md)의 방법으로 읽는다.\n${atts.map((a) => `- uploads/${a.file} (원래 이름: ${a.name})`).join('\n')}`;
 
+// ---------- 자기 수정 (8편): 설정 → 권한의 "자기수정" 스위치 (관리자만, 기본 꺼짐) ----------
+// 켜면 비서가 이 앱의 코드 폴더를 고칠 수 있다. 흐름: 비서가 답하며 파일을 고침(커밋·재시작은 지침으로 막음) → 답이 끝나면 서버가 바뀐 파일을 봄
+//   → 관문(문법 검사·selftest) 통과 → 커밋("자기 수정: 요청") → 재시작.  실패하면 바뀐 것을 모두 되돌리고 이유를 채팅에 보여 준다.
+// 시작할 때 앱 폴더가 깨끗해야만 열어 준다: 그래야 "바뀐 것 = 비서가 한 것"이라, 되돌려도 사람이 고치던 것을 지우지 않는다.
+const SELFMOD_LOG = path.join(DATA_DIR, 'selfmod-log.json');
+const oneLine = (s, n) => String(s).replace(/\s+/g, ' ').trim().slice(0, n);
+function selfmodBegin(user) { // 스위치가 꺼져 있으면(관리자가 아니어도) null, 아니면 { ok:true }(이번 차례에 폴더를 열어 줌) | { ok:false, why }
+  if (!permsFor(user).자기수정) return null;
+  const why = !SUPERVISED ? '서버가 감시자(start.bat) 없이 켜져 있어서 (고친 뒤 다시 켜 줄 감시자가 없어서)'
+    : !guard.isRepo(APP_ROOT) ? '앱 폴더가 git 저장소가 아니어서 (되돌릴 수 없어서)'
+      : guard.dirty(APP_ROOT) ? '앱 폴더에 커밋하지 않은 변경이 있어서 (되돌릴 때 그 변경까지 지우게 되어서)'
+        : !guard.lock.take('자기 수정') ? `지금 ${guard.lock.who()} 이(가) 진행 중이어서` : '';
+  return why ? { ok: false, why } : { ok: true };
+}
+const selfmodNote = (sm) => (sm.ok
+  ? `[자기 수정 켜짐] 이 앱의 코드 폴더: ${APP_ROOT} (작업 폴더의 부모 폴더 — 위의 "작업 폴더 밖은 읽을 수 없다"는 이 폴더에는 해당하지 않는다). 주인이 앱(화면·서버)을 고쳐 달라고 하면 이 폴더의 파일을 Read·Edit·Write 도구로 직접 고친다. 앱 코드는 고치기만 하고 커밋·재시작은 하지 마라: 답이 끝나면 서버가 바뀐 파일을 검사해(문법·selftest, 몇 분) 통과하면 커밋하고 다시 켜며, 실패하면 모두 되돌린다. 다음 파일은 고칠 수 없다: ${guard.PROTECTED.join(' · ')}. 외부 패키지는 쓰지 않는다(Node 내장 기능만). 요청한 것만 작게 고치고, 고친 파일과 바꾼 내용을 마지막에 짧게 알린다. 고칠 일이 아닌 질문에는 파일을 건드리지 않는다.`
+  : `[자기 수정 켜짐, 그러나 지금은 쓸 수 없음] 이유: ${sm.why}. 주인이 앱 코드를 고쳐 달라고 하면 이 이유를 알려 주고 앱 코드는 고치지 않는다.`);
+function selfmodLog(rec) { const l = readJson(SELFMOD_LOG, []); l.unshift(rec); writeJson(SELFMOD_LOG, l.slice(0, 200)); }
+// 비서의 답이 끝난 뒤: 바뀐 파일을 보고 → 보호 파일을 건드렸으면 거부 → 관문 → 커밋. 어느 단계든 실패하면 모두 되돌린다. → { restart }
+async function selfmodAfter({ user, content, ok, emit, gap }) {
+  let restart = false;
+  try {
+    const files = guard.changedFiles(APP_ROOT);
+    if (files === null) { emit(`${gap()}⚠ 앱 폴더의 변경을 확인하지 못해서 자기 수정 검사를 건너뛰었어요. 앱 폴더(git status)를 확인해 주세요.`); return { restart }; }
+    if (!files.length) return { restart }; // 고친 게 없으면 할 일도 기록도 없다
+    const rec = { id: crypto.randomBytes(4).toString('hex'), at: nowIso(), user: user.username, request: oneLine(content, 200), files: files.slice(0, 40), result: '', reason: '', commit: '' };
+    const list = `${files.slice(0, 8).join(', ')}${files.length > 8 ? ` 외 ${files.length - 8}개` : ''}`;
+    const undo = (result, reason) => {
+      const done = guard.revert(APP_ROOT); Object.assign(rec, { result, reason: done ? reason : `${reason} (되돌리기도 실패했어요)` }); selfmodLog(rec);
+      emit(`${gap()}↩ 자기 수정을 되돌렸어요${done ? '' : ' — 되돌리기에 실패했어요. 앱 폴더(git status)를 확인해 주세요'}.\n- 이유: ${reason}\n- 바뀌었던 파일: ${list}`);
+    };
+    if (!ok) { undo('되돌림', '비서의 답이 끝까지 가지 못해서(중지·오류·시간 초과) 검사하지 않은 수정은 남기지 않았어요.'); return { restart }; }
+    const bad = files.filter(guard.isProtected);
+    if (bad.length) { undo('거부', `고칠 수 없는 파일을 건드렸어요: ${bad.join(', ')}`); return { restart }; }
+    emit(`${gap()}🔧 자기 수정 검사 중… 바뀐 파일 ${files.length}개 (${list}). 문법 검사와 selftest 가 몇 분 걸려요.`);
+    const g = await guard.runGate({ root: APP_ROOT });
+    if (!g.ok) { undo('거부', g.reason); return { restart }; }
+    const sha = guard.commitAll(APP_ROOT, `자기 수정: ${oneLine(content, 60)}`);
+    if (!sha) { undo('되돌림', '커밋하지 못해서'); return { restart }; }
+    Object.assign(rec, { result: '통과·커밋·재시작', commit: sha }); selfmodLog(rec);
+    emit(`${gap()}✅ 검사 통과 → 커밋 ${sha} → 서버를 다시 켭니다. 잠시 뒤 화면이 새로 고쳐져요.\n- 바뀐 파일: ${list}`);
+    restart = true; return { restart };
+  } finally { if (!restart) guard.lock.free(); }
+}
+
+// POST /api/restart (관리자) — 관문 8편: 비서가 절차를 지키길 기대하지 않고 서버가 막는다.
+//   감시자 없이 켜졌거나(409 unsupervised) 이미 검사 중이면(409 busy) 거부. 아니면 guard.runGate(불변 파일 확인·문법·selftest·검사 중 코드 변경)를 돌린 뒤
+//   실패하면 422 { ok:false, step, reason, tail } 로 이유를 돌려주고 켜 둔 채 그대로, 통과하면 200 { ok:true, restarting:true } 를 보내고 종료 코드 10 으로 끝난다.
+//   검사에 몇 분 걸리니 연결을 열어 둔 채 결과를 돌려준다 (서버는 그동안 다른 요청을 계속 받는다)
+async function restartApi(res) {
+  if (!SUPERVISED) return send(res, 409, { ok: false, step: 'unsupervised', reason: '서버가 감시자(start.bat) 없이 켜져 있어서 다시 시작할 수 없어요. start.bat 으로 켜 주세요.' });
+  if (!guard.lock.take('재시작 검사')) return send(res, 409, { ok: false, step: 'busy', reason: `지금 ${guard.lock.who()} 이(가) 진행 중이에요. 끝난 뒤에 다시 눌러 주세요.` });
+  let g; try { g = await guard.runGate({ root: APP_ROOT }); } catch (e) { g = { ok: false, step: 'error', reason: `검사 중 오류: ${e.message}`, tail: [] }; }
+  if (!g.ok) { guard.lock.free(); return send(res, 422, g); }
+  res.once('close', () => setTimeout(shutdown, 200)); // 응답이 나간 뒤에 끈다
+  setTimeout(shutdown, 3000).unref(); // (연결이 안 닫혀도 3초 안에는 끈다)
+  return send(res, 200, { ok: true, restarting: true });
+}
+// 서버를 다시 켜려고 끈다: 종료 코드 10 = "재시작 요청" (감시자가 바로 다시 켠다). 도는 비서(claude)도 같이 끈다
+let shuttingDown = false;
+function shutdown(code = 10) {
+  if (shuttingDown) return; shuttingDown = true;
+  server.close(); for (const k of kids) killTree(k);
+  setTimeout(() => process.exit(code), 400);
+}
+
 function streamReply(res, chat, content, user, atts = []) {
   if (running.has(chat.id)) return send(res, 409, { error: '이 대화는 아직 답하는 중입니다. 끝난 뒤에 보내 주세요.' });
   running.add(chat.id);
@@ -680,7 +754,8 @@ function streamReply(res, chat, content, user, atts = []) {
   saveChat(user, chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
 
-  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ gate, user }), '--append-system-prompt', brainCtx(user)];
+  const sm = selfmodBegin(user); // 자기 수정: null(꺼짐) | { ok:true }(앱 폴더를 열어 줌 — 이 차례가 끝나면 selfmodAfter 가 반드시 잠금을 푼다) | { ok:false, why }
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ gate, user, selfmod: sm }), '--append-system-prompt', brainCtx(user) + (sm ? ` ${selfmodNote(sm)}` : '')];
   let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null, cap = null, child = null;
   let finished = false, aborted = false, timedOut = false;
 
@@ -720,19 +795,28 @@ function streamReply(res, chat, content, user, atts = []) {
     }
     let drafted = ''; try { drafted = takeApprovalDraft(user, aborted); } catch (e) { drafted = `⚠ 기안 초안을 처리하지 못했어요: ${e.message}`; } // 비서가 "기안서 써 줘"로 놓고 간 초안 → 작성중 기안
     if (drafted) emit(`${gap()}${drafted}`);
+    if (sm && sm.ok) { // 자기 수정: 비서의 답이 끝났으니 바뀐 파일을 검사한다 (몇 분 걸릴 수 있어, 이 사이 이 대화는 "답하는 중")
+      const ok = !aborted && !!result && !result.is_error;
+      return selfmodAfter({ user, content, ok, emit, gap }).then(complete, (e) => { emit(`${gap()}⚠ 자기 수정 처리 중 오류: ${e.message}`); complete({}); });
+    }
+    complete({});
+  }
+  function complete({ restart } = {}) {
     if (!sent.trim()) sent = '(중지했습니다.)';
     let files = []; try { files = boxNew(boxBefore); } catch { /* 파일함을 못 읽으면 카드만 없다 */ }
     chat.messages.push({ role: 'assistant', content: sent, at: nowIso(), ...(files.length ? { files } : {}) }); // 중지해도 지금까지 받은 만큼 저장
     saveChat(user, chat);
     running.delete(chat.id);
     if (gateFile) for (const f of [gateFile, `${gateFile}.used`]) fs.rmSync(f, { force: true });
-    if (!res.destroyed) { if (files.length) res.write(`event: files\ndata: ${JSON.stringify(files)}\n\n`); res.write('event: done\ndata: {}\n\n'); res.end(); }
+    if (!res.destroyed) { if (files.length) res.write(`event: files\ndata: ${JSON.stringify(files)}\n\n`); if (restart) res.write('event: restart\ndata: {}\n\n'); res.write('event: done\ndata: {}\n\n'); res.end(); }
+    if (restart) setTimeout(shutdown, 600); // 마지막 알림이 화면에 닿을 시간을 주고 끈다 → 감시자가 다시 켠다
   }
 
   // 실행 자체가 그 자리에서 실패해도 화면이 ■ 에 멈추지 않게 바로 마무리한다
   const planted = disarmPlanted(); // 심어진 지침·설정 파일이 있으면 꺼 두고, 못 끄면 실행하지 않는다
   if (planted) { spawnErr = new Error(planted); return finish(); }
   try { child = spawn(BRAIN_CMD[0], args, { cwd: DATA_DIR, env: { ...brainEnv(), ...(gateFile ? { SANCHO_GATE: gateFile } : {}) }, windowsHide: true }); } catch (e) { spawnErr = e; return finish(); }
+  kids.add(child); child.once('close', () => kids.delete(child));
   cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
   child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
   child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
@@ -798,6 +882,7 @@ function askBrainOnce(prompt, ctx, user, opts = {}) {
     const planted = disarmPlanted();
     if (planted) { spawnErr = new Error(planted); return end(); }
     try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...brainArgs({ unattended: true, user, ...opts }), '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
+    kids.add(child); child.once('close', () => kids.delete(child));
     cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
     child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
     child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
@@ -855,7 +940,7 @@ const plainSummary = (t, max) => { const s = t.replace(/\*\*/g, '').replace(/^#{
 // /api/settings[/telegram[/test]|/permissions] — 설정 화면이 쓴다. 처리했으면 true
 //   GET /api/settings → { telegram: { token: "****"|"", chatId: "****"|"" }, permissions: { 연결된앱, 명령실행, 홈폴더 } }  (텔레그램 값 자체는 절대 안 보낸다)
 //   PUT /api/settings/telegram { token?, chatId? } (비운 칸은 그대로 둠) · DELETE → 지움 · POST /test → 시험 메시지 한 통
-//   PUT /api/settings/permissions { 연결된앱?, 명령실행?, 홈폴더? } (true/false 만, 보낸 칸만 바뀜) → { permissions }
+//   PUT /api/settings/permissions { 연결된앱?, 명령실행?, 홈폴더?, 자기수정? } (true/false 만, 보낸 칸만 바뀜) → { permissions }
 async function settingsApi(req, res, sub, test) {
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
   let b = {};
@@ -1762,6 +1847,12 @@ async function handle(req, res) {
   const p = url.pathname;
   const user = currentUser(req);
 
+  // 건강 검사 (8편): 감시자가 "서버가 정말 멀쩡한가"를 볼 때 쓴다. 로그인 없이, 비밀 정보 없이. 데이터 폴더와 users.json 이 읽히지 않으면 503
+  if (p === '/health' && req.method === 'GET') {
+    let bad = ''; try { fs.accessSync(DATA_DIR, fs.constants.R_OK | fs.constants.W_OK); if (fs.existsSync(USERS_FILE)) JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch (e) { bad = `data 폴더 또는 users.json 을 읽지 못해요 (${e.code || e.name})`; }
+    return bad ? send(res, 503, { ok: false, error: bad }) : send(res, 200, { ok: true, pid: process.pid, uptimeSec: Math.round(process.uptime()) });
+  }
+
   if (p.startsWith('/api/')) {
     if (p === '/api/auth/status' && req.method === 'GET') {
       return send(res, 200, { hasUsers: readJson(USERS_FILE, []).length > 0, loggedIn: !!user });
@@ -1828,8 +1919,10 @@ async function handle(req, res) {
     }
 
     // 사용자 관리·설정·예시 데이터는 관리자만 (일반 사용자는 화면에서도 안 보인다)
-    const adminOnly = /^\/api\/(users|settings|seed)(\/|$)/.test(p);
+    const adminOnly = /^\/api\/(users|settings|seed|restart|selfmod)(\/|$)/.test(p);
     if (adminOnly && !isAdmin(user)) return send(res, 403, { error: '관리자만 쓸 수 있어요.' });
+    if (p === '/api/restart' && req.method === 'POST') return restartApi(res); // 관문: 문법·selftest 를 서버가 직접 돌려 보고, 통과해야만 다시 켠다
+    if (p === '/api/selfmod/log' && req.method === 'GET') return send(res, 200, readJson(SELFMOD_LOG, []));
     // GET /api/users → 사람 목록(비밀번호 없이) · POST /api/users { name, username, password(임시), dept, role } → 새 계정. 임시 비밀번호로는 처음 로그인할 때 바꿔야 한다
     if (p === '/api/users') {
       if (req.method === 'GET') return send(res, 200, readJson(USERS_FILE, []).map(pubUser));
@@ -2001,6 +2094,10 @@ async function handle(req, res) {
 const server = http.createServer((req, res) => {
   handle(req, res).catch((e) => { console.error(e); if (!res.headersSent) send(res, 500, { error: '서버 오류' }); });
 });
+server.on('error', (e) => { // 포트가 이미 쓰이면(이미 켜진 Sancho 가 있으면) 종료 코드 11: 감시자는 이 경우 코드를 되돌리지 않고 안내만 한다
+  if (e.code === 'EADDRINUSE') { console.error(`포트 ${PORT} 를 이미 다른 프로그램이 쓰고 있어요. 이미 켜진 Sancho 가 있는지 확인해 주세요.`); process.exit(11); }
+  throw e;
+});
 server.listen(PORT, HOST, () => {
   console.log(`Sancho 서버 실행 중: http://${HOST}:${PORT}`);
   try { ensureChannels(); } catch (e) { console.error('메신저 채널을 만들지 못했어요:', e.message); }
@@ -2014,7 +2111,14 @@ server.listen(PORT, HOST, () => {
       if (Object.keys(m).length) writeJson(runningFile(u), {});
     }
   } catch (e) { console.error('끊긴 예약 확인 오류:', e.message); }
-  const tick = () => { try { scheduleTick(); } catch (e) { console.error('예약 점검 오류:', e); } }; // 오류가 나도 서버가 죽지 않게
+  try { // 감시자(supervisor.js)가 서버를 이전 정상 버전으로 되돌린 적이 있으면 한 번 알린다 (감시자가 남긴 표시 파일)
+    const f = path.join(DATA_DIR, '.rollback.json'), r = readJson(f, null);
+    if (r && typeof r === 'object') {
+      addNotice('서버가 이전 정상 버전으로 되돌아갔어요', `${r.at ? `${new Date(r.at).toLocaleString('ko-KR')} 에 ` : ''}서버가 비정상으로 끝나서 마지막 정상 버전(last-good)으로 되돌리고 다시 켰어요.${r.branch ? ` 그때의 변경은 "${r.branch}" 브랜치에 그대로 보존돼 있어요.` : ''}`, '주의', r.error ? String(r.error).slice(0, 4000) : undefined);
+      fs.rmSync(f, { force: true });
+    }
+  } catch (e) { console.error('되돌림 알림 오류:', e.message); }
+  const tick =() => { try { scheduleTick(); } catch (e) { console.error('예약 점검 오류:', e); } }; // 오류가 나도 서버가 죽지 않게
   tick(); // 켜자마자 한 번: 꺼져 있는 동안 놓친 예약은 여기서 한 번 돈다
   setInterval(tick, TICK_MS);
 });

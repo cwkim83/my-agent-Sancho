@@ -284,6 +284,7 @@
   .utable table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .utable th, .utable td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
   .utable th { color: var(--sub); font-size: 13px; font-weight: 600; }
+  .utable.sm td { white-space: normal; vertical-align: top; } .utable td small { display: block; margin-top: 2px; color: var(--sub); font-size: 12px; } .utable td.bad { color: #b42318; }
   .utable .role { padding: 1px 8px; border-radius: 999px; background: #f2f4f7; color: var(--sub); font-size: 12px; }
   .utable .role.admin { background: var(--blue-bg); color: var(--blue); }
   .utable .first { color: #b54708; font-size: 12px; }
@@ -667,7 +668,7 @@
     pend = []; renderTray();
     scrollDown(true);
     aborter = new AbortController(); setBusy(true);
-    let got = '', cards = '';
+    let got = '', cards = '', willRestart = false;
     try {
       const r = await api(`/api/chats/${chatId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text, attachments: atts.map((a) => a.file) }), signal: aborter.signal });
@@ -684,9 +685,11 @@
           const d = ev.split('\n').find((x) => x.startsWith('data: '));
           if (!ev.startsWith('event:') && d) { got += JSON.parse(d.slice(6)).t; out.innerHTML = md(got); scrollDown(false); }
           else if (ev.startsWith('event: files') && d) cards = filesHtml(JSON.parse(d.slice(6))); // 비서가 이번에 만든 문서: 글이 끝난 뒤 카드로
+          else if (ev.startsWith('event: restart')) willRestart = true; // 자기 수정이 검사를 통과해 서버가 다시 켜진다 → 다 켜지면 화면을 새로 고친다
         }
       }
       if (cards) { out.insertAdjacentHTML('beforeend', cards); scrollDown(true); }
+      if (willRestart) { setBusy(false); aborter = null; await waitRestart((t) => { out.insertAdjacentHTML('beforeend', `<p class="typing">${esc(t)}</p>`); scrollDown(true); }); return; }
     } catch (e) {
       if (e.name !== 'AbortError' && e.message !== 'login' && e.message !== 'rejected') out.innerHTML = md(got) + '<p class="typing">(연결이 끊어졌습니다.)</p>';
     }
@@ -864,6 +867,8 @@
     ['명령실행', '명령 실행', '⌨ 명령', '비서가 이 컴퓨터에서 명령(프로그램)을 실행할 수 있어요. 엑셀·워드 문서를 만들 때 필요해요. 켜져 있는 동안 비서는 이 PC 에서 거의 무엇이든 할 수 있어서(파일 지우기·설치·설정 파일 고치기·다른 프로그램으로 메일 보내기까지 완전히 막지는 못해요) 꼭 필요할 때만 켜고 끝나면 꺼 두세요. 예약·메일정리처럼 내가 보고 있지 않은 일에는 쓰이지 않아요.',
       '명령 실행을 켤까요?\n\n켜져 있는 동안 비서는 이 PC 에서 거의 무엇이든 할 수 있어요. 파일 지우기·설치, 설정 파일 고치기, 다른 프로그램으로 메일 보내기까지 완전히 막지는 못해요.\n연결된 앱과 함께 켜 두면 메일 속 지시 때문에 명령이 돌 위험도 있어요.\n꼭 필요할 때만 켜고, 끝나면 꺼 두세요.'],
     ['홈폴더', '내 홈 폴더 읽기', '📁 홈', '비서가 내 사용자 폴더(문서·바탕화면 등)의 파일을 읽을 수 있어요. 고치거나 지우지는 못해요. 로그인 열쇠가 있는 폴더(.ssh 등)는 늘 막혀 있어요.'],
+    ['자기수정', '자기 수정 (비서가 이 앱의 코드를 고침)', '🛠 수정', '비서가 이 앱의 코드(화면·서버)를 직접 고칠 수 있어요. 답이 끝나면 서버가 검사(문법·selftest, 몇 분)해서 통과하면 저장(커밋)하고 서버를 다시 켜요. 실패하면 바뀐 것을 모두 되돌리고 채팅에 이유를 보여 줘요. start.bat·검사 핵심 파일은 못 고쳐요. 켜져 있는 동안 비서에게 "명령 실행"은 주어지지 않아요. 서버를 start.bat 으로 켰고 앱 폴더에 저장 안 한 변경이 없을 때만 동작해요.',
+      '자기 수정을 켤까요?\n\n비서가 이 앱의 코드를 직접 고칠 수 있게 돼요. 답이 끝나면 서버가 검사해서 통과하면 저장하고 서버를 다시 켜고(그동안 진행 중인 다른 답변·예약 실행은 끊겨요), 실패하면 모두 되돌려요.\nstart.bat·검사 핵심 파일은 못 고쳐요. 켜져 있는 동안 비서에게 "명령 실행"은 주어지지 않아요.'],
   ];
   let perm = {};
   async function loadPerm() { // 켜진 권한을 받아 입력창 왼쪽 표시를 그린다 (못 받으면 마지막 값 그대로)
@@ -871,7 +876,7 @@
     try { const r = await api('/api/settings'); if (r.ok) perm = (await r.json()).permissions || {}; } catch {}
     const el = $('permBadge'); if (!el) return;
     const on = PERMS.filter(([k]) => perm[k]), names = on.map((p) => p[1]).join(', ');
-    el.innerHTML = on.length ? on.map(([k, , chip]) => `<span class="${k === '명령실행' ? 'warn' : ''}">${esc(chip)}</span>`).join('') : '<span class="lock">🔒</span>';
+    el.innerHTML = on.length ? on.map(([k, , chip]) => `<span class="${k === '명령실행' || k === '자기수정' ? 'warn' : ''}">${esc(chip)}</span>`).join('') : '<span class="lock">🔒</span>';
     el.title = on.length ? `지금 켜진 권한: ${names}` : '권한이 모두 꺼져 있어요 (설정 → 권한에서 켤 수 있어요)';
     el.setAttribute('aria-label', el.title);
   }
@@ -907,6 +912,42 @@
     $('seedBtn').onclick = () => seed(false);
     showPerm();
     showTelegram();
+    $('restartBtn').onclick = restartServer;
+    loadSelfmodLog();
+  }
+  // ---------- 서버 다시 시작 · 자기 수정 기록 (8편 안전장치) ----------
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const healthPid = async () => { try { const r = await fetch('/health', { cache: 'no-store' }); return r.ok ? (await r.json()).pid : null; } catch { return null; } };
+  // 서버가 꺼졌다 새로 켜질 때까지 기다렸다가(건강 검사의 프로세스 번호가 바뀌면) 화면을 새로 고친다. 2분 안에 안 켜지면 그대로 두고 알린다
+  async function waitRestart(note) {
+    const old = await healthPid();
+    if (note) note('서버를 다시 켜는 중… 잠시만요.');
+    await sleep(1200);
+    for (let i = 0; i < 120; i++) { const pid = await healthPid(); if (pid && pid !== old) { location.reload(); return true; } await sleep(1000); }
+    if (note) note('⚠ 서버가 2분 안에 다시 켜지지 않았어요. 서버 창(start.bat)을 확인해 주세요.');
+    return false;
+  }
+  async function restartServer() {
+    const b = $('restartBtn'), m = $('restartMsg'), say = (t, err) => { m.textContent = t; m.className = err ? 'err' : ''; };
+    if (!confirm('서버를 껐다 켤까요?\n\n먼저 문법 검사와 selftest 를 돌려 보고(몇 분 걸려요), 모두 통과해야만 다시 켭니다.\n진행 중인 답변·예약 실행은 끊겨요.')) return;
+    b.disabled = true; say('⏳ 검사 중… (몇 분 걸려요. 이 화면을 닫지 마세요)');
+    try {
+      const r = await api('/api/restart', { method: 'POST' }), j = await r.json().catch(() => ({}));
+      if (r.ok && j.restarting) return await waitRestart(say);
+      const lines = Array.isArray(j.tail) && j.tail.length ? `\n\n마지막 출력:\n${j.tail.slice(-6).join('\n')}` : '';
+      say(`⚠ 다시 켜지 않았어요 — ${j.reason || j.error || '알 수 없는 이유'}${lines}`, true);
+    } catch (e) { if (e.message !== 'login') say('⚠ 서버에 연결하지 못했어요.', true); }
+    b.disabled = false;
+  }
+  async function loadSelfmodLog() {
+    const el = $('selfmodLog'); if (!el) return;
+    try {
+      const r = await api('/api/selfmod/log'), list = r.ok ? await r.json() : null;
+      if (!Array.isArray(list)) { el.textContent = '기록을 불러오지 못했어요.'; return; }
+      el.innerHTML = list.length ? `<div class="utable sm"><table><thead><tr><th>시각</th><th>요청</th><th>결과</th><th>커밋</th></tr></thead><tbody>${list.map((x) =>
+        `<tr><td>${esc(new Date(x.at).toLocaleString('ko-KR'))}</td><td>${esc(x.request || '')}<small>${esc((x.files || []).slice(0, 6).join(', '))}</small></td><td class="${x.commit ? '' : 'bad'}">${esc(x.result || '')}${x.reason ? `<small>${esc(x.reason)}</small>` : ''}</td><td>${x.commit ? `<code>${esc(x.commit)}</code>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="sub">아직 기록이 없어요. 권한에서 "자기 수정"을 켜고 채팅으로 앱 고치기를 부탁하면 여기에 남아요.</p>';
+    } catch (e) { if (e.message !== 'login') el.textContent = '기록을 불러오지 못했어요.'; }
   }
   function generalHtml() {
     return `
@@ -915,9 +956,14 @@
           <button class="btn" id="seedBtn">예시 데이터 넣기</button><div id="seedMsg"></div></div>
         <div class="card"><h3>권한 <small>(기본은 전부 꺼짐)</small></h3>
           <p>비서가 쓸 수 있는 것을 정합니다. 바꾸면 <b>다음 말부터</b> 적용되고, 켜진 권한은 채팅 입력창 왼쪽에 작게 표시돼요. 이 스위치는 비서가 스스로 켤 수 없어요.</p>
-          ${PERMS.map(([k, title, , desc]) => `<div class="permrow ${k === '명령실행' ? 'danger' : ''}"><label class="sw"><input type="checkbox" data-perm="${k}" aria-label="${esc(title)}" disabled><span></span></label>
+          ${PERMS.map(([k, title, , desc]) => `<div class="permrow ${k === '명령실행' || k === '자기수정' ? 'danger' : ''}"><label class="sw"><input type="checkbox" data-perm="${k}" aria-label="${esc(title)}" disabled><span></span></label>
             <div class="st"><b>${esc(title)}</b><small>${esc(desc)}</small></div></div>`).join('')}
           <div id="permMsg" role="status" aria-live="polite"></div></div>
+        <div class="card"><h3>서버 다시 시작</h3>
+          <p>먼저 서버가 직접 <b>문법 검사와 selftest</b> 를 돌려 보고(몇 분 걸려요), <b>모두 통과해야만</b> 껐다 켭니다. 하나라도 실패하면 켜 둔 채 그대로 두고 이유를 보여 줘요. 서버를 <code>start.bat</code> 으로 켰을 때만 쓸 수 있어요. 진행 중인 답변·예약 실행은 끊깁니다.</p>
+          <button class="btn" id="restartBtn">서버 다시 시작</button><div id="restartMsg" role="status" aria-live="polite"></div></div>
+        <div class="card"><h3>자기 수정 기록 <small>(비서가 앱 코드를 고친 기록)</small></h3>
+          <div id="selfmodLog">불러오는 중…</div></div>
         <div class="card"><h3>텔레그램 배달 <small>(선택)</small></h3>
           <p>예약 결과 요약을 휴대폰 텔레그램으로도 받습니다. 쓰지 않으면 비워 두세요. 값은 이 컴퓨터의 <code>data/settings.json</code> 에만 저장되고, 화면에는 <b>****</b> 로 가려서만 보입니다. (비서도 이 파일은 읽지 못합니다)</p>
           <div class="tgbox">
