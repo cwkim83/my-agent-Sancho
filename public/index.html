@@ -227,6 +227,10 @@
   /* 대시보드 (채팅 위 한 줄) */
   .home { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .home #chat { min-height: 0; }
+  /* 대시보드와 AI작업실(채팅)은 다른 메뉴: 넓은 화면에서도 data-v 로 한쪽만 보인다 (폰의 아래 탭도 같은 data-v 를 쓴다) */
+  .home[data-v="chat"] > .dash, .home[data-v="dash"] > #chat { display: none; }
+  .home[data-v="dash"] > .dash { flex: 1; min-height: 0; align-content: start; overflow-y: auto; border-bottom: 0; }
+  .home[data-v="dash"] .lcard { max-height: none; }
   .dash { flex: none; display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: 12px; padding: 12px 16px;
     border-bottom: 1px solid var(--line); background: var(--bg); }
   .hello { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
@@ -445,7 +449,7 @@
 <script>
   // 저작권 표시 — 지우면 selftest 가 실패한다(LICENSE 추가 조건 2)
   const COPYRIGHT = '<div class="copy">© 2026 김철우 (cwkim83)<br>상업적 배포 금지 · LICENSE 참고</div>';
-  const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '도움말', '설정'];
+  const MENUS = ['대시보드', 'AI작업실', '일정', '프로젝트', 'WBS', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '도움말', '설정'];
   const MENU_ALIAS = { 메일: '메일정리' }; // 옛 주소(#메일)도 메일정리로 (자리표시였던 메일 메뉴는 없앴다)
   const ADMIN_ONLY = ['설정', '워크플로']; // 일반 사용자에게는 메뉴에도 안 보이고, 주소로 들어와도 대시보드로 보낸다 (서버도 막는다)
   const $ = (id) => document.getElementById(id);
@@ -505,8 +509,8 @@
     stopDash(); // 대시보드를 떠나면 파일 감시도 끈다 (showChat 이 다시 켠다)
     document.body.classList.remove('menu');
     renderNav();
-    if (current === '대시보드') showChat();
-    else if (current === '알림') { showChat(); openBell(); } // 주소에 #알림 을 직접 쳐도 "준비 중"이 아니라 대시보드 위에 🔔 목록이 열린다 (단추로 누를 때는 아래 click 처리가 열어 준다)
+    if (current === '대시보드' || current === 'AI작업실') { homeView = current === 'AI작업실' ? 'chat' : 'dash'; showChat(); } // 같은 화면을 그리고 data-v 로 한쪽만 보인다
+    else if (current === '알림') { homeView = 'dash'; showChat(); openBell(); } // 주소에 #알림 을 직접 쳐도 "준비 중"이 아니라 대시보드 위에 🔔 목록이 열린다 (단추로 누를 때는 아래 click 처리가 열어 준다)
     else if (current === '일정') showCalendar();
     else if (current === '프로젝트') showProjects();
     else if (current === 'WBS') showWbs(arg);
@@ -528,20 +532,15 @@
   $('scrim').onclick = () => document.body.classList.remove('menu');
 
   // ---------- 휴대폰 아래 탭 (채팅 · 대시보드 · 일정) ----------
-  // 폭이 800px 이하면 채팅과 대시보드를 한 칸씩 보여 준다 (CSS 가 .home 의 data-v 를 보고 고른다). 넓은 화면에서는 둘 다 보이므로 data-v 는 상관없다
-  let homeView = 'chat'; // 'chat' | 'dash' — 처음엔 비서와 바로 말할 수 있게 채팅
+  // 대시보드(dash)와 AI작업실(chat)은 같은 화면을 그리고 CSS 가 .home 의 data-v 를 보고 한쪽만 보여 준다 — 넓은 화면도 폰도 같다
+  let homeView = 'chat'; // 'chat' | 'dash' — route 가 메뉴에 맞춰 정한다
+  const TAB_MENU = { chat: 'AI작업실', dash: '대시보드', cal: '일정' };
   function syncTabs() {
-    const on = current === '일정' ? 'cal' : current === '대시보드' ? homeView : ''; // 다른 메뉴(프로젝트 등)에 있으면 어느 탭도 켜지 않는다
+    const on = Object.keys(TAB_MENU).find((t) => TAB_MENU[t] === current) || ''; // 다른 메뉴(프로젝트 등)에 있으면 어느 탭도 켜지 않는다
     document.querySelectorAll('#tabbar [data-tab]').forEach((b) => { b.classList.toggle('on', b.dataset.tab === on); b.setAttribute('aria-selected', String(b.dataset.tab === on)); });
     const h = $('home'); if (h) h.dataset.v = homeView;
   }
-  function goTab(t) {
-    if (t === 'cal') { location.hash = '#일정'; return; }
-    homeView = t;
-    if (current !== '대시보드') { location.hash = '#대시보드'; return; } // 다른 화면에서 오면 대시보드 화면부터 그린다 (route 가 syncTabs 를 부른다)
-    syncTabs();
-    if (t === 'chat') scrollDown(true); // 가려져 있던 동안 맨 아래 위치를 잃는다
-  }
+  function goTab(t) { if (current !== TAB_MENU[t]) location.hash = '#' + TAB_MENU[t]; } // route 가 그리고 syncTabs 를 부른다
   $('tabbar').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) goTab(b.dataset.tab); };
 
   // ---------- AI 채팅 ----------
@@ -562,7 +561,7 @@
   }
 
   // ---------- 일정 (public/m/calendar.html 을 메인 화면 안에 띄운다) ----------
-  // 채팅 입력창은 대시보드에만 있다. 달력의 "비서에게 시키기"는 글을 부탁만 하고, 여기서 대시보드로 옮겨 채운다
+  // 채팅 입력창은 AI작업실에만 있다. 달력의 "비서에게 시키기"는 글을 부탁만 하고, 여기서 AI작업실로 옮겨 채운다
   let pendingAsk = null;
   function showCalendar() { $('main').innerHTML = '<iframe class="frame" src="/m/calendar.html" title="일정"></iframe>'; }
   function showProjects() { $('main').innerHTML = '<iframe class="frame" src="/m/projects.html" title="프로젝트"></iframe>'; }
@@ -580,8 +579,7 @@
     const frame = document.querySelector('iframe.frame');
     if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data || e.data.type !== 'ask') return;
     pendingAsk = String(e.data.text || '');
-    homeView = 'chat'; // 폰에서도 글이 채워진 입력창이 바로 보이게
-    location.hash = '#대시보드';
+    location.hash = '#AI작업실';
   });
 
   function showChat() {
@@ -906,7 +904,7 @@
         <div class="lcard"><h3>최근 대화</h3>${list(chats.slice(0, 3).map((c) =>
           `<li data-chat="${safe(c.id)}"><span class="k">${when(c.updatedAt)}</span><span class="tt">${safe(c.title)}</span></li>`), '아직 대화가 없어요.')}</div>
       </div>`;
-    el.querySelectorAll('[data-chat]').forEach((li) => (li.onclick = () => { if (!busy) { openChat(li.dataset.chat); goTab('chat'); } })); // 폰에서는 눌러 연 대화가 바로 보이게 채팅 칸으로
+    el.querySelectorAll('[data-chat]').forEach((li) => (li.onclick = () => { if (!busy) { chatId = li.dataset.chat; goTab('chat'); } })); // AI작업실로 가서 그 대화를 연다
   }
 
   // ---------- 🔔 알림 (data/db/notices.json): 위쪽 단추(안 읽은 수 배지) → 목록 → 누르면 결과 전체 ----------
@@ -1446,8 +1444,8 @@
   }
   function voiceCommand(text) {
     if (busy) return setVoice('error', '답하는 중이라 못 들었어요', 3000);
-    if ($('input')) { if (homeView !== 'chat') goTab('chat'); setInput(text); speakNext = true; send(); }
-    else { pendingVoice = text; homeView = 'chat'; location.hash = '#대시보드'; } // 다른 화면에 있었다면 채팅 화면으로 가서 보낸다
+    if (current === 'AI작업실' && $('input')) { setInput(text); speakNext = true; send(); }
+    else { pendingVoice = text; location.hash = '#AI작업실'; } // 다른 화면(대시보드 포함)에 있었다면 AI작업실로 가서 보낸다
   }
 
   // ----- 답 읽어 주기: 외부 목소리 키가 있으면 먼저, 안 되면 브라우저 목소리(한국어). 읽는 동안 위쪽 표시가 출렁인다

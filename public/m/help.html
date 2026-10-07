@@ -69,7 +69,7 @@
     <div class="steps">
       <div class="step" data-search>
         <span class="no">1</span><h4>비서에게 말 걸어 보기</h4>
-        <p>첫 화면(<b>대시보드</b>) 아래 입력창에 말을 쓰고 <b>Enter</b>. 입력창 위의 단추(오늘 브리핑 …)를 누르면 말이 채워져요. 답이 오는 동안 "파일 읽는 중" 같은 표시가 떠요.</p>
+        <p>왼쪽 메뉴의 <b>AI작업실</b> 아래 입력창에 말을 쓰고 <b>Enter</b>. 입력창 위의 단추(오늘 브리핑 …)를 누르면 말이 채워져요. 답이 오는 동안 "파일 읽는 중" 같은 표시가 떠요.</p>
         <div class="ex"><button type="button" data-ask="오늘 브리핑">오늘 브리핑</button><button type="button" data-ask="이번 주 일정 정리">이번 주 일정 정리</button><button type="button" data-ask="마감 임박 알려줘">마감 임박 알려줘</button></div>
       </div>
       <div class="step" data-search>
@@ -92,11 +92,24 @@
     <div class="bar"><button class="ghost" id="openAll" type="button">모두 펼치기</button><button class="ghost" id="closeAll" type="button">모두 접기</button></div>
 
     <details class="ms" id="m-대시보드" data-menu="대시보드" data-search>
-      <summary><b>💬 대시보드 · 채팅</b><small>첫 화면. 위는 오늘의 한눈에, 아래는 비서와의 대화</small></summary>
+      <summary><b>📊 대시보드</b><small>첫 화면. 오늘의 한눈에</small></summary>
       <div class="mb">
         <h4>이렇게 써요</h4>
         <ul>
-          <li>위쪽 카드: 오늘 일정 · 진행 중 프로젝트 · 7일 안 마감 할 일 · 안 읽은 알림 · 결재할 문서. 누르면 해당 화면으로 가요.</li>
+          <li>카드: 오늘 일정 · 진행 중 프로젝트 · 7일 안 마감 할 일 · 안 읽은 알림 · 결재할 문서. 누르면 해당 화면으로 가요.</li>
+          <li>목록: 오늘 일정 · 마감 임박 할 일 · 최근 대화. 최근 대화를 누르면 <b>AI작업실</b>에서 그 대화가 열려요.</li>
+          <li>자료가 바뀌면 바로 다시 그려져요(비서가 일정을 고쳐도 새로 고칠 필요 없음).</li>
+        </ul>
+        <button class="go" type="button" data-go="대시보드">대시보드 열기 →</button>
+      </div>
+    </details>
+
+    <details class="ms" id="m-AI작업실" data-menu="AI작업실" data-search>
+      <summary><b>💬 AI작업실</b><small>비서와의 대화 · 대화·예약·기억·위키·스킬</small></summary>
+      <div class="mb">
+        <h4>이렇게 써요</h4>
+        <ul>
+          <li>아래 입력창에 말을 쓰고 <b>Enter</b>. 입력창 위의 단추(오늘 브리핑 …)를 누르면 말이 채워져요.</li>
           <li><b>＋ 새 대화</b>로 새 이야기를 시작하고, 왼쪽 목록에서 지난 대화를 다시 열어요. 비서는 같은 대화 안의 앞 말을 기억해요.</li>
           <li><b>＋</b> 단추(또는 파일을 끌어다 놓기, Ctrl+V)로 파일·사진을 붙이면 비서가 읽어요. 엑셀·워드를 만들어 달라고 하면 채팅에 <b>파일 카드</b>(보기·열기·받기)가 떠요.</li>
           <li>왼쪽 아래 칸: <b>예약</b>(때가 되면 시킬 일, 켬/끔·지금 실행) · <b>기억</b>(비서가 알아 둔 것) · <b>위키</b>(비서가 정리해 둔 지식) · <b>스킬</b>(저장한 절차). 이름을 누르면 내용이 보이고 ✕ 로 지워요.</li>
@@ -110,7 +123,7 @@
           <button type="button" data-ask="방금 한 일 스킬로 저장해">방금 한 일 스킬로 저장해</button>
           <button type="button" data-ask="매일 아침 7시에 오늘 일정과 마감 임박 할 일을 브리핑해 줘">매일 아침 7시에 … 해 줘</button>
         </div>
-        <button class="go" type="button" data-go="대시보드">대시보드 열기 →</button>
+        <button class="go" type="button" data-go="AI작업실">AI작업실 열기 →</button>
       </div>
     </details>
 
@@ -338,7 +351,7 @@
       <ul><li>예약·워크플로는 <b>이 PC 가 켜져 있고 서버가 돌고 있을 때만</b> 돌아요(<code>start.bat</code> 창이 떠 있어야 해요).</li><li>예약 칸의 스위치 또는 워크플로의 <b>자동 실행 켬</b>이 켜져 있는지 보세요.</li><li>꺼져 있는 동안 놓친 회차는 켜지면 <b>한 번만</b> 돌아요(몰아서 돌지 않아요).</li><li>실패하면 🔔 알림에 이유가 와요. 워크플로는 실행 기록에서 어느 단계가 ❌ 인지 보여요.</li></ul></div></details>
 
     <details class="q" data-search><summary>휴대폰에서도 쓸 수 있나요?</summary><div class="mb">
-      <p>네. 화면이 좁으면 ☰ 메뉴와 아래 탭(채팅·대시보드·일정)으로 바뀌고, 홈 화면에 앱처럼 추가할 수 있어요. 밖(휴대폰)에서 열려면 관리자가 <b>설정 › 외부 접속</b>을 켜고 터널(<code>node tunnel.js</code>)을 켜야 해요. 기본은 <b>꺼짐</b>이고, 접속 토큰과 로그인 두 겹으로 지켜요. 다 쓰면 터널과 외부 접속을 함께 끄세요. 자세한 순서는 README 의 "2. 화면 한눈에" 아래 "휴대폰·밖에서 쓰기"에 있어요.</p></div></details>
+      <p>네. 화면이 좁으면 ☰ 메뉴와 아래 탭(채팅=AI작업실·대시보드·일정)으로 바뀌고, 홈 화면에 앱처럼 추가할 수 있어요. 밖(휴대폰)에서 열려면 관리자가 <b>설정 › 외부 접속</b>을 켜고 터널(<code>node tunnel.js</code>)을 켜야 해요. 기본은 <b>꺼짐</b>이고, 접속 토큰과 로그인 두 겹으로 지켜요. 다 쓰면 터널과 외부 접속을 함께 끄세요. 자세한 순서는 README 의 "2. 화면 한눈에" 아래 "휴대폰·밖에서 쓰기"에 있어요.</p></div></details>
 
     <details class="q" data-search><summary>어떤 메뉴가 안 보여요 (설정·워크플로)</summary><div class="mb">
       <p><b>설정</b>과 <b>워크플로</b>는 관리자만 보여요. 일반 사용자는 대화·일정·프로젝트·WBS·메일정리·메신저·회의록·결재·목표·공수·지식노트를 모두 쓸 수 있어요.</p></div></details>
@@ -384,7 +397,7 @@
     $('menus').querySelector('.toc').innerHTML = [...document.querySelectorAll('details.ms:not([hidden])')].map((d) => `<a href="#${d.id}" data-open="${d.id}">${d.dataset.menu}</a>`).join('');
     document.querySelectorAll('.toc a').forEach((a) => (a.onclick = (e) => { e.preventDefault(); const d = $(a.dataset.open); d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   }
-  // 말풍선을 누르면 채팅 입력창에 채운다 (바깥 화면이 받아서 대시보드로 데려가 채움 — 보내기는 직접). 바깥 화면이 없으면 클립보드로
+  // 말풍선을 누르면 채팅 입력창에 채운다 (바깥 화면이 받아서 AI작업실로 데려가 채움 — 보내기는 직접). 바깥 화면이 없으면 클립보드로
   document.addEventListener('click', (e) => {
     const a = e.target.closest('[data-ask]'), g = e.target.closest('[data-go]');
     if (a) { const t = a.dataset.ask; if (parent !== window) parent.postMessage({ type: 'ask', text: t }, location.origin); else if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); }
