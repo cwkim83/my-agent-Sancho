@@ -14,6 +14,8 @@ const PW = 'test-password-123';
 const UD = path.join(dir, 'users', 'tester'); // 첫 관리자(아이디 tester)의 개인 폴더: 대화·기억·예약·일지가 여기에 있다
 let pass = 0, failed = 0;
 
+// 윈도우는 서버가 그 파일을 읽는 바로 그 순간에 덮어 바꾸면 EPERM 이 난다 (드물게). 점검용 "통째로 바꿔치기"는 몇 번 다시 해 본다
+function swapFile(tmp, dest) { for (let i = 0; ; i++) { try { return fs.renameSync(tmp, dest); } catch (e) { if (i >= 8 || e.code !== 'EPERM') throw e; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); } } }
 function check(name, cond) {
   console.log(`${cond ? '통과' : '실패'}  ${name}`);
   cond ? pass++ : failed++;
@@ -169,7 +171,8 @@ async function run() {
   await runMail(ck);
   await runFiles(ck);
   await runSafety5(ck);
-  await runUsers(ck);
+  const people = await runUsers(ck);
+  await runMessenger(ck, people);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -964,7 +967,7 @@ function schedKit(ck) { // 예약 점검 두 가지(runSchedule·runSchedApi)가
   return {
     H, sleep, file, notices,
     until: async (fn, ms = 20000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; },
-    writeSched: (list) => { fs.writeFileSync(file + '.t', typeof list === 'string' ? list : JSON.stringify(list, null, 2)); fs.renameSync(file + '.t', file); }, // 서버가 쓰다 만 파일을 읽지 않게 통째로 바꿔치기
+    writeSched: (list) => { fs.writeFileSync(file + '.t', typeof list === 'string' ? list : JSON.stringify(list, null, 2)); swapFile(file + '.t', file); }, // 서버가 쓰다 만 파일을 읽지 않게 통째로 바꿔치기
     readSched: () => JSON.parse(fs.readFileSync(file, 'utf8')),
     mine: async (re) => (await notices()).filter((n) => re.test(n.title)),
     ago: (min) => new Date(Date.now() - min * 60_000).toISOString(),
@@ -1890,7 +1893,7 @@ async function runUsers(ck) {
   // 사람마다 따로: 예약·일지·알림 (텔레그램은 관리자의 휴대폰 하나라서 일반 사용자의 결과는 거기로 안 간다)
   await call('PUT', '/api/settings/telegram', ck, { token: '123456:SELFTEST_fake_token_for_tests_000', chatId: '424242' });
   const mfile = path.join(mf, 'schedule.json');
-  fs.writeFileSync(mfile + '.t', JSON.stringify([{ id: 'mj000001', 이름: '민준 예약', 언제: { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, 지시문: '민준 예약 점검', 켬: true, 마지막실행: null, 휴대폰: true }], null, 2)); fs.renameSync(mfile + '.t', mfile);
+  fs.writeFileSync(mfile + '.t', JSON.stringify([{ id: 'mj000001', 이름: '민준 예약', 언제: { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, 지시문: '민준 예약 점검', 켬: true, 마지막실행: null, 휴대폰: true }], null, 2)); swapFile(mfile + '.t', mfile);
   const gotN = await until(async () => (await notesOf(CM)).some((n) => n.title === '예약 결과: 민준 예약'));
   const mn = (await notesOf(CM)).find((n) => n.title === '예약 결과: 민준 예약') || { detail: '' };
   check('사람마다 따로(예약): 김민준의 예약이 그 사람 폴더의 파일에서 돌고, 비서는 김민준의 개인 폴더·이름으로 실행되고, 결과 알림은 김민준에게만 보임(관리자·이서연 알림 목록에는 없음)',
@@ -1934,6 +1937,193 @@ async function runUsers(ck) {
   const html = await (await fetch(BASE + '/', { headers: { Cookie: CM } })).text();
   check('화면: 설정에 일반·사용자 탭과 계정 추가 폼, 닫을 수 없는 비밀번호 바꾸기 창이 있고, 설정 메뉴는 관리자 전용(ADMIN_ONLY)',
     ['#설정/사용자', 'id="pwModal"', "ADMIN_ONLY = ['설정']", 'showUsers', '/api/auth/password', '임시 비밀번호', '새 사용자 추가', 'id="uRole"'].every((w) => html.includes(w)) && !html.includes('id="pwModal" hidden></div>'));
+  return { CM, CS, CC }; // 메신저 점검이 이어서 쓴다 (김민준·이서연·chief 의 로그인)
+}
+
+// 메신저: 채널(공지·부서·프로젝트·1:1)·내가 속하지 않은 채널은 목록·메시지·첨부·실시간 어디로도 안 나감·"@산초" 비서 답(🤖)·삭제 권한
+async function runMessenger(ck, { CM, CS, CC }) { // CM 김민준(설계·일반) · CS 이서연(구매·일반) · CC 최관리(경영·관리자, 채널에는 안 넣음) · ck 첫 관리자(부서 없음)
+  const A = '/api/messenger';
+  const call = (m, u, c, b) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json', Cookie: c }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const { until, sleep } = schedKit(ck);
+  const J = async (r) => r.json();
+  const chans = async (c) => J(await call('GET', `${A}/channels`, c));
+  const history = async (c, ch, q = '') => J(await call('GET', `${A}/channels/${ch}/messages${q}`, c));
+  const say = (c, ch, text, files) => call('POST', `${A}/channels/${ch}/messages`, c, { text, ...(files ? { files } : {}) });
+  const pick = (l, f) => l.find(f) || {};
+  const sse = (url, cookie) => { // 실시간 연결을 열어 받은 사건을 모아 둔다
+    const s = { events: [], ended: false, status: 0, ac: new AbortController() };
+    (async () => {
+      try {
+        const r = await fetch(BASE + url, { headers: { Cookie: cookie }, signal: s.ac.signal }); s.status = r.status;
+        const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+        for (;;) {
+          const { done, value } = await rd.read(); if (done) break;
+          buf += dec.decode(value, { stream: true }); let k;
+          while ((k = buf.indexOf('\n\n')) >= 0) { const ev = buf.slice(0, k); buf = buf.slice(k + 2); const t = /^event: (.+)$/m.exec(ev), d = /^data: (.+)$/m.exec(ev); if (t && d) s.events.push({ type: t[1], data: JSON.parse(d[1]) }); }
+        }
+      } catch { /* 닫음 */ }
+      s.ended = true;
+    })();
+    return s;
+  };
+  const usedOk = (s) => until(async () => s.status === 200, 5000);
+
+  // 닫힘: 일반 업무 자료 주소로는 안 열리고, 로그인 없이는 아무것도 안 열림
+  await call('PUT', '/api/db/projects/mp-proj', ck, { name: '메신저 시험 프로젝트', client: '시험', status: '진행중', progress: 0, start: '2030-01-01', due: '2030-12-31', owner: '' });
+  const ch0 = await chans(ck);
+  check('메신저: 일반 업무 자료 주소(/api/db/channels·messages)로는 안 열림(404) — 읽기도 쓰기도 지우기도, 메신저 파일은 /api/files 로도 안 열림',
+    (await Promise.all([['GET', '/api/db/messages'], ['GET', '/api/db/channels'], ['PUT', '/api/db/messages/x', { text: '몰래' }], ['DELETE', '/api/db/channels/notice'], ['GET', '/api/files/메신저파일/x']].map(([m, u, b]) => call(m, u, ck, b)))).every((r) => r.status === 404));
+  check('메신저: 로그인 없이는 목록·사람·실시간·파일·보내기 모두 401', (await Promise.all([['GET', `${A}/channels`], ['POST', `${A}/channels`], ['GET', `${A}/people`], ['GET', `${A}/stream`], ['GET', `${A}/files/notice/x`], ['POST', `${A}/channels/notice/messages`], ['POST', `${A}/channels/notice/read`]]
+    .map(([m, u]) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{}' : undefined })))).every((r) => r.status === 401));
+  const ppl = await J(await call('GET', `${A}/people`, CM));
+  check('사람 목록(채널 만들 때 고르는 용)에는 아이디·이름·부서만 있고 비밀번호 해시 같은 건 없음', ppl.length >= 4 && ppl.every((p) => JSON.stringify(Object.keys(p).sort()) === '["dept","name","username"]'));
+
+  // 기본 채널: 공지(모두) · 부서(같은 부서만)
+  const [cm, cs, cc] = [await chans(CM), await chans(CS), await chans(CC)];
+  const nA = pick(ch0, (c) => c.kind === 'notice'), dSeol = pick(cm, (c) => c.kind === 'dept'), dBuy = pick(cs, (c) => c.kind === 'dept');
+  check('기본 채널: 공지는 모두에게(쓰기는 관리자만), 부서 채널은 같은 부서 사람에게만 보임(설계·구매·경영 각각), 부서 없는 관리자는 공지만',
+    nA.id === 'notice' && nA.canWrite === true && pick(cm, (c) => c.kind === 'notice').canWrite === false && dSeol.name === '설계' && dBuy.name === '구매' && cm.filter((c) => c.kind === 'dept').length === 1 && cs.filter((c) => c.kind === 'dept').length === 1
+    && cc.filter((c) => c.kind === 'dept').map((c) => c.name).join() === '경영' && ch0.every((c) => c.kind === 'notice'));
+
+  // 공지: 관리자만 쓰기, 안 읽은 수
+  const nSeq = await J(await say(ck, 'notice', '이번 주 금요일은 전체 회의입니다'));
+  check('공지: 일반 사용자가 쓰려 하면 403(첨부 올리기도 403), 관리자가 쓰면 모두에게 보임', (await say(CM, 'notice', '몰래 공지')).status === 403 && (await call('POST', `${A}/channels/notice/files?name=a.txt`, CM, undefined)).status === 403
+    && (await history(CS, 'notice')).messages.some((m) => m.text.includes('전체 회의')) && (await history(CC, 'notice')).messages.length === 1);
+  const un1 = pick(await chans(CM), (c) => c.id === 'notice').unread;
+  await call('POST', `${A}/channels/notice/read`, CM, { seq: nSeq.message.seq });
+  check('안 읽은 수: 남이 쓴 것만 세고(내 것 제외), "읽음"을 보내면 0 이 되며 사람마다 따로 저장됨(users/<아이디>/messenger-read.json)',
+    un1 === 1 && pick(await chans(CM), (c) => c.id === 'notice').unread === 0 && pick(await chans(CS), (c) => c.id === 'notice').unread === 1 && pick(await chans(ck), (c) => c.id === 'notice').unread === 0
+    && fs.existsSync(path.join(dir, 'users', 'minjun', 'messenger-read.json')) && !fs.existsSync(path.join(dir, 'users', 'seoyeon', 'messenger-read.json')));
+  check('"읽음" 입력 검사: 정수가 아니거나 음수면 400', (await Promise.all([{ seq: 'x' }, { seq: -1 }, { seq: 1.5 }, {}].map((b) => call('POST', `${A}/channels/notice/read`, CM, b)))).every((r) => r.status === 400));
+
+  // 부서 채널은 같은 부서만
+  const sd = await say(CM, dSeol.id, '설계팀만 보는 말'), sdj = await sd.json();
+  check('부서 채널: 같은 부서(설계)만 읽고 쓰고, 다른 부서 사람은 있는지조차 모름(관리자 포함) — 읽기·쓰기·지우기·읽음 모두 404',
+    sd.status === 200 && (await Promise.all([CS, CC, ck].flatMap((c) => [call('GET', `${A}/channels/${dSeol.id}/messages`, c), say(c, dSeol.id, '엿보기'), call('DELETE', `${A}/channels/${dSeol.id}/messages/${sdj.message.id}`, c), call('POST', `${A}/channels/${dSeol.id}/read`, c, { seq: 1 })]))).every((r) => r.status === 404)
+    && (await history(CM, dSeol.id)).messages.length === 1);
+
+  // 프로젝트 채널: 관리자만 만들고, 멤버만 봄
+  const mk = (c, b) => call('POST', `${A}/channels`, c, b);
+  check('프로젝트 채널 만들기: 일반 사용자는 403, 없는 프로젝트·없는 멤버·종류 오류는 400, 만들면 프로젝트 이름이 채널 이름이고 만든 관리자도 멤버로 들어감',
+    (await mk(CM, { kind: 'project', projectId: 'mp-proj', members: ['seoyeon'] })).status === 403 && (await mk(ck, { kind: 'project', projectId: 'nope', members: [] })).status === 400
+    && (await mk(ck, { kind: 'project', projectId: 'mp-proj', members: ['ghost'] })).status === 400 && (await mk(ck, { kind: 'notice' })).status === 400 && (await mk(ck, { kind: 'project' })).status === 400);
+  const pc = await mk(ck, { kind: 'project', projectId: 'mp-proj', members: ['minjun', 'seoyeon'] }), pj = await J(pc), P = pj.channel ? pj.channel.id : 'none';
+  check('프로젝트 채널이 만들어지고(이름=프로젝트 이름, 멤버 3명), 같은 프로젝트로 또 만들면 409', pc.status === 200 && pj.channel.name === '메신저 시험 프로젝트' && pj.channel.kind === 'project' && pj.channel.members.map((m) => m.username).sort().join() === 'minjun,seoyeon,tester'
+    && (await mk(ck, { kind: 'project', projectId: 'mp-proj', members: [] })).status === 409);
+  check('멤버가 아니면 목록에도 없고(관리자 chief 도), 멤버만 목록에 보임', (await chans(CC)).every((c) => c.id !== P) && (await chans(CM)).some((c) => c.id === P) && (await chans(CS)).some((c) => c.id === P) && (await chans(ck)).some((c) => c.id === P));
+  const miss = await Promise.all([call('GET', `${A}/channels/${P}/messages`, CC), say(CC, P, '끼어들기'), call('POST', `${A}/channels/${P}/read`, CC, { seq: 1 }), call('POST', `${A}/channels/${P}/files?name=a.txt`, CC, undefined), call('GET', `${A}/files/${P}/x.txt`, CC), call('GET', `${A}/channels/nosuch/messages`, CC)]);
+  check('멤버가 아닌 사람(관리자 chief 포함)은 읽기·쓰기·읽음·첨부 올리기·첨부 받기가 모두 "없는 채널"(404) — 있는지조차 알려 주지 않음, 없는 채널과 똑같이 답함', miss.every((r) => r.status === 404) && (await miss[0].json()).error === (await miss[5].json()).error);
+
+  // 실시간: 멤버에게만 간다
+  const [sT, sM, sS, sC] = [sse(`${A}/stream`, ck), sse(`${A}/stream`, CM), sse(`${A}/stream`, CS), sse(`${A}/stream`, CC)], sDb = sse('/api/events', ck);
+  await Promise.all([sT, sM, sS, sC, sDb].map(usedOk));
+  const first = await J(await say(CM, P, '압력용기 개조 일정은 다음 주 수요일로 하죠'));
+  const got = await until(async () => [sT, sM, sS].every((s) => s.events.some((e) => e.type === 'message' && e.data.id === first.message.id)));
+  await sleep(500);
+  const m1 = sS.events.find((e) => e.type === 'message').data;
+  check('실시간: 새 메시지가 그 채널 멤버(보낸 사람 포함 3명)의 연결로 바로 오고, 멤버가 아닌 사람(관리자 chief)의 연결에는 아무것도 안 감(사건 0개)', got && m1.text.includes('수요일') && m1.from === 'minjun' && m1.name === '김민준' && m1.channelId === P && sC.events.length === 0);
+  await call('PUT', '/api/db/events/zz-sse', ck, { title: '연결 확인용', date: '2030-01-01', endDate: '2030-01-01' }); await until(async () => sDb.events.some((e) => e.data.name === 'events'), 4000); await call('DELETE', '/api/db/events/zz-sse', ck);
+  check('실시간: 일반 알림 연결(/api/events)은 살아 있고(일정이 바뀐 사건은 옴), 메신저 자료가 바뀌었다는 사건(messages·channels)은 흐르지 않음', sDb.events.some((e) => e.data.name === 'events') && !sDb.events.some((e) => ['messages', 'channels'].includes(e.data.name)));
+  check('멤버만 메시지를 읽고(시간 순서·보낸 사람 이름 포함) 쓸 수 있음', (await history(CS, P)).messages.map((m) => m.id).join() === first.message.id && (await say(CS, P, '네, 수요일 좋아요')).status === 200 && (await history(ck, P)).messages.length === 2);
+
+  // 삭제: 쓴 사람과 관리자만
+  const sMsg = await J(await say(CS, P, '삭제 시험용 메시지'));
+  const dl = (c, id = sMsg.message.id, ch = P) => call('DELETE', `${A}/channels/${ch}/messages/${id}`, c);
+  const r403 = await dl(CM);
+  check('삭제: 쓴 사람도 관리자도 아닌 멤버(김민준)가 남의 메시지를 지우려 하면 403 이고 그대로 남음', r403.status === 403 && (await history(CS, P)).messages.some((m) => m.id === sMsg.message.id));
+  const evBefore = sM.events.length, r200 = await dl(CS);
+  await until(async () => sM.events.some((e) => e.type === 'delete' && e.data.id === sMsg.message.id));
+  check('삭제: 쓴 사람은 지울 수 있고(200), 지워졌다는 사건이 멤버에게 실시간으로 가며(멤버 아닌 사람에게는 안 감), 목록에서도 사라지고, 같은 메시지를 또 지우면 404',
+    r200.status === 200 && sM.events.slice(evBefore).some((e) => e.type === 'delete') && sC.events.length === 0 && !(await history(CM, P)).messages.some((m) => m.id === sMsg.message.id) && (await dl(CS)).status === 404);
+  const aMsg = await J(await say(CM, P, '관리자가 지울 메시지'));
+  check('삭제: 관리자(홍길동)는 남의 메시지도 지울 수 있음, 멤버가 아닌 관리자(chief)는 그 채널 메시지를 못 지움(404)', (await dl(CC, aMsg.message.id)).status === 404 && (await dl(ck, aMsg.message.id)).status === 200);
+
+  // 입력 검사
+  const long = await say(CM, P, '가'.repeat(4001)), many = await say(CM, P, '파일 많음', Array.from({ length: 6 }, (_, i) => `f${i}`));
+  const ctl = await J(await say(CM, P, '  제어\u0007문자\r\n줄바꿈  '));
+  check('입력 검사: 빈 글·4001자·첨부 6개·없는 첨부는 400, 제어 문자는 지워지고 앞뒤 공백도 정리됨', (await say(CM, P, '   ')).status === 400 && long.status === 400 && many.status === 400 && (await say(CM, P, '파일', ['없는파일.txt'])).status === 400 && ctl.message.text === '제어문자\n줄바꿈');
+  const page = await history(CM, P, '?limit=1');
+  const before = await history(CM, P, `?before=${page.messages[0].seq}&limit=1`);
+  check('이전 메시지 더 보기: limit 만큼만 최신부터 주고(more=true), before 로 그 앞의 것을 줌', page.messages.length === 1 && page.more === true && before.messages.length === 1 && before.messages[0].seq < page.messages[0].seq && before.messages[0].id !== page.messages[0].id);
+
+  // 첨부: 채널마다 따로, 멤버만 받음
+  const up = async (c, ch, name, body) => fetch(`${BASE}${A}/channels/${ch}/files?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { Cookie: c, 'Content-Type': 'application/octet-stream' }, body });
+  const f1 = await J(await up(CM, P, '도면 검토.txt', '도면 내용 ABC'));
+  const fm = await J(await say(CM, P, '도면 올립니다', [f1.file]));
+  const dl1 = (c) => fetch(`${BASE}${A}/files/${P}/${encodeURIComponent(f1.file)}?dl=1`, { headers: { Cookie: c } });
+  check('첨부: 멤버가 올리면 data/메신저파일/<채널>/ 에 저장되고, 메시지에 붙은 파일을 멤버는 받고(내용 그대로) 멤버가 아니면 404 — 원래 이름이 보임',
+    f1.name === '도면 검토.txt' && fs.existsSync(path.join(dir, '메신저파일', P, f1.file)) && fm.message.files[0].name === '도면 검토.txt' && fm.message.files[0].size === Buffer.byteLength('도면 내용 ABC') && (await (await dl1(CS)).text()) === '도면 내용 ABC' && (await dl1(CC)).status === 404 && (await dl1(CS)).headers.get('content-disposition').includes('attachment'));
+  const dmx = await J(await mk(CM, { kind: 'dm', with: 'seoyeon' })), D = dmx.channel ? dmx.channel.id : 'none';
+  const f2 = await J(await up(CM, D, '둘만.txt', '비밀'));
+  check('첨부: 올린 채널에서만 붙일 수 있음(다른 채널의 파일 이름을 대도 400), 실행 파일(.exe)·빈 파일은 400', (await say(CM, P, '남의 채널 파일', [f2.file])).status === 400 && (await up(CM, P, '나쁨.exe', 'MZ')).status === 400 && (await up(CM, P, '빈.txt', '')).status === 400
+    && (await fetch(`${BASE}${A}/files/${P}/${encodeURIComponent(f2.file)}`, { headers: { Cookie: CM } })).status === 404);
+
+  // 1:1
+  const dm2 = await J(await mk(CS, { kind: 'dm', with: 'minjun' }));
+  check('1:1: 두 사람 사이에 만들어지고(같은 두 사람이면 이미 있는 대화를 돌려줌), 이름은 각자 상대 이름으로 보이고, 나와의 대화·없는 사람은 400',
+    dmx.channel.kind === 'dm' && dm2.channel.id === D && pick(await chans(CM), (c) => c.id === D).name === '이서연' && pick(await chans(CS), (c) => c.id === D).name === '김민준'
+    && (await mk(CM, { kind: 'dm', with: 'minjun' })).status === 400 && (await mk(CM, { kind: 'dm', with: 'ghost' })).status === 400 && (await mk(CM, { kind: 'dm' })).status === 400);
+  const sDM = [sse(`${A}/stream`, CM), sse(`${A}/stream`, CS), sse(`${A}/stream`, ck)];
+  await Promise.all(sDM.map(usedOk));
+  const dmMsg = await J(await say(CM, D, '둘만 아는 이야기'));
+  await until(async () => sDM[1].events.some((e) => e.type === 'message' && e.data.id === dmMsg.message.id));
+  await sleep(400);
+  check('1:1: 둘만 읽고 쓰고 실시간으로 받음 — 관리자(홍길동)·chief 도 목록·읽기·실시간 모두 안 보임', (await chans(ck)).every((c) => c.id !== D) && (await call('GET', `${A}/channels/${D}/messages`, ck)).status === 404 && (await call('GET', `${A}/channels/${D}/messages`, CC)).status === 404
+    && (await history(CS, D)).messages.length === 1 && !sDM[2].events.some((e) => e.type === 'message') && sDM[0].events.some((e) => e.type === 'message'));
+  sDM.forEach((s) => s.ac.abort());
+
+  // "@산초": 최근 20개를 읽고 🤖 답
+  for (let i = 1; i <= 24; i++) await say(CM, P, `filler-${String(i).padStart(2, '0')}`);
+  const eb = sS.events.length;
+  const ask = await J(await say(CS, P, '@산초 지금까지 나온 결정 사항 정리해 줘'));
+  const botGot = await until(async () => (await history(CM, P)).messages.some((m) => m.bot));
+  const bot = (await history(CM, P)).messages.find((m) => m.bot) || { text: '' };
+  check('@산초: 질문한 메시지는 그대로 올라가고, 비서가 답을 달며 — 🤖 표시(bot=true)·이름 산초·누가 물었는지(askedBy) 가 적힘', botGot && ask.message.text.startsWith('@산초') && bot.bot === true && bot.from === 'sancho' && bot.name === '산초' && bot.askedBy === 'seoyeon' && bot.text.startsWith('에코:'));
+  check('@산초: 비서가 받은 글은 그 채널의 최근 20개 메시지(질문 포함, 오래된 것부터)뿐이고, 도구 없이(--tools "") 연결된 앱·명령 권한도 없이 실행됨',
+    bot.text.includes('최근 메시지 20개') && bot.text.includes('filler-24') && bot.text.includes('filler-06') && !bot.text.includes('filler-05') && !bot.text.includes('수요일로 하죠') && bot.text.includes('지금까지 나온 결정 사항 정리해 줘') && bot.text.includes('김민준(설계)')
+    && bot.text.includes('tools=[]') && bot.text.includes('apps=N') && bot.text.includes('shell=NN') && /\| ctx=.*메신저 채널/.test(bot.text));
+  await sleep(300);
+  check('@산초: 답이 달리는 동안 멤버에게 "답을 쓰는 중" 사건(on→off)이 가고 답 메시지도 실시간으로 옴 — 멤버가 아닌 사람에게는 아무것도 안 감', sS.events.slice(eb).filter((e) => e.type === 'typing').map((e) => e.data.on).join() === 'true,false' && sS.events.slice(eb).some((e) => e.type === 'message' && e.data.bot) && sC.events.length === 0);
+  const n0 = (await history(CM, P)).messages.length;
+  await say(CM, P, '안녕 @산초 도와줘'); await sleep(700);
+  check('@산초 는 메시지가 그 말로 시작할 때만 불림(글 가운데 있으면 안 불림)', (await history(CM, P)).messages.length === n0 + 1 && (await history(CM, P)).messages.filter((m) => m.bot).length === 1);
+  check('산초의 답은 물어본 사람(이서연)과 관리자만 지울 수 있음 — 다른 멤버(김민준)는 403', (await dl(CM, bot.id ? (await history(CM, P)).messages.find((m) => m.bot).id : 'x')).status === 403 && (await dl(CS, (await history(CM, P)).messages.find((m) => m.bot).id)).status === 200);
+  await say(CS, P, '@산초 /실패해');
+  const failBot = await until(async () => (await history(CM, P)).messages.some((m) => m.bot && m.text.startsWith('⚠'))), failTxt = ((await history(CM, P)).messages.find((m) => m.bot && m.text.startsWith('⚠')) || { text: '' }).text;
+  await say(CS, P, '@산초 다시 물어요');
+  const again = await until(async () => (await history(CM, P)).messages.some((m) => m.bot && m.text.startsWith('에코') && m.text.includes('다시 물어요')));
+  check('@산초: 비서가 죽으면 채널에 ⚠ 와 쉬운 이유가 🤖 메시지로 남고(조용히 사라지지 않음), 그 뒤에도 다시 부르면 답함(막혀 있지 않음) — 질문 글 속 표시가 아니라 요청에만 반응', failBot && failTxt.includes('Claude 가 오류로 끝났습니다') && again);
+  await say(CS, P, '@산초 /느리게 하나'); const second = await say(CM, P, '@산초 둘'); await until(async () => (await history(CM, P)).messages.some((m) => m.bot && m.text.includes('앞의 질문에 답하는 중')), 4000);
+  check('@산초: 한 채널에서 답을 쓰는 중에 또 부르면 "앞의 질문에 답하는 중" 안내 🤖 메시지가 달림', second.status === 200 && (await history(CM, P)).messages.some((m) => m.bot && m.text.includes('앞의 질문에 답하는 중')));
+  await until(async () => !(await history(CM, P)).typing, 8000);
+  check('공지에서는 일반 사용자가 쓸 수 없으니 "@산초" 로 부를 수도 없음(403)', (await say(CM, 'notice', '@산초 공지 요약')).status === 403);
+
+  // 비서(두뇌)는 메신저 파일을 못 읽음
+  const tt = await (await call('POST', `/api/chats/${(await J(await call('POST', '/api/chats', ck))).id}/messages`, ck, { content: '/perm' })).text(), dn = (/ deny=(.*)$/m.exec([...tt.matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join('')) || [, ''])[1];
+  check('비서(두뇌)는 메신저 대화(db/messages.json·channels.json)와 첨부(메신저파일/)를 읽지도 고치지도 못함 — 멤버가 아닌 사람의 비서가 읽는 길을 막음',
+    ['Read', 'Edit', 'Write'].every((x) => ['db/messages.json', 'db/channels.json', '메신저파일/**'].every((f) => dn.includes(`${x}(./${f})`))));
+
+  // 로그아웃한 사람의 실시간 연결은 닫힘
+  const lo = await post('/api/auth/login', { username: 'minjun', password: 'new-minjun-pass-9' }), CM2 = cookieOf(lo), sLo = sse(`${A}/stream`, CM2);
+  await usedOk(sLo); await post('/api/auth/logout', {}, CM2); await say(CS, P, '로그아웃 뒤의 메시지');
+  check('로그아웃하면 그 사람의 실시간 연결이 닫히고 그 뒤 메시지는 안 감', await until(async () => sLo.ended, 4000) && !sLo.events.some((e) => e.type === 'message'));
+
+  // 파일이 깨지면 덮어쓰지 않고 알림
+  const mf = path.join(dir, 'db', 'messages.json'), orig = fs.readFileSync(mf, 'utf8');
+  fs.writeFileSync(mf, '{ 깨짐');
+  const brk = await call('GET', `${A}/channels`, CM), brk2 = await say(CM, P, '깨진 파일에 쓰기');
+  const kept = fs.readFileSync(mf, 'utf8'); fs.writeFileSync(mf, orig);
+  check('messages.json 이 깨져 있으면 목록·보내기가 500 과 쉬운 이유를 돌려주고 파일은 덮어쓰지 않음', brk.status === 500 && (await brk.json()).error.includes('messages.json') && brk2.status === 500 && kept === '{ 깨짐');
+
+  // 새 부서의 사람을 만들면 그 부서 채널이 생김, 화면
+  await call('POST', '/api/users', ck, { name: '디자인이', username: 'dsgn', password: 'temp-dsgn-pass', dept: '디자인', role: 'user' });
+  check('계정을 추가하면 그 부서 채널이 저절로 만들어짐', JSON.parse(fs.readFileSync(path.join(dir, 'db', 'channels.json'), 'utf8')).some((c) => c.kind === 'dept' && c.name === '디자인' && c.id.startsWith('d')));
+  const page1 = await fetch(BASE + '/m/messenger.html', { headers: { Cookie: CM } }), html = await page1.text(), main = await (await fetch(BASE + '/', { headers: { Cookie: CM } })).text();
+  check('화면: /m/messenger.html 은 로그인해야 열리고(401), 채널 목록(안 읽은 수)·가운데 대화·아래 입력창(첨부)·실시간(EventSource)·🤖 표시·@산초 안내가 있고, 메인 화면의 메신저 메뉴가 그 화면을 띄움',
+    page1.status === 200 && (await fetch(BASE + '/m/messenger.html')).status === 401 && ['id="chlist"', 'id="msgs"', 'id="input"', 'id="fileIn"', 'EventSource', '/api/messenger/stream', '🤖', '@산초', 'class="n"', '새 채널'].every((w) => html.includes(w))
+    && main.includes('/m/messenger.html') && main.includes("showMessenger(arg)"));
+  [sT, sM, sS, sC, sDb].forEach((s) => s.ac.abort());
+  await call('DELETE', '/api/db/projects/mp-proj', ck);
 }
 
 // 여러 사람이 쓰기 전의 data/ (chats·memory.md·schedule.json·journal/ 이 data/ 바로 아래) 를 첫 관리자의 개인 폴더로 옮기는가: 옮기기만 하고 지우지 않고, 이미 있는 건 덮어쓰지 않는다

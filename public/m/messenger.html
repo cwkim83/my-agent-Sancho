@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>메신저</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --bot: #f4f0ff; --bot-line: #d9ccff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  [hidden] { display: none !important; }
+  .app { height: 100%; display: flex; position: relative; }
+
+  /* 왼쪽: 채널 목록 */
+  .side { flex: none; width: 250px; display: flex; flex-direction: column; background: #fff; border-right: 1px solid var(--line); }
+  .shead { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .shead h2 { margin: 0; font-size: 17px; }
+  .mini { padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--blue); font-size: 13px; font-weight: 600; }
+  .mini:hover { background: var(--blue-bg); }
+  #chlist { flex: 1; overflow-y: auto; padding: 6px 8px 12px; }
+  .grp { margin: 10px 8px 4px; color: var(--sub); font-size: 12px; font-weight: 600; }
+  .ch { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: none; text-align: left; color: #344054; }
+  .ch:hover { background: #f2f4f7; }
+  .ch.on { background: var(--blue-bg); color: var(--blue); }
+  .ch .ic { flex: none; width: 20px; text-align: center; }
+  .ch .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch.unread .nm { font-weight: 700; color: var(--text); }
+  .ch .n { flex: none; min-width: 20px; padding: 0 6px; border-radius: 999px; background: #d92d20; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+  .none { padding: 14px 12px; color: var(--sub); font-size: 13px; }
+
+  /* 가운데: 대화 */
+  .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .chead { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); }
+  .chead .t { min-width: 0; }
+  .chead b { font-size: 16px; }
+  .chead small { display: block; color: var(--sub); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #listBtn { display: none; }
+  #msgs { flex: 1; overflow-y: auto; padding: 12px 16px; }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  .more { display: block; margin: 0 auto 10px; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--sub); font-size: 12px; }
+  .day { margin: 14px 0 8px; text-align: center; color: var(--sub); font-size: 12px; }
+  .day span { padding: 2px 12px; border-radius: 999px; background: #e9ecf1; }
+  .m { position: relative; display: flex; gap: 10px; padding: 2px 8px; border-radius: 8px; }
+  .m:hover { background: rgba(16, 24, 40, .04); }
+  .m.first { margin-top: 10px; }
+  .av { flex: none; width: 34px; height: 34px; border-radius: 50%; background: #d0d5dd; color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .av.me { background: var(--blue); } .av.bot { background: #7a5af8; font-size: 18px; }
+  .gap { flex: none; width: 34px; }
+  .body { min-width: 0; flex: 1; }
+  .who { display: flex; align-items: baseline; gap: 6px; }
+  .who b { font-size: 14px; }
+  .who .dept { padding: 0 7px; border-radius: 999px; background: #f2f4f7; color: var(--sub); font-size: 11px; }
+  .who time { color: var(--sub); font-size: 12px; }
+  .m.isbot .body { padding: 6px 12px; border: 1px solid var(--bot-line); border-radius: 12px; background: var(--bot); }
+  .m.isbot .who b { color: #5925dc; }
+  .txt { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .mention { padding: 0 3px; border-radius: 4px; background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+  .files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .files img { display: block; max-width: 240px; max-height: 180px; border-radius: 8px; border: 1px solid var(--line); }
+  .files a.f { padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #344054; font-size: 13px; text-decoration: none; overflow-wrap: anywhere; }
+  .del { position: absolute; top: 2px; right: 8px; display: none; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--sub); }
+  .m:hover .del { display: block; }
+  .del:hover { background: var(--red-bg); color: var(--red); }
+  .empty { margin-top: 12vh; text-align: center; color: var(--sub); }
+  .empty h3 { margin: 0 0 6px; color: var(--text); }
+  #typing { flex: none; padding: 2px 20px 6px; color: #5925dc; font-size: 13px; }
+
+  /* 아래: 입력창 */
+  .composer { flex: none; padding: 8px 16px 12px; background: var(--bg); }
+  .box { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #fff; border: 1px solid #d0d5dd; border-radius: 14px; }
+  .box:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .box.off { background: #f2f4f7; }
+  textarea { flex: 1; min-width: 0; max-height: 160px; padding: 8px; border: 0; outline: none; resize: none; font: inherit; background: none; }
+  .plus, #send { flex: none; width: 38px; height: 38px; border: 0; border-radius: 10px; font-size: 18px; }
+  .plus { background: #f2f4f7; color: #475467; } .plus:hover:not(:disabled) { background: var(--blue-bg); color: var(--blue); }
+  #send { background: var(--blue); color: #fff; } #send:disabled, .plus:disabled { background: #e4e7eb; color: #98a2b3; }
+  .tray { max-width: 820px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .att { display: flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 12px; }
+  .att span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .att.up { opacity: .6; } .att.err { border-color: #fecdca; background: #fef3f2; color: var(--red); }
+  .att button { flex: none; width: 20px; height: 20px; border: 0; border-radius: 50%; background: none; color: var(--sub); }
+  .hint { max-width: 820px; margin: 4px auto 0; color: var(--sub); font-size: 12px; text-align: center; }
+
+  /* 새 채널 창 */
+  .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(16, 24, 40, .45); }
+  .card { width: min(440px, 100%); max-height: 90vh; overflow-y: auto; padding: 18px 20px; background: #fff; border-radius: 14px; box-shadow: 0 20px 48px rgba(16, 24, 40, .3); }
+  .card h3 { margin: 0 0 10px; }
+  .card label { display: block; margin: 10px 0 4px; font-size: 13px; font-weight: 600; color: #344054; }
+  .card select, .card input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; background: #fff; }
+  .kinds { display: flex; gap: 14px; }
+  .kinds label { margin: 0; font-weight: 400; }
+  .ppl { max-height: 180px; overflow-y: auto; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; }
+  .ppl label { margin: 2px 0; font-weight: 400; display: flex; gap: 8px; align-items: center; }
+  .card .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .btn { padding: 8px 16px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font-weight: 600; }
+  .btn.ghost { background: #fff; color: #344054; border: 1px solid #d0d5dd; }
+  .btn:disabled { background: #98a2b3; }
+  #newMsg { margin-top: 8px; color: var(--red); font-size: 13px; min-height: 1.4em; }
+
+  @media (max-width: 800px) {
+    .side { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: min(280px, 85%); transform: translateX(-100%); transition: transform .2s; box-shadow: 4px 0 20px rgba(0, 0, 0, .1); }
+    .app.listopen .side { transform: none; }
+    #listBtn { display: block; }
+    .hint { display: none; }
+    .files img { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side">
+    <div class="shead"><h2>메신저</h2><button class="mini" id="newCh">＋ 새 채널</button></div>
+    <div id="chlist"><div class="none">불러오는 중…</div></div>
+  </aside>
+  <section class="chat">
+    <div class="chead"><button class="mini" id="listBtn" aria-label="채널 목록">☰</button><div class="t"><b id="chName">채널을 골라 주세요</b><small id="chSub"></small></div></div>
+    <div id="msgs"><div class="wrap" id="thread"></div></div>
+    <div id="typing" hidden>🤖 산초가 답을 쓰는 중…</div>
+    <div class="composer">
+      <div class="tray" id="tray" hidden></div>
+      <div class="box" id="box">
+        <button class="plus" id="plus" type="button" title="파일 첨부" aria-label="파일 첨부">＋</button><input type="file" id="fileIn" multiple hidden>
+        <textarea id="input" rows="1" placeholder="메시지를 입력하세요"></textarea>
+        <button id="send" aria-label="보내기">➤</button>
+      </div>
+      <div class="hint" id="hint">Enter 로 보내기 · Shift+Enter 로 줄바꿈 · <b>@산초 …</b> 로 시작하면 🤖 비서가 이 채널의 최근 20개 메시지를 읽고 답해요</div>
+    </div>
+  </section>
+</div>
+
+<div class="modal" id="newModal" hidden>
+  <form class="card" id="newForm" role="dialog" aria-modal="true" aria-labelledby="newT">
+    <h3 id="newT">새 채널</h3>
+    <div class="kinds"><label><input type="radio" name="kind" value="dm" checked> 1:1 대화</label><label id="projKind"><input type="radio" name="kind" value="project"> 프로젝트 채널</label></div>
+    <div id="dmPane"><label for="dmWith">대화할 사람</label><select id="dmWith"></select></div>
+    <div id="projPane" hidden>
+      <label for="projSel">프로젝트</label><select id="projSel"></select>
+      <label>멤버 <small style="font-weight:400;color:var(--sub)">(나는 자동으로 들어가요)</small></label><div class="ppl" id="projMembers"></div>
+    </div>
+    <div id="newMsg" role="alert"></div>
+    <div class="row"><button type="button" class="btn ghost" id="newCancel">취소</button><button class="btn" id="newOk" type="submit">만들기</button></div>
+  </form>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/@산초/g, '<span class="mention">@산초</span>'); // 글자를 먼저 거른 뒤 굵게·멘션만 바꾼다
+  const KIND = { notice: ['📢', '공지'], dept: ['🏢', '부서'], project: ['📁', '프로젝트'], dm: ['👤', '1:1'] };
+  const IMG = /\.(png|jpe?g|gif|webp)$/i;
+  let me = null, people = [], channels = [], cur = null, msgs = [], more = false, pend = [], es = null, opened = false, typingOn = false, loadSeq = 0, listTimer = null;
+
+  const api = async (url, opt) => {
+    const r = await fetch(url, opt);
+    if (r.status === 401) { (window.top || window).location.replace('/'); throw new Error('login'); }
+    return r;
+  };
+  const jpost = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const furl = (ch, file, q = '') => `/api/messenger/files/${encodeURIComponent(ch)}/${encodeURIComponent(file)}${q}`;
+  const hm = (iso) => new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const dayOf = (iso) => new Date(iso).toLocaleDateString('sv-SE');
+  const dayText = (iso) => new Date(iso).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+
+  // ---------- 왼쪽 채널 목록 ----------
+  async function loadChannels() {
+    try { channels = await (await api('/api/messenger/channels')).json(); }
+    catch (e) { if (e.message !== 'login') $('chlist').innerHTML = '<div class="none">⚠ 채널 목록을 읽지 못했어요.</div>'; return; }
+    if (!Array.isArray(channels)) { $('chlist').innerHTML = `<div class="none">⚠ ${esc((channels || {}).error || '채널 목록을 읽지 못했어요.')}</div>`; channels = []; return; }
+    renderList();
+    renderHead();
+  }
+  const loadChannelsSoon = () => { clearTimeout(listTimer); listTimer = setTimeout(loadChannels, 120); }; // 한꺼번에 여러 개 오면 한 번만
+  function renderList() {
+    const groups = ['notice', 'dept', 'project', 'dm'].map((k) => [k, channels.filter((c) => c.kind === k)]).filter(([, l]) => l.length);
+    $('chlist').innerHTML = groups.length ? groups.map(([k, l]) => `<div class="grp">${KIND[k][1]}</div>${l.map((c) =>
+      `<button class="ch ${c.id === cur ? 'on' : ''} ${c.unread ? 'unread' : ''}" data-id="${esc(c.id)}"><span class="ic">${KIND[c.kind][0]}</span><span class="nm">${esc(c.name)}</span>${c.unread ? `<span class="n">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}</button>`).join('')}`).join('')
+      : '<div class="none">아직 채널이 없어요.</div>';
+    $('chlist').querySelectorAll('.ch').forEach((b) => (b.onclick = () => { openChannel(b.dataset.id); $('app').classList.remove('listopen'); }));
+  }
+  function renderHead() {
+    const c = channels.find((x) => x.id === cur);
+    $('chName').textContent = c ? `${KIND[c.kind][0]} ${c.name}` : '채널을 골라 주세요';
+    $('chSub').textContent = !c ? '' : c.kind === 'notice' ? '모두가 읽어요 · 관리자만 쓸 수 있어요' : `${KIND[c.kind][1]} · 멤버 ${c.members.length}명: ${c.members.map((m) => m.name).join(', ')}`;
+    const can = !!c && c.canWrite;
+    $('box').classList.toggle('off', !can); $('input').disabled = $('send').disabled = $('plus').disabled = !can;
+    $('input').placeholder = !c ? '채널을 먼저 골라 주세요' : can ? '메시지를 입력하세요' : '공지는 관리자만 쓸 수 있어요';
+  }
+
+  // ---------- 가운데 대화 ----------
+  async function openChannel(id) {
+    cur = id; msgs = []; more = false; pend = []; renderTray(); setTyping(false);
+    const my = ++loadSeq;
+    renderList(); renderHead(); $('thread').innerHTML = '<div class="empty">불러오는 중…</div>';
+    try {
+      const j = await (await api(`/api/messenger/channels/${encodeURIComponent(id)}/messages`)).json();
+      if (my !== loadSeq) return;
+      if (!Array.isArray(j.messages)) throw new Error(j.error || '메시지를 읽지 못했어요.');
+      msgs = j.messages; more = !!j.more; setTyping(!!j.typing);
+    } catch (e) { if (e.message !== 'login' && my === loadSeq) $('thread').innerHTML = `<div class="empty">⚠ ${esc(e.message)}</div>`; return; }
+    renderThread(true); markRead();
+    if (!$('input').disabled) $('input').focus();
+  }
+  function msgHtml(m, prev) {
+    const mine = !m.bot && m.from === me.username, same = prev && prev.from === m.from && !!prev.bot === !!m.bot && dayOf(prev.at) === dayOf(m.at) && new Date(m.at) - new Date(prev.at) < 5 * 60000;
+    const can = me.role === 'admin' || mine || (m.bot && m.askedBy === me.username);
+    const files = (m.files || []).map((f) => (IMG.test(f.name)
+      ? `<a href="${furl(cur, f.file)}" target="_blank" rel="noopener"><img src="${furl(cur, f.file)}" alt="${esc(f.name)}"></a>`
+      : `<a class="f" href="${furl(cur, f.file, '?dl=1')}" download>📎 ${esc(f.name)}</a>`)).join('');
+    return `${prev && dayOf(prev.at) !== dayOf(m.at) || !prev ? `<div class="day"><span>${esc(dayText(m.at))}</span></div>` : ''}
+      <div class="m ${same ? '' : 'first'} ${m.bot ? 'isbot' : ''}" data-id="${esc(m.id)}">
+        ${same ? '<div class="gap"></div>' : `<div class="av ${mine ? 'me' : ''} ${m.bot ? 'bot' : ''}">${m.bot ? '🤖' : esc((m.name || '?').slice(0, 1))}</div>`}
+        <div class="body">${same ? '' : `<div class="who"><b>${m.bot ? '🤖 ' : ''}${esc(m.name)}</b>${m.dept ? `<span class="dept">${esc(m.dept)}</span>` : ''}${m.bot ? `<span class="dept">${esc(personOf(m.askedBy))}님 요청</span>` : ''}<time>${esc(hm(m.at))}</time></div>`}
+          ${m.text ? `<div class="txt">${fmt(m.text)}</div>` : ''}${files ? `<div class="files">${files}</div>` : ''}</div>
+        ${can ? '<button class="del" title="이 메시지 지우기" aria-label="이 메시지 지우기">🗑</button>' : ''}
+      </div>`;
+  }
+  const personOf = (u) => { const p = people.find((x) => x.username === u); return p ? p.name : u; };
+  function renderThread(force) {
+    const m = $('msgs'), nearEnd = m.scrollHeight - m.scrollTop - m.clientHeight < 140;
+    $('thread').innerHTML = msgs.length || more
+      ? `${more ? '<button class="more" id="moreBtn">이전 메시지 더 보기</button>' : ''}${msgs.map((x, i) => msgHtml(x, msgs[i - 1])).join('')}`
+      : '<div class="empty"><h3>아직 메시지가 없어요</h3><p>첫 메시지를 보내 보세요.</p></div>';
+    if (force || nearEnd) m.scrollTop = m.scrollHeight;
+    if ($('moreBtn')) $('moreBtn').onclick = loadOlder;
+    $('thread').querySelectorAll('.del').forEach((b) => (b.onclick = () => removeMsg(b.closest('.m').dataset.id)));
+  }
+  async function loadOlder() {
+    const my = loadSeq, first = msgs[0]; if (!first) return;
+    const j = await (await api(`/api/messenger/channels/${encodeURIComponent(cur)}/messages?before=${first.seq}`)).json();
+    if (my !== loadSeq || !Array.isArray(j.messages)) return;
+    const box = $('msgs'), h = box.scrollHeight;
+    msgs = [...j.messages, ...msgs]; more = !!j.more; renderThread(false); box.scrollTop = box.scrollHeight - h; // 보던 자리는 그대로
+  }
+  function markRead() { // 여기까지 읽음 (채널을 열어 둔 동안 새로 온 것도 바로 읽음 처리)
+    const last = msgs[msgs.length - 1];
+    if (!last || !cur || document.hidden) return; // 화면이 가려져 있으면(다른 탭) 보는 게 아니니 읽음으로 하지 않는다 — 다시 보이면 처리
+    jpost(`/api/messenger/channels/${encodeURIComponent(cur)}/read`, { seq: last.seq }).then(loadChannelsSoon).catch(() => {});
+  }
+  async function removeMsg(id) {
+    const m = msgs.find((x) => x.id === id); if (!m || !confirm(`이 메시지를 지울까요?\n\n${(m.text || '(첨부 파일)').slice(0, 80)}`)) return;
+    const r = await api(`/api/messenger/channels/${encodeURIComponent(cur)}/messages/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) alert((await r.json().catch(() => ({}))).error || '지우지 못했어요.');
+  }
+  function setTyping(on) { typingOn = on; $('typing').hidden = !on; if (on) $('msgs').scrollTop = $('msgs').scrollHeight; }
+
+  // ---------- 보내기 · 첨부 ----------
+  function renderTray() {
+    $('tray').hidden = !pend.length;
+    $('tray').innerHTML = pend.map((p, i) => `<div class="att ${p.state}" title="${esc(p.err || p.name)}"><span>${p.state === 'up' ? '⏳' : p.state === 'err' ? '⚠' : '📎'} ${esc(p.name)}</span><button type="button" data-rm="${i}" aria-label="첨부 빼기">✕</button></div>`).join('');
+    $('tray').querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => { pend.splice(Number(b.dataset.rm), 1); renderTray(); }));
+  }
+  async function upload(f, p, ch) {
+    try {
+      const r = await api(`/api/messenger/channels/${encodeURIComponent(ch)}/files?name=${encodeURIComponent(p.name)}`, { method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream' }, body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || '올리지 못했어요.');
+      Object.assign(p, { file: j.file, state: 'ok' });
+    } catch (e) { if (e.message === 'login') return; p.state = 'err'; p.err = e.message; }
+    if (cur === ch) renderTray();
+  }
+  function addFiles(list) {
+    for (const f of [...list]) {
+      if (pend.length >= 5) { alert('첨부는 한 번에 5개까지예요.'); break; }
+      const p = { name: f.name || '파일', state: 'up' }; pend.push(p); renderTray(); upload(f, p, cur);
+    }
+  }
+  async function send() {
+    const t = $('input'), text = t.value.trim();
+    if (!cur || (!text && !pend.some((p) => p.state === 'ok'))) return;
+    if (pend.some((p) => p.state === 'up')) return alert('파일을 올리는 중이에요. 다 올라간 뒤에 보내 주세요.');
+    $('send').disabled = true;
+    try {
+      const r = await jpost(`/api/messenger/channels/${encodeURIComponent(cur)}/messages`, { text, files: pend.filter((p) => p.state === 'ok').map((p) => p.file) }), j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || '보내지 못했어요.');
+      t.value = ''; t.style.height = 'auto'; pend = []; renderTray(); // 내 메시지도 실시간 연결로 돌아와 화면에 붙는다 (없으면 아래서 붙인다)
+      if (!msgs.some((m) => m.id === j.message.id)) { msgs.push(j.message); renderThread(true); markRead(); }
+    } catch (e) { if (e.message !== 'login') alert(e.message); }
+    $('send').disabled = false; t.focus();
+  }
+
+  // ---------- 실시간 (서버가 내가 속한 채널의 것만 보내 준다) ----------
+  function connect() {
+    es = new EventSource('/api/messenger/stream');
+    es.addEventListener('message', (e) => {
+      const m = JSON.parse(e.data);
+      if (m.channelId === cur) {
+        if (!msgs.some((x) => x.id === m.id)) { msgs.push(m); msgs.sort((a, b) => a.seq - b.seq); renderThread(false); }
+        if (m.bot) setTyping(false);
+        markRead();
+      } else loadChannelsSoon(); // 다른 채널: 안 읽은 수만 바뀐다
+    });
+    es.addEventListener('delete', (e) => {
+      const d = JSON.parse(e.data);
+      if (d.channelId === cur) { msgs = msgs.filter((x) => x.id !== d.id); renderThread(false); }
+      loadChannelsSoon();
+    });
+    es.addEventListener('typing', (e) => { const d = JSON.parse(e.data); if (d.channelId === cur) setTyping(d.on); });
+    es.addEventListener('channels', loadChannelsSoon);
+    es.onopen = () => { if (opened) { loadChannels(); if (cur) refreshCurrent(); } opened = true; }; // 끊겼다 이어지면 그 사이 놓친 것을 다시 받는다
+  }
+  async function refreshCurrent() {
+    const my = loadSeq;
+    try { const j = await (await api(`/api/messenger/channels/${encodeURIComponent(cur)}/messages`)).json(); if (my === loadSeq && Array.isArray(j.messages)) { msgs = j.messages; more = !!j.more; setTyping(!!j.typing); renderThread(false); markRead(); } } catch {}
+  }
+
+  // ---------- 새 채널 ----------
+  async function openNew() {
+    $('newMsg').textContent = ''; $('newForm').reset(); showKind();
+    try {
+      people = await (await api('/api/messenger/people')).json();
+      const others = people.filter((p) => p.username !== me.username);
+      $('dmWith').innerHTML = others.map((p) => `<option value="${esc(p.username)}">${esc(p.name)}${p.dept ? ` (${esc(p.dept)})` : ''}</option>`).join('');
+      $('projMembers').innerHTML = others.map((p) => `<label><input type="checkbox" value="${esc(p.username)}"> ${esc(p.name)}${p.dept ? ` (${esc(p.dept)})` : ''}</label>`).join('');
+      if (me.role === 'admin') {
+        const projs = await (await api('/api/db/projects')).json();
+        $('projSel').innerHTML = Array.isArray(projs) ? projs.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.client ? ` · ${esc(p.client)}` : ''}</option>`).join('') : '';
+      }
+    } catch (e) { if (e.message === 'login') return; }
+    $('newModal').hidden = false;
+  }
+  const kindOf = () => document.querySelector('input[name=kind]:checked').value;
+  function showKind() { $('dmPane').hidden = kindOf() !== 'dm'; $('projPane').hidden = kindOf() !== 'project'; }
+  document.querySelectorAll('input[name=kind]').forEach((r) => (r.onchange = showKind));
+  $('newCh').onclick = openNew;
+  $('newCancel').onclick = () => ($('newModal').hidden = true);
+  $('newModal').onclick = (e) => { if (e.target === $('newModal')) $('newModal').hidden = true; };
+  $('newForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = kindOf() === 'dm' ? { kind: 'dm', with: $('dmWith').value } : { kind: 'project', projectId: $('projSel').value, members: [...$('projMembers').querySelectorAll('input:checked')].map((c) => c.value) };
+    $('newOk').disabled = true; $('newMsg').textContent = '';
+    try {
+      const r = await jpost('/api/messenger/channels', body), j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || '만들지 못했어요.');
+      $('newModal').hidden = true; await loadChannels(); openChannel(j.channel.id);
+    } catch (er) { if (er.message !== 'login') $('newMsg').textContent = er.message; }
+    $('newOk').disabled = false;
+  };
+
+  // ---------- 시작 ----------
+  $('send').onclick = send;
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) markRead(); });
+  $('listBtn').onclick = () => $('app').classList.toggle('listopen');
+  $('plus').onclick = () => $('fileIn').click();
+  $('fileIn').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+  $('input').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; });
+  $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } });
+  $('input').addEventListener('paste', (e) => { const files = [...(e.clipboardData ? e.clipboardData.files : [])]; if (files.length && !(e.clipboardData.getData('text/plain') || '').trim()) { e.preventDefault(); addFiles(files); } });
+  (async () => {
+    try {
+      me = await (await api('/api/me')).json();
+      people = await (await api('/api/messenger/people')).json();
+      await loadChannels(); connect();
+      const want = new URLSearchParams(location.search).get('c'), first = channels.find((c) => c.id === want) || channels.find((c) => c.unread) || channels.find((c) => c.kind === 'notice') || channels[0];
+      if (first) openChannel(first.id);
+    } catch (e) { if (e.message !== 'login') $('chlist').innerHTML = '<div class="none">⚠ 서버에 연결할 수 없습니다.</div>'; }
+  })();
+</script>
+</body>
+</html>

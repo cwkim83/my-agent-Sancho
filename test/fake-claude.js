@@ -45,6 +45,11 @@ async function mail(msg) {
 async function run(msg) {
   out({ type: 'system', subtype: 'init' });
   if (msg.startsWith('[메일 정리]') || msg.startsWith('[답장 초안]')) return mail(msg);
+  if (msg.startsWith('[메신저 채널 질문]')) { // 메신저 "@산초" 흉내: 질문에 /실패해 가 있으면 죽고, /느리게 가 있으면 2초 걸린 뒤 평소처럼 (받은 글을 그대로 되울려서 서버가 무엇을 건넸는지 보인다)
+    const q = msg.slice(msg.lastIndexOf('\n요청: ')); // 맨 끝의 "요청: …" 만 본다 (앞의 대화 속 글에는 반응하지 않는다)
+    if (q.includes('/실패해')) { process.stderr.write('boom: 메신저 답변 중 죽음'); process.exit(3); }
+    if (q.includes('/느리게')) await sleep(2000);
+  }
   if (msg === '/orphan') { // 멈춘 python 흉내: 답을 다 보내고 끝났는데, 띄운 프로그램이 출력 통로를 붙잡은 채 20초 남는다
     require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true, cwd: require('os').tmpdir() }).unref(); // 점검 폴더를 붙잡지 않게 다른 곳에서
     delta('다 했어요'); out({ type: 'result', subtype: 'success', is_error: false, result: '다 했어요' }); process.exit(0);
@@ -96,7 +101,7 @@ async function run(msg) {
   if (msg.startsWith('/tool ')) { out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: msg.slice(6), id: 't9' } } }); delta('끝'); out({ type: 'result', subtype: 'success', is_error: false, result: '끝' }); return; } // 화면에 뜨는 도구 이름표 점검용
   const home = (/users\/([a-z0-9_.-]+)\/memory\.md/.exec(arg('--append-system-prompt') || '') || [])[1]; // 서버가 알려 준 "이 사람의 개인 폴더"
   if (msg.startsWith('기억해:')) fs.appendFileSync(home ? `users/${home}/memory.md` : 'memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내
-  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
+  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | tools=[${arg('--tools')}] | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
   for (let i = 0; i < reply.length; i += 20) { delta(reply.slice(i, i + 20)); await sleep(5); } // 여러 조각으로 흘려보낸다(윈도우는 5ms 가 실제 15ms 쯤이라 조각을 너무 잘게 하면 느려진다)
   out({ type: 'result', subtype: 'success', is_error: false, result: reply });
 }
