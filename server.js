@@ -548,7 +548,7 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
 // 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
-const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs·approval)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
+const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs·approval·okr)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
 // 여러 사람이 쓰므로 누구의 비서인지도 알려 준다: 개인 폴더(기억·예약·일지가 있는 곳)와 역할. 지침에 적힌 memory.md·schedule.json·journal/ 은 이 폴더 안의 것이다
 const userHint = (u) => `이 사람의 개인 폴더: users/${u.username}/ (작업 폴더 기준). 지침의 memory.md·schedule.json·journal/ 은 모두 이 폴더 안의 것이다: users/${u.username}/memory.md · users/${u.username}/schedule.json · users/${u.username}/journal/<날짜>.md. data/ 바로 아래의 memory.md·schedule.json·journal/ 은 쓰지 않는다. 다른 사람의 폴더(users/ 아래 다른 이름)는 열지 않는다. 역할: ${isAdmin(u) ? '관리자' : '일반 사용자'}${u.dept ? `, 부서: ${u.dept}` : ''}.`;
 const brainCtx = (u, d = new Date()) => `주인 이름: ${u.name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${userHint(u)} ${SKILL_HINT}`;

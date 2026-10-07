@@ -175,6 +175,7 @@ async function run() {
   await runMessenger(ck, people);
   await runMeeting(ck, people);
   await runApprovals(ck, people);
+  await runOkr(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -2416,6 +2417,120 @@ async function runApprovals(ck, { CM, CS, CC }) { // ck 첫 관리자(테스트�
     && Number.isInteger(ex.amount) && ex.amount >= 0 && ex.title.length > 0 && ex.title.length <= 100 && ex.body.length <= 5000 && ex.body.includes('\n'));
   check('.system.md: 결재 안내가 맨 끝에 한 번만 더해지고(approval 스킬을 먼저 읽음) 주인이 손본 줄은 그대로', sys.split('<!-- 지침:결재 -->').length === 2 && sys.includes('.claude/skills/approval/SKILL.md') && sys.includes('나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)'));
   check('결재 점검 끝: 남은 "내 차례" 문서가 하나도 없음(모든 시험 문서가 끝났거나 작성 중)', await todo(CM) === 0 && await todo(CS) === 0 && await todo(ck) === 0 && await todo(CC) === 0);
+}
+
+// 목표(OKR): 전사 → 부서 → 개인 나무, KR(지표·시작값·목표값·현재값·가중치·기한), 진척 = KR 달성률의 가중 평균·상위는 하위의 평균, 색(순조/주의/위험), 비서 스킬
+async function runOkr(ck) {
+  const okr = require('./public/m/okr-calc.js');
+  const call = (m, u, c, b) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json', Cookie: c }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const J = (r) => r.json();
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const kr = (metric, start, target, current, weight, due, unit = '') => ({ metric, unit, start, target, current, weight, ...(due ? { due } : {}) });
+  const obj = (id, level, parentId, title, krs, quarter = '2026-Q4') => ({ id, level, parentId, title, owner: '', dept: '', quarter, note: '', krs });
+  const T = '2026-10-07';
+
+  // ---- 분기·시간
+  const P = (q) => okr.periodOf(q), pj = (q) => (P(q) ? `${P(q).start}~${P(q).end}` : null);
+  check('분기 계산: Q1~Q4 의 시작·끝 날짜와 연간(2026) — 모양이 틀린 것(2026-Q5·26-Q1·빈 글자·null·Q4)은 null',
+    pj('2026-Q1') === '2026-01-01~2026-03-31' && pj('2026-Q2') === '2026-04-01~2026-06-30' && pj('2026-Q3') === '2026-07-01~2026-09-30' && pj('2026-Q4') === '2026-10-01~2026-12-31' && pj('2026') === '2026-01-01~2026-12-31'
+    && [pj('2026-Q5'), pj('26-Q1'), pj(''), pj(null), pj('Q4'), pj('2026-q4')].every((x) => x === null) && okr.quarterOf('2026-10-07') === '2026-Q4' && okr.quarterOf('2026-03-31') === '2026-Q1' && okr.quarterOf('2026-04-01') === '2026-Q2'
+    && okr.quarterLabel('2026-Q4') === '2026년 4분기' && okr.quarterLabel('2026') === '2026년 연간');
+  check('지난 시간 비율: 분기 첫날 1/92 · 한가운데(11/15) 정확히 0.5 · 끝날 1 · 시작 전 0 · 끝난 뒤 1 (양 끝 날을 모두 센다)',
+    near(okr.elapsed('2026-10-01', '2026-12-31', '2026-10-01'), 1 / 92) && near(okr.elapsed('2026-10-01', '2026-12-31', '2026-11-15'), 0.5) && okr.elapsed('2026-10-01', '2026-12-31', '2026-12-31') === 1
+    && okr.elapsed('2026-10-01', '2026-12-31', '2026-09-20') === 0 && okr.elapsed('2026-10-01', '2026-12-31', '2027-02-01') === 1);
+
+  // ---- KR 달성률
+  const rate = (s, t, c) => okr.krRate(kr('지표', s, t, c, 1));
+  check('KR 달성률: 올릴수록 좋은 지표(0→100, 현재 25 → 25%) · 낮출수록 좋은 지표(불량률 시작 3·목표 1·현재 1.8 → 60%) · 0~100% 로 자름 · 시작값을 비우면 0',
+    near(rate(0, 100, 25), 0.25) && near(rate(3, 1, 1.8), 0.6) && rate(3, 1, 3) === 0 && rate(3, 1, 0.5) === 1 && rate(3, 1, 4) === 0 && rate(0, 100, 130) === 1 && rate(0, 100, -5) === 0 && near(okr.krRate({ metric: 'x', target: 10, current: 4 }), 0.4)
+    && near(rate(85, 98, 91.5), 0.5) && near(rate(6, 2, 4), 0.5));
+  check('KR 모양 검사: 지표 비어 있음·목표값/현재값/시작값이 숫자가 아님(글자·NaN·무한대)·가중치 음수·기한이 없는 날(2026-02-31)·시작값=목표값은 계산에서 빼고(null) 이유를 알려 줌, 시작값·단위·가중치·기한 없음은 괜찮음',
+    [kr('', 0, 10, 1, 1), kr('a', 0, '10', 1, 1), kr('a', 0, 10, NaN, 1), kr('a', 0, 10, Infinity, 1), kr('a', '0', 10, 1, 1), kr('a', 0, 10, 1, -1), kr('a', 0, 10, 1, '3'), kr('a', 0, 10, 1, 1, '2026-02-31'), kr('a', 5, 5, 5, 1), null, 'KR', [1]]
+      .every((k) => okr.krProblem(k) !== '' && okr.krRate(k) === null) && okr.krProblem({ metric: 'a', target: 10, current: 1 }) === '' && okr.krProblem(kr('a', 0, 10, 1, 0)) === '');
+
+  // ---- 색 (진척 p · 지나야 할 비율 e)
+  const S = okr.statusOf;
+  check('색: 뒤처짐 0.10 까지 순조 · 0.25 까지 주의 · 넘으면 위험(부동소수점 찌꺼기에 안 흔들림) · 100% 면 늘 순조 · 기한이 지난 미달은 위험 · 진척이 없으면 null',
+    S(0.5, 0.6) === '순조' && S(0.5, 0.61) === '주의' && S(0.5, 0.75) === '주의' && S(0.5, 0.76) === '위험' && S(0.3, 0.4) === '순조' && S(0.1 + 0.2, 0.4) === '순조' && S(0.9, 0.2) === '순조' && S(0, 0) === '순조'
+    && S(1, 1, true) === '순조' && S(0.9, 0.5, true) === '위험' && S(null, 0.5) === null && S(undefined, 0.5) === null);
+
+  // ---- 나무와 진척
+  const kr3 = [kr('불량률', 3, 1, 1.8, 50, '2026-12-31', '%'), kr('클레임', 6, 2, 6, 30), kr('제출률', 85, 98, 85, 20)];
+  const tree = okr.build([obj('co1', '전사', '', '품질 경쟁력', []), obj('dp1', '부서', 'co1', '품질팀', kr3), obj('dp2', '부서', 'co1', '설계팀', [kr('도면 승인율', 0, 100, 50, 1)]), obj('pe1', '개인', 'dp1', '박지호', [kr('검사 건수', 0, 20, 5, 1)])], T, '2026-Q4');
+  const co = tree[0], d1 = co.children[0], d2 = co.children[1], p1 = d1.children[0];
+  check('나무: 전사 아래 부서 둘, 부서 아래 개인이 수준 순서로 이어짐(맨 위는 전사 하나)', tree.length === 1 && co.level === '전사' && co.children.map((c) => c.obj.id).join() === 'dp1,dp2' && d1.children.length === 1 && p1.obj.id === 'pe1' && p1.children.length === 0 && d2.children.length === 0);
+  check('진척 = KR 달성률의 가중 평균(가중치 ÷ 합): 불량률 60%×50 + 클레임 0%×30 + 제출률 0%×20 → 30%, 가중치 합이 100 이 아니어도 비율로 계산(설계팀 KR 하나 50%)',
+    near(d1.kr, 0.3) && near(d2.kr, 0.5) && near(okr.build([obj('a', '부서', '', 'x', [kr('p', 0, 10, 10, 1), kr('q', 0, 10, 0, 3)])], T, '2026-Q4')[0].progress, 0.25) && d1.krs.length === 3 && near(d1.krs[0].rate, 0.6));
+  check('상위 목표의 진척 = 하위 목표들의 평균: 부서(30%·개인 하위와 함께 (30+25)/2 = 27.5%)·설계팀 50% → 전사 (27.5+50)/2 = 38.75%', near(p1.progress, 0.25) && near(d1.progress, 0.275) && near(d2.progress, 0.5) && near(co.progress, 0.3875) && co.kr === null);
+  const own = okr.build([obj('a', '전사', '', 'x', [kr('p', 0, 10, 10, 1)]), obj('b', '부서', 'a', 'y', [kr('q', 0, 10, 3, 1)]), obj('c', '부서', 'a', 'z', [kr('r', 0, 10, 5, 1)])], T, '2026-Q4')[0];
+  check('상위 목표가 자기 KR 도 가지면 그것도 하위 목표 하나처럼 한 몫으로 평균: (100 + 30 + 50)/3 = 60%', near(own.progress, 0.6) && near(own.kr, 1));
+  const none = okr.build([obj('a', '전사', '', 'x', []), obj('b', '부서', 'a', 'y', []), obj('c', '부서', 'a', 'z', [kr('r', 0, 10, 0, 0)]), obj('d', '개인', '', 'w', [kr('bad', 0, 'x', 1, 1)])], T, '2026-Q4');
+  check('KR 이 없거나 가중치가 모두 0 이거나 모든 KR 이 틀린 목표는 진척을 계산하지 않음(null, "KR 없음") — 0% 로 꾸미지 않고, 평균에서도 빠짐', none[0].progress === null && none[0].status === null && none[0].children.every((c) => c.progress === null) && none[1].progress === null && none[1].krs[0].problem !== ''
+    && near(okr.build([obj('a', '전사', '', 'x', []), obj('b', '부서', 'a', 'y', [kr('r', 0, 10, 4, 1)]), obj('c', '부서', 'a', 'z', [])], T, '2026-Q4')[0].progress, 0.4));
+  check('가중치 칸을 비우면 같은 비중(1)으로 계산', near(okr.build([obj('a', '부서', '', 'x', [{ metric: 'p', target: 10, current: 10 }, { metric: 'q', target: 10, current: 0 }])], T, '2026-Q4')[0].progress, 0.5));
+
+  // 색: 분기 한가운데(11/15, 지나야 할 비율 0.5)와 분기 첫 주
+  const mid = okr.build([obj('a', '부서', '', 'x', [kr('p', 0, 100, 45, 1), kr('q', 0, 100, 30, 1), kr('r', 0, 100, 10, 1)])], '2026-11-15', '2026-Q4')[0];
+  check('색 계산(분기 한가운데, 지나야 할 진척 50%): 45% 순조(5%p 뒤처짐) · 30% 주의(20%p) · 10% 위험(40%p), 목표 전체는 평균 28.3% → 주의(21.7%p)', mid.krs.map((k) => k.status).join() === '순조,주의,위험' && near(mid.expected, 0.5) && mid.status === '주의');
+  const early = okr.build([obj('a', '부서', '', 'x', [kr('p', 0, 100, 0, 1)])], T, '2026-Q4')[0];
+  check('분기 첫 주에는 진척 0% 라도 순조(아직 시간이 안 지났으니) — 같은 0% 가 분기 끝에는 위험', early.status === '순조' && okr.build([obj('a', '부서', '', 'x', [kr('p', 0, 100, 0, 1)])], '2026-12-31', '2026-Q4')[0].status === '위험');
+  const due = okr.build([obj('a', '부서', '', 'x', [kr('p', 0, 100, 90, 1, '2026-10-20'), kr('q', 0, 100, 90, 1, '2026-12-31')])], '2026-10-25', '2026-Q4')[0];
+  check('KR 은 자기 기한까지의 시간과 견줌: 기한(10/20)이 지났는데 100% 가 아니면 위험, 같은 90% 라도 기한이 남은 KR 은 순조', due.krs[0].status === '위험' && due.krs[1].status === '순조');
+
+  // ---- 이상한 자료에도 멈추지 않음 · 분기 거름 · 문제 알림
+  const dirty = [null, 5, 'x', [1], {}, { id: 'a b', level: '부서', title: 't', quarter: '2026-Q4' }, { id: 'x1', level: '팀', title: 't', quarter: '2026-Q4' }, { id: 'x2', level: '부서', title: '', quarter: '2026-Q4' }, { id: 'x3', level: '부서', title: 't', quarter: '내년' },
+    { id: 'x4', level: '부서', title: 't', quarter: '2026-Q4', krs: 'KR' }, obj('ok1', '부서', 'nope', '좋은 목표', [kr('p', 0, 10, 5, 1), kr('', 0, 10, 5, 1)]), obj('ok1', '부서', '', '같은 id', []), obj('ok2', '전사', 'ok1', '수준이 거꾸로', []), obj('ok3', '개인', 'ok1', '다른 분기의 하위', [], '2026-Q3')];
+  let built; try { built = okr.build(dirty, T, '2026-Q4'); } catch (e) { built = null; }
+  check('이상한 항목(null·숫자·글자·배열·빈 객체·나쁜 id·모르는 수준·빈 제목·나쁜 분기·KR 이 목록 아님)이 섞여도 멈추지 않고 쓸 수 있는 목표만 나무로 만듦: 상위를 못 찾거나(nope)·수준이 거꾸로면 맨 위에 둠, 같은 id 는 앞의 것만, 분기를 지정하면 그 분기만(지정 안 하면 분기가 달라도 상위-하위로 이어짐)',
+    built && built.map((n) => n.obj.id).join() === 'ok1,ok2' && built[0].krs.length === 2 && built[0].krs[1].problem !== '' && near(built[0].progress, 0.5) && okr.build(dirty, T, '2026-Q3').map((n) => n.obj.id).join() === 'ok3' && okr.build(dirty, T).length === 2 && okr.build(dirty, T)[0].children.map((c) => c.obj.id).join() === 'ok3' && okr.build('x', T, '2026-Q4').length === 0 && okr.build(undefined, T).length === 0);
+  const pb = okr.problems(dirty).join('\n');
+  check('문제 알림(problems): 항목 모양·id·수준·제목·분기·KR 목록·상위 목표를 못 찾음·수준이 거꾸로·id 겹침·KR(지표 없음)을 쉬운 한국어로 알려 주고, 멀쩡한 자료는 빈 목록',
+    ['항목 모양이 아님', 'id 가 없거나', '수준이 전사·부서·개인', '제목이 비어 있음', '분기가 2026-Q4', 'KR 목록이 목록(배열)이 아님', '상위 목표를 찾을 수 없음', '수준이 더 높아야 함', '가 겹침', '지표 이름이 비어 있음'].every((x) => pb.includes(x))
+    && okr.problems(tree.length ? [obj('co1', '전사', '', 'a', []), obj('dp1', '부서', 'co1', 'b', kr3)] : []).length === 0 && okr.problems(undefined).length === 0);
+  const items0 = [obj('co1', '전사', '', 'a', []), obj('dp1', '부서', 'co1', 'b', []), obj('pe1', '개인', 'dp1', 'c', []), obj('co2', '전사', '', 'd', [], '2026-Q3')];
+  check('상위 목표 후보: 같은 분기에서 더 높은 수준만(부서 → 전사, 개인 → 전사·부서, 전사 → 없음)', okr.parentChoices(items0, '부서', '2026-Q4').map((o) => o.id).join() === 'co1' && okr.parentChoices(items0, '개인', '2026-Q4').map((o) => o.id).join() === 'co1,dp1' && okr.parentChoices(items0, '전사', '2026-Q4').length === 0);
+  check('분기 목록은 자료에 있는 분기와 오늘의 분기를 오래된 순으로, 숫자는 보기 좋게(4,200,000 · 1.8 · 0.1+0.2=0.3 · 60%)', okr.quarters([obj('a', '부서', '', 'x', [], '2026-Q2'), { id: 'z', quarter: '엉뚱' }], T).join() === '2026-Q2,2026-Q4'
+    && okr.fmt(4200000) === '4,200,000' && okr.fmt(1.8) === '1.8' && okr.fmt(0.1 + 0.2) === '0.3' && okr.fmt('x') === '' && okr.pct(0.6) === '60%' && okr.pct(null) === '-' && okr.pct(0.3875) === '39%');
+
+  // ---- 화면
+  const page = await call('GET', '/m/okr.html', ck), pageText = await page.text();
+  check('목표 화면(public/m/okr.html): 로그인 없이는 401, 로그인하면 열림 · 나무·분기 선택·＋ 목표 추가·하위 목표·수정·KR 현재값 입력칸·색(순조·주의·위험)·막대, 계산은 okr-calc.js 와 저장소(db.list·save·watch 의 okrs)를 씀',
+    (await fetch(BASE + '/m/okr.html')).status === 401 && (await fetch(BASE + '/m/okr-calc.js')).status === 401 && page.status === 200
+    && ['/m/okr-calc.js', '/m/db.js', "db.list('okrs')", "db.save('okrs'", "db.remove('okrs'", "db.watch('okrs'", '＋ 목표 추가', '＋ 하위', 'data-edit', 'class="cur"', '순조', '주의', '위험', 'okr.build(', 'okr.problems(', '되돌릴 수 없어요'].every((x) => pageText.includes(x))
+    && pageText.includes('blank = !String(k.metric).trim() && !String(k.target).trim();')); // 지표·목표값을 안 적은 KR 줄은 기본값(시작 0·현재 0)이 있어도 빈 줄로 보고 뺀다 (시연에서 전사 목표를 저장하려는데 막힌 일이 있었다)
+  const calcText = await (await call('GET', '/m/okr-calc.js', ck)).text();
+  check('계산 파일(okr-calc.js)이 로그인한 사람에게 내려가고 브라우저(window.okr)와 서버 쪽 require 둘 다 되는 모양', calcText.includes('root.okr = api') && calcText.includes('module.exports = api'));
+  const mainHtml = await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text();
+  check('메인 화면: 목표 메뉴가 /m/okr.html 을 띄움(더는 "준비 중"이 아님)', mainHtml.includes("current === '목표') showOkr()") && mainHtml.includes('/m/okr.html'));
+
+  // ---- 저장소(/api/db/okrs): 화면이 하는 그대로 저장하고 현재값을 고치면 위 목표 진척이 바뀜 — 시연과 같은 흐름
+  const put = (o) => call('PUT', `/api/db/okrs/${o.id}`, ck, o), list = async () => J(await call('GET', '/api/db/okrs', ck));
+  const co9 = obj('co9', '전사', '', '고객이 믿는 품질', []), dp9 = obj('dp9', '부서', 'co9', '품질팀: 불량 줄이기', [kr('불량률', 3, 1, 3, 50, '2026-12-31', '%'), kr('클레임', 6, 2, 6, 50)]);
+  check('저장소: 목표를 PUT 으로 저장하면 data/db/okrs.json 에 [{id,…}] 배열로 들어가고 GET 으로 그대로 돌아옴(KR 목록 포함)', (await put(co9)).status === 200 && (await put(dp9)).status === 200 && (await list()).length === 2
+    && JSON.parse(fs.readFileSync(path.join(dir, 'db', 'okrs.json'), 'utf8')).find((o) => o.id === 'dp9').krs[0].metric === '불량률');
+  const before = okr.build(await list(), T, '2026-Q4')[0];
+  check('처음에는 위 목표(전사)도 부서도 진척 0%', before.progress === 0 && before.children[0].progress === 0);
+  const cur = (await list()).find((o) => o.id === 'dp9');
+  check('KR 현재값을 고쳐 저장하면(불량률 3 → 1.8, 화면의 "현재값" 칸과 같은 저장) 달성 60% → 부서 진척 30% → 위 목표(전사)도 30% 로 바뀜',
+    (await put({ ...cur, krs: cur.krs.map((k) => (k.metric === '불량률' ? { ...k, current: 1.8 } : k)) })).status === 200 && (() => { const t = okr.build(list_sync(), T, '2026-Q4')[0]; return near(t.children[0].krs[0].rate, 0.6) && near(t.children[0].progress, 0.3) && near(t.progress, 0.3); })());
+  function list_sync() { return JSON.parse(fs.readFileSync(path.join(dir, 'db', 'okrs.json'), 'utf8')); }
+  const garbage = await put({ id: 'bad1', level: '팀장', title: '', quarter: '내년', krs: 'x' });
+  check('형식을 어긴 항목이 저장돼도(비서가 잘못 적은 경우) 목록 읽기·나무 계산은 멈추지 않고, 문제로 알려 주고, 나머지 목표는 그대로 계산됨',
+    garbage.status === 200 && (await list()).length === 3 && okr.problems(await list()).length >= 1 && near(okr.build(await list(), T, '2026-Q4')[0].progress, 0.3));
+  check('목표를 DELETE 로 지우면 사라지고 나머지는 그대로(지우기 전 확인은 화면이 함)', (await call('DELETE', '/api/db/okrs/bad1', ck)).status === 200 && (await list()).map((o) => o.id).join() === 'co9,dp9');
+  for (const id of ['dp9', 'co9']) await call('DELETE', `/api/db/okrs/${id}`, ck); // 시험용 목표 정리
+
+  // ---- 비서 스킬
+  const skill = fs.readFileSync(path.join(dir, '.claude', 'skills', 'okr', 'SKILL.md'), 'utf8'), tmpl = fs.readFileSync(path.join(__dirname, 'templates', 'skills', 'okr', 'SKILL.md'), 'utf8'), sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
+  check('okr 스킬: 원본(templates/skills/okr)이 data/.claude/skills/okr/ 로 복사됨 · 설명에 "OKR 초안 짜 줘"·"현재값" · 파일 형식(level·parentId·quarter·krs·metric·start·target·current·weight·due)·달성률 공식·"진척·색은 파일에 적지 않는다"·"지우기 전에 묻는다"·"상위 목표를 마음대로 새로 만들지 않는다" 규칙이 있음',
+    skill === tmpl && /^---\r?\nname: okr\r?\ndescription: .*OKR 초안 짜 줘.*현재값/.test(skill) && ['`level`', '`parentId`', '`quarter`', '`krs`', '`metric`', '`start`', '`target`', '`current`', '`weight`', '`due`', '(현재값 − 시작값) ÷ (목표값 − 시작값)', '진척·색·달성률은 파일에 적지 않는다', '먼저 물어보고', '상위 목표를 마음대로 새로 만들지 않는다', 'platform 스킬'].every((x) => skill.includes(x)));
+  const ex = JSON.parse(/```json\r?\n([\s\S]*?)```/.exec(skill)[1]), exTree = okr.build(ex, '2026-10-07', '2026-Q4')[0];
+  check('스킬의 작성 예: 화면 검사(problems)를 통과 · id 8자 · 낮출수록 좋은 KR(불량률)은 시작값 > 목표값 · 새 KR 의 현재값은 시작값과 같음(진척 0) · 가중치 합 100 · 기한은 그 분기 안(분기 마지막 날) · 숫자는 JSON 숫자 · 메모에 "제안"',
+    okr.problems(ex).length === 0 && /^[a-z0-9]{8}$/.test(ex[0].id) && ex[0].krs.length === 3 && ex[0].krs[0].start > ex[0].krs[0].target && ex[0].krs.every((k) => k.current === k.start && !('id' in k) && ['start', 'target', 'current', 'weight'].every((f) => typeof k[f] === 'number' && k.due === '2026-12-31'))
+    && ex[0].krs.reduce((a, k) => a + k.weight, 0) === 100 && ex[0].quarter === '2026-Q4' && ex[0].note.includes('제안') && exTree.progress === 0);
+  const exAfter = okr.build([{ ...ex[0], krs: ex[0].krs.map((k) => (k.metric === '불량률' ? { ...k, current: 1.8 } : k)) }], '2026-10-07', '2026-Q4')[0];
+  check('스킬의 "불량률 현재값 1.8" 예(달성 60%)가 계산과 같음: KR 60% · 가중치 50 이라 목표 진척 30%', skill.includes('**60%**') && near(exAfter.krs[0].rate, 0.6) && near(exAfter.progress, 0.3));
+  check('.system.md: 목표 안내가 맨 끝에 한 번만 더해지고(okr 스킬을 먼저 읽음) 주인이 손본 줄은 그대로', sys.split('<!-- 지침:목표 -->').length === 2 && sys.includes('.claude/skills/okr/SKILL.md') && sys.includes('나는 존댓말을 쓰는 비서다. (주인이 손으로 덧붙인 줄)'));
 }
 
 async function runMigrate() {

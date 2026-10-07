@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목표</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --amber: #b54708; --amber-bg: #fef0c7; --green: #067647; --green-bg: #dcfae6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; overflow-y: auto; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  [hidden] { display: none !important; }
+  .page { max-width: 1040px; margin: 0 auto; padding: 16px; }
+  .top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 8px; }
+  .top h2 { margin: 0; font-size: 20px; }
+  .top .sub { color: var(--sub); font-size: 13px; }
+  .top .sp { flex: 1; }
+  .top label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #344054; }
+  .btn { padding: 7px 14px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font-weight: 600; }
+  .btn:disabled { background: #98a2b3; }
+  .btn.ghost { background: #fff; color: #344054; border: 1px solid #d0d5dd; }
+  .btn.ghost:hover:not(:disabled) { background: #f2f4f7; }
+  .btn.red { background: #d92d20; } .btn.dark { background: #475467; }
+  .mini { padding: 2px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 12px; color: #344054; }
+  .mini:hover:not(:disabled) { background: var(--blue-bg); }
+  input[type=text], input[type=date], select, textarea { width: 100%; padding: 6px 9px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; background: #fff; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  label.f { display: block; font-size: 12px; font-weight: 600; color: #344054; }
+  label.f > :not(span) { margin-top: 3px; font-weight: 400; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-bottom: 10px; color: var(--sub); font-size: 12px; }
+  .errbar, .warnbar { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+  .errbar { background: var(--red-bg); color: var(--red); } .warnbar { background: var(--amber-bg); color: #7a2e0e; }
+  .warnbar ul { margin: 4px 0 0; padding-left: 18px; }
+  .card { padding: 12px 14px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+  .none { padding: 14px 4px; color: var(--sub); }
+
+  /* 색 */
+  .st순조 { --c: #12b76a; --cb: var(--green-bg); --ct: var(--green); } .st주의 { --c: #f79009; --cb: var(--amber-bg); --ct: var(--amber); }
+  .st위험 { --c: #d92d20; --cb: var(--red-bg); --ct: var(--red); } .stnone { --c: #98a2b3; --cb: #f2f4f7; --ct: #667085; }
+  .dot { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 50%; background: var(--c); vertical-align: -1px; }
+  .stc { flex: none; min-width: 48px; padding: 0 8px; border-radius: 999px; background: var(--cb); color: var(--ct); text-align: center; font-size: 12px; font-weight: 700; line-height: 22px; }
+  .bar { position: relative; flex: none; width: 150px; height: 12px; border-radius: 999px; background: #eceff3; overflow: visible; }
+  .bar .fill { height: 100%; border-radius: 999px; background: var(--c); min-width: 0; }
+  .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: #475467; opacity: .55; }
+  .pct { flex: none; width: 44px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* 나무 */
+  .node { margin-top: 6px; }
+  .node > .node, .kids { margin-left: 0; }
+  .kids { margin-left: 22px; padding-left: 12px; border-left: 2px solid #e4e7eb; }
+  .nrow { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .nrow:hover { border-color: #b2c4ef; }
+  .tg { flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: #f2f4f7; color: #475467; font-size: 12px; }
+  .lv { flex: none; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 700; line-height: 22px; }
+  .lv전사 { background: #1d2939; color: #fff; } .lv부서 { background: var(--blue-bg); color: var(--blue); } .lv개인 { background: #f2f4f7; color: #475467; }
+  .nmain { flex: 1; min-width: 0; }
+  .nmain b { display: block; overflow-wrap: anywhere; }
+  .nmain small { display: block; color: var(--sub); font-size: 12px; overflow-wrap: anywhere; }
+  .krs { margin: 6px 0 2px 32px; }
+  table.kr { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.kr th { padding: 3px 8px; text-align: left; font-size: 11px; font-weight: 600; color: var(--sub); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.kr td { padding: 5px 8px; border-bottom: 1px dashed #eceff3; vertical-align: middle; }
+  table.kr tr.bad td { background: var(--red-bg); color: var(--red); }
+  table.kr .cur { width: 84px; padding: 3px 7px; text-align: right; font-variant-numeric: tabular-nums; }
+  table.kr .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.kr .bar { width: 90px; height: 9px; display: inline-block; vertical-align: middle; }
+  .krnote { margin: 2px 0 0 8px; color: var(--sub); font-size: 12px; }
+
+  /* 창 */
+  .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16px; overflow-y: auto; background: rgba(16, 24, 40, .45); }
+  .mcard { width: min(900px, 100%); margin: auto; padding: 18px 20px; background: #fff; border-radius: 14px; box-shadow: 0 12px 40px rgba(16, 24, 40, .3); }
+  .mhead { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .mhead h3 { flex: 1; margin: 0; font-size: 18px; }
+  .mhead .x { border: 0; background: none; font-size: 18px; color: var(--sub); }
+  .g4 { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .g3 { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 10px; margin-bottom: 10px; }
+  .krrow { display: grid; grid-template-columns: 2.2fr .7fr .8fr .8fr .8fr .7fr 1.2fr 28px; gap: 6px; align-items: end; margin-bottom: 6px; }
+  .krrow.head { align-items: end; font-size: 11px; font-weight: 600; color: var(--sub); margin-bottom: 2px; }
+  .krrow .x { border: 0; background: none; color: var(--sub); font-size: 16px; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .actions .sp { flex: 1; }
+  .askline { flex: 1; min-width: 200px; padding: 8px 12px; border-radius: 8px; background: var(--amber-bg); color: #7a2e0e; }
+  .msg { min-height: 1.4em; margin-top: 8px; color: var(--red); font-size: 13px; }
+  @media (max-width: 720px) { .g4, .g3 { grid-template-columns: 1fr; } .bar { width: 90px; } .krrow { grid-template-columns: 1fr 1fr; } .krrow.head { display: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top"><h2>목표</h2><span class="sub">전사 → 부서 → 개인 목표와 핵심 결과(KR)</span><span class="sp"></span>
+    <label>분기 <select id="qSel" style="width:auto"></select></label><button class="btn" id="newBtn">＋ 목표 추가</button></div>
+  <div class="legend"><span><i class="dot st순조"></i>순조</span><span><i class="dot st주의"></i>주의</span><span><i class="dot st위험"></i>위험</span>
+    <span>색은 "지금까지 시간이 지난 만큼 가야 하는 진척(막대 위 검은 눈금)"과 견줘요 — 뒤처짐 10%p 이내 순조 · 25%p 이내 주의 · 넘으면 위험 (KR 은 기한 기준, 기한이 지났는데 미달이면 위험)</span></div>
+  <div class="errbar" id="err" hidden></div>
+  <div class="warnbar" id="probs" hidden></div>
+  <section class="card"><div id="tree"></div></section>
+</div>
+
+<!-- 목표 쓰기·고치기 -->
+<div class="modal" id="edWrap" hidden>
+  <div class="mcard" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+    <div class="mhead"><h3 id="edTitle">목표 추가</h3><button class="x" id="edX" aria-label="닫기">✕</button></div>
+    <div class="g4">
+      <label class="f"><span>수준</span><select id="fLevel"></select></label>
+      <label class="f"><span>상위 목표</span><select id="fParent"></select></label>
+      <label class="f"><span>분기</span><select id="fQuarter"></select></label>
+    </div>
+    <label class="f"><span>목표 (Objective)</span><input type="text" id="fTitle" maxlength="120" placeholder="이루고 싶은 것을 한 줄로"></label>
+    <div class="g3" style="margin-top:10px">
+      <label class="f"><span>담당자</span><input type="text" id="fOwner" maxlength="30" list="peopleList"></label>
+      <label class="f"><span>부서</span><input type="text" id="fDept" maxlength="30" list="deptList"></label>
+      <label class="f"><span>메모</span><input type="text" id="fNote" maxlength="200" placeholder="(선택)"></label>
+    </div>
+    <datalist id="peopleList"></datalist><datalist id="deptList"></datalist>
+    <div style="margin:12px 0 4px;font-size:13px;font-weight:700">핵심 결과 (KR) <span style="font-weight:400;color:var(--sub);font-size:12px">— 달성률 = (현재 − 시작) ÷ (목표 − 시작). 불량률처럼 낮출수록 좋은 지표는 시작값을 목표값보다 크게 적으면 돼요. 가중치는 상대 비율(비우면 1).</span></div>
+    <div class="krrow head"><span>지표</span><span>단위</span><span>시작값</span><span>목표값</span><span>현재값</span><span>가중치</span><span>기한</span><span></span></div>
+    <div id="krBox"></div>
+    <button class="mini" id="addKr" type="button">＋ KR 추가</button>
+    <div class="msg" id="edMsg" role="alert"></div>
+    <div id="edAct"></div>
+  </div>
+</div>
+
+<script src="/m/db.js"></script>
+<script src="/m/okr-calc.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const NEXT = { 전사: '부서', 부서: '개인' };
+  const MAX_KR = 8;
+  let items = [], people = [], me = {}, quarter = '', collapsed = new Set(), ed = null, ask = false;
+  const showErr = (m) => { $('err').hidden = !m; $('err').textContent = m || ''; };
+  const newId = () => `o${Math.random().toString(16).slice(2, 10).padEnd(8, '0')}`;
+
+  // ---------- 나무 그리기 ----------
+  const stName = (s) => s || 'none';
+  const barHtml = (p, e, st, big) => `<div class="bar st${stName(st)}" title="${p === null ? '계산할 KR 이 없어요' : `진척 ${okr.pct(p)} · 지금쯤 가야 하는 진척 ${okr.pct(e)}`}"><div class="fill" style="width:${p === null ? 0 : Math.round(p * 100)}%"></div>${p === null ? '' : `<i class="pace" style="left:${Math.round(e * 100)}%"></i>`}</div>`;
+
+  function krsHtml(n) {
+    if (!n.krs.length) return n.children.length ? '' : '<div class="krs"><div class="krnote">KR 이 아직 없어요. "수정"에서 핵심 결과를 추가해 보세요.</div></div>';
+    const sumW = n.krs.filter((k) => k.rate !== null).reduce((a, k) => a + okr.weightOf(k.kr), 0);
+    const rows = n.krs.map((k, i) => {
+      if (k.problem) return `<tr class="bad"><td colspan="6">KR ${i + 1}${k.kr && k.kr.metric ? ` "${esc(k.kr.metric)}"` : ''}: ${esc(k.problem)} — 계산에서 뺐어요. "수정"에서 고쳐 주세요.</td></tr>`;
+      const kr = k.kr, unit = esc(kr.unit || ''), w = okr.weightOf(kr), share = sumW > 0 ? Math.round((w / sumW) * 100) : 0;
+      return `<tr><td>${esc(kr.metric)}</td><td class="num">${okr.fmt(okr.startOf(kr))} → ${okr.fmt(kr.target)} ${unit}</td>
+        <td class="num"><input class="cur" type="text" inputmode="decimal" data-o="${esc(n.obj.id)}" data-k="${i}" value="${esc(okr.fmt(kr.current).replace(/,/g, ''))}" aria-label="${esc(kr.metric)} 현재값"> ${unit}</td>
+        <td>${barHtml(k.rate, k.expected, k.status)} <b class="pctk">${okr.pct(k.rate)}</b></td><td class="num">${esc(okr.fmt(w))} <small style="color:var(--sub)">(${share}%)</small></td><td class="num">${esc(kr.due || '-')}</td></tr>`;
+    }).join('');
+    return `<div class="krs"><table class="kr"><thead><tr><th>핵심 결과 (KR)</th><th>시작 → 목표</th><th>현재값</th><th>달성</th><th>가중치</th><th>기한</th></tr></thead><tbody>${rows}</tbody></table>
+      ${n.children.length && n.kr !== null ? `<div class="krnote">자기 KR 달성 ${okr.pct(n.kr)} — 하위 목표 ${n.children.length}개와 함께 평균돼요.</div>` : ''}</div>`;
+  }
+  function nodeHtml(n) {
+    const o = n.obj, id = esc(o.id), shut = collapsed.has(o.id), st = stName(n.status);
+    const meta = [o.owner && `담당 ${o.owner}`, o.dept, n.children.length && `하위 목표 ${n.children.length}개`, o.note].filter(Boolean).map(esc).join(' · ');
+    return `<div class="node" data-id="${id}"><div class="nrow">
+      <button class="tg" data-tg="${id}" aria-label="${shut ? '펼치기' : '접기'}" title="${shut ? '펼치기' : '접기'}">${shut ? '▸' : '▾'}</button><span class="lv lv${esc(o.level)}">${esc(o.level)}</span>
+      <div class="nmain"><b>${esc(o.title)}</b><small>${meta || '&nbsp;'}</small></div>
+      ${barHtml(n.progress, n.expected, n.status)}<span class="pct">${okr.pct(n.progress)}</span><span class="stc st${st}">${n.status || 'KR 없음'}</span>
+      ${NEXT[o.level] ? `<button class="mini" data-add="${id}">＋ 하위</button>` : ''}<button class="mini" data-edit="${id}">수정</button></div>
+      ${shut ? '' : `${krsHtml(n)}${n.children.length ? `<div class="kids">${n.children.map(nodeHtml).join('')}</div>` : ''}`}</div>`;
+  }
+  function render() {
+    const tops = okr.build(items, okr.today(), quarter);
+    $('tree').innerHTML = tops.length ? tops.map(nodeHtml).join('') : `<div class="none">${esc(okr.quarterLabel(quarter))}에는 아직 목표가 없어요. 오른쪽 위 "＋ 목표 추가"를 누르거나, 채팅에서 "이번 분기 품질팀 OKR 초안 짜 줘" 처럼 비서에게 시켜 보세요.</div>`;
+    const ps = okr.problems(items);
+    $('probs').hidden = !ps.length;
+    $('probs').innerHTML = ps.length ? `⚠ 형식이 맞지 않는 곳 ${ps.length}개는 계산에서 뺐어요. data/db/okrs.json 을 비서가 고쳤다면 형식을 확인해 주세요.<ul>${ps.slice(0, 8).map((p) => `<li>${esc(p)}</li>`).join('')}${ps.length > 8 ? `<li>… 외 ${ps.length - 8}개</li>` : ''}</ul>` : '';
+  }
+  function fillQuarters() {
+    const cur = okr.quarterOf(okr.today()), next = (() => { const [y, q] = cur.split('-Q').map(Number); return q === 4 ? `${y + 1}-Q1` : `${y}-Q${q + 1}`; })();
+    const list = [...new Set([...okr.quarters(items, okr.today()), next])].sort();
+    if (!list.includes(quarter)) quarter = list.includes(cur) ? cur : list[0];
+    $('qSel').innerHTML = list.map((q) => `<option value="${q}" ${q === quarter ? 'selected' : ''}>${esc(okr.quarterLabel(q))}${q === cur ? ' (이번 분기)' : ''}</option>`).join('');
+    return list;
+  }
+
+  async function load() {
+    try { items = await db.list('okrs'); showErr(''); }
+    catch (e) { showErr(`목표 자료를 읽지 못했어요: ${e.message} (data/db/okrs.json 을 확인해 주세요)`); items = []; }
+    if (!Array.isArray(items)) items = [];
+    fillQuarters(); render();
+  }
+
+  // ---------- KR 현재값 바로 고치기 ----------
+  async function setCurrent(oid, k, text) {
+    const o = items.find((x) => x && x.id === oid); if (!o) return;
+    const v = Number(String(text).trim().replace(/,/g, ''));
+    if (String(text).trim() === '' || !Number.isFinite(v)) { showErr('현재값은 숫자로 적어 주세요. (예: 1.8)'); return render(); }
+    if (o.krs[k].current === v) return render();
+    const next = { ...o, krs: o.krs.map((kr, i) => (i === k ? { ...kr, current: v } : kr)) };
+    try { await db.save('okrs', oid, next); showErr(''); } catch (e) { showErr(`저장하지 못했어요: ${e.message}`); }
+    await load();
+  }
+
+  // ---------- 목표 쓰기·고치기 ----------
+  const descendants = (id) => { const out = new Set(); const walk = (p) => items.forEach((o) => { if (o && o.parentId === p && !out.has(o.id)) { out.add(o.id); walk(o.id); } }); walk(id); return out; };
+  function openEditor(id, preset) {
+    const o = id ? items.find((x) => x && x.id === id) : null;
+    ask = false;
+    ed = o ? { id: o.id, level: o.level, parentId: o.parentId || '', quarter: o.quarter, title: o.title, owner: o.owner || '', dept: o.dept || '', note: o.note || '', krs: (o.krs || []).map((k) => ({ ...k })), hasKids: items.some((x) => x && x.parentId === o.id) }
+      : { id: null, level: (preset && preset.level) || '전사', parentId: (preset && preset.parentId) || '', quarter: (preset && preset.quarter) || quarter, title: '', owner: me.name || '', dept: (preset && preset.dept) || me.dept || '', note: '', krs: [{ metric: '', unit: '', start: 0, target: '', current: 0, weight: 1, due: '' }], hasKids: false };
+    $('edTitle').textContent = o ? '목표 고치기' : '목표 추가';
+    $('fLevel').innerHTML = okr.LEVELS.map((l) => `<option ${l === ed.level ? 'selected' : ''}>${l}</option>`).join('');
+    $('fLevel').disabled = ed.hasKids; $('fLevel').title = ed.hasKids ? '하위 목표가 있어서 수준을 바꿀 수 없어요' : '';
+    const qs = okr.quarters(items, okr.today()); if (!qs.includes(ed.quarter)) qs.push(ed.quarter);
+    $('fQuarter').innerHTML = [...new Set(qs)].sort().map((q) => `<option value="${q}" ${q === ed.quarter ? 'selected' : ''}>${esc(okr.quarterLabel(q))}</option>`).join('');
+    $('fTitle').value = ed.title; $('fOwner').value = ed.owner; $('fDept').value = ed.dept; $('fNote').value = ed.note;
+    fillParents(); renderKrs(); renderEdAct(); $('edMsg').textContent = ''; $('edWrap').hidden = false; $('fTitle').focus();
+  }
+  function fillParents() {
+    ed.level = $('fLevel').value || ed.level; ed.quarter = $('fQuarter').value || ed.quarter;
+    const bad = ed.id ? new Set([ed.id, ...descendants(ed.id)]) : new Set();
+    const choices = okr.parentChoices(items, ed.level, ed.quarter).filter((o) => !bad.has(o.id));
+    if (!choices.some((o) => o.id === ed.parentId)) ed.parentId = '';
+    $('fParent').innerHTML = `<option value="">(없음 — 맨 위 목표)</option>${choices.map((o) => `<option value="${esc(o.id)}" ${o.id === ed.parentId ? 'selected' : ''}>${esc(o.level)} · ${esc(o.title)}</option>`).join('')}`;
+  }
+  const fv = (v) => (v === undefined || v === null ? '' : String(v));
+  function renderKrs() {
+    $('krBox').innerHTML = ed.krs.map((k, i) => `<div class="krrow" data-i="${i}">
+      <label class="f"><input type="text" data-f="metric" value="${esc(k.metric)}" maxlength="60" placeholder="예: 불량률" aria-label="지표 ${i + 1}"></label>
+      <input type="text" data-f="unit" value="${esc(k.unit)}" maxlength="10" placeholder="%" aria-label="단위">
+      <input type="text" data-f="start" inputmode="decimal" value="${esc(fv(k.start))}" aria-label="시작값">
+      <input type="text" data-f="target" inputmode="decimal" value="${esc(fv(k.target))}" aria-label="목표값">
+      <input type="text" data-f="current" inputmode="decimal" value="${esc(fv(k.current))}" aria-label="현재값">
+      <input type="text" data-f="weight" inputmode="decimal" value="${esc(fv(k.weight))}" aria-label="가중치">
+      <input type="date" data-f="due" value="${esc(k.due || '')}" aria-label="기한">
+      <button class="x" data-rm="${i}" type="button" aria-label="KR 빼기">✕</button></div>`).join('');
+    $('addKr').disabled = ed.krs.length >= MAX_KR;
+  }
+  function readKrs() { // 화면의 칸 → ed.krs (글자 그대로. 숫자 검사는 저장할 때)
+    $('krBox').querySelectorAll('.krrow').forEach((row) => { const k = ed.krs[Number(row.dataset.i)]; row.querySelectorAll('[data-f]').forEach((inp) => { k[inp.dataset.f] = inp.value; }); });
+  }
+  const num = (s) => { const t = String(s ?? '').trim().replace(/,/g, ''); return t === '' ? null : Number.isFinite(Number(t)) ? Number(t) : NaN; };
+  function renderEdAct() {
+    const del = ed.id;
+    $('edAct').innerHTML = ask
+      ? `<div class="actions"><div class="askline">이 목표와 KR 을 지울까요? 되돌릴 수 없어요.</div><button class="btn red" id="askOk">네, 지웁니다</button><button class="btn ghost" id="askNo">취소</button></div>`
+      : `<div class="actions"><button class="btn ghost" id="edCancel">닫기</button>${del ? '<button class="btn ghost" id="edDel">지우기</button>' : ''}<span class="sp"></span><button class="btn" id="edSave">저장</button></div>`;
+    if (ask) { $('askNo').onclick = () => { ask = false; renderEdAct(); }; $('askOk').onclick = doDelete; return; }
+    $('edCancel').onclick = closeEditor; $('edSave').onclick = doSave;
+    if (del) $('edDel').onclick = () => { if (ed.hasKids) { $('edMsg').textContent = '하위 목표가 있어서 지울 수 없어요. 먼저 하위 목표를 지우거나 다른 상위 목표로 옮겨 주세요.'; return; } ask = true; renderEdAct(); };
+  }
+  const closeEditor = () => { $('edWrap').hidden = true; ed = null; ask = false; };
+  async function doDelete() {
+    $('askOk').disabled = true;
+    try { await db.remove('okrs', ed.id); closeEditor(); await load(); } catch (e) { $('edMsg').textContent = e.message; $('askOk').disabled = false; }
+  }
+  async function doSave() {
+    readKrs(); ed.title = $('fTitle').value.trim(); ed.level = $('fLevel').value; ed.quarter = $('fQuarter').value; ed.parentId = $('fParent').value;
+    const msg = (m) => { $('edMsg').textContent = m; };
+    if (!ed.title) return msg('목표를 한 줄로 적어 주세요.');
+    const period = okr.periodOf(ed.quarter), krs = [];
+    for (let i = 0; i < ed.krs.length; i++) {
+      const k = ed.krs[i], blank = !String(k.metric).trim() && !String(k.target).trim();
+      if (blank) continue; // 지표 이름도 목표값도 안 적은 KR 줄(시작값 0·현재값 0·가중치 1 은 기본값일 뿐)은 그냥 뺀다
+      const start = num(k.start), target = num(k.target), current = num(k.current), weight = num(k.weight);
+      const kr = { metric: String(k.metric).trim(), unit: String(k.unit).trim(), start: start === null ? 0 : start, target, current: current === null ? (start === null ? 0 : start) : current, weight: weight === null ? 1 : weight, due: k.due || period.end };
+      const why = okr.krProblem(kr);
+      if (why) return msg(`KR ${i + 1}: ${why}. (숫자 칸을 확인해 주세요)`);
+      krs.push(kr);
+    }
+    const item = { id: ed.id || newId(), level: ed.level, parentId: ed.parentId, title: ed.title, owner: $('fOwner').value.trim(), dept: $('fDept').value.trim(), quarter: ed.quarter, note: $('fNote').value.trim(), krs };
+    $('edSave').disabled = true;
+    try { await db.save('okrs', item.id, item); if (item.quarter !== quarter) { quarter = item.quarter; } closeEditor(); await load(); }
+    catch (e) { msg(e.message); $('edSave').disabled = false; }
+  }
+
+  // ---------- 연결 ----------
+  $('newBtn').onclick = () => openEditor(null, { quarter });
+  $('qSel').onchange = () => { quarter = $('qSel').value; render(); };
+  $('tree').onclick = (e) => {
+    const t = e.target.closest('[data-tg]'), a = e.target.closest('[data-add]'), d = e.target.closest('[data-edit]');
+    if (t) { const id = t.dataset.tg; collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id); render(); }
+    else if (a) { const p = items.find((x) => x && x.id === a.dataset.add); if (p) openEditor(null, { level: NEXT[p.level], parentId: p.id, quarter: p.quarter, dept: p.dept }); }
+    else if (d) openEditor(d.dataset.edit);
+  };
+  $('tree').onchange = (e) => { const c = e.target.closest('.cur'); if (c) setCurrent(c.dataset.o, Number(c.dataset.k), c.value); };
+  $('fLevel').onchange = $('fQuarter').onchange = () => { ed.level = $('fLevel').value; ed.quarter = $('fQuarter').value; fillParents(); };
+  $('addKr').onclick = () => { readKrs(); ed.krs.push({ metric: '', unit: '', start: 0, target: '', current: 0, weight: 1, due: '' }); renderKrs(); };
+  $('krBox').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { readKrs(); ed.krs.splice(Number(b.dataset.rm), 1); renderKrs(); } };
+  $('edX').onclick = closeEditor;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('edWrap').hidden) closeEditor(); });
+
+  (async () => {
+    try { me = await (await fetch('/api/me')).json(); } catch { /* 이름 채우기만 못 함 */ }
+    try { people = await (await fetch('/api/messenger/people')).json(); } catch { people = []; }
+    $('peopleList').innerHTML = people.map((p) => `<option value="${esc(p.name)}">${esc(p.dept)}</option>`).join('');
+    $('deptList').innerHTML = [...new Set(people.map((p) => p.dept).filter(Boolean))].map((d) => `<option value="${esc(d)}"></option>`).join('');
+    await load();
+    db.watch('okrs', load); // 비서가 파일을 고치거나 다른 사람이 바꾸면 바로 따라 바뀐다
+  })();
+</script>
+</body>
+</html>
