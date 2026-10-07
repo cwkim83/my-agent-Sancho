@@ -45,6 +45,18 @@ async function mail(msg) {
 async function run(msg) {
   out({ type: 'system', subtype: 'init' });
   if (msg.startsWith('[메일 정리]') || msg.startsWith('[답장 초안]')) return mail(msg);
+  if (msg.startsWith('[회의록 정리]')) { // 회의록 정리 흉내: 받아쓴 글에 /실패해 가 있으면 죽고, /느리게 는 2초, /잘못된형식 은 JSON 이 아닌 글, /펜스 는 앞뒤에 말과 코드 블록 표시를 붙인다. 받은 도구·글을 점검용 파일에 남긴다
+    require('fs').appendFileSync('fake-meeting-args.log', JSON.stringify({ tools: a.indexOf('--tools') >= 0 ? a[a.indexOf('--tools') + 1] : null, prompt: msg }) + '\n');
+    if (msg.includes('/실패해')) { process.stderr.write('boom: 회의록 정리 중 죽음'); process.exit(3); }
+    if (msg.includes('/느리게')) await sleep(2000);
+    if (msg.includes('/한번만실패') && !require('fs').existsSync('fake-meeting-once.flag')) { require('fs').writeFileSync('fake-meeting-once.flag', ''); process.stderr.write('boom: 첫 번째만 죽음'); process.exit(3); } // 다시 정리하면 성공하는 경우
+    const text = msg.includes('/잘못된형식') ? '회의록을 잘 정리했어요! (JSON 이 아님)' : (() => {
+      const j = JSON.stringify({ 안건: ['압력용기 도면 2차 검토', '납기 일정 확인', '<b>태그</b> & 기호'], 논의: [{ 주제: '도면 치수', 내용: ['노즐 위치 확인', '용접 순서 조정'] }, { 주제: '', 내용: ['주제 없는 논의는 버려진다'] }],
+        결정: ['도면 2차안으로 확정한다', '납기는 11월 20일로 유지한다', '길'.repeat(400)], 할일: [{ 할일: '도면 2차안 수정', 담당: '김민준', 기한: '2026-10-09' }, { 할일: '견적 재요청', 담당: '이서연', 기한: '2026-13-45' }, { 할일: '검사 계획서 작성', 담당: '박지호', 기한: '' }, { 할일: '', 담당: '없음', 기한: '' }], 군더더기: '모르는 칸은 버려진다' });
+      return msg.includes('/펜스') ? '네, 정리했어요.\n```json\n' + j + '\n```\n끝' : j;
+    })();
+    delta(text); out({ type: 'result', subtype: 'success', is_error: false, result: text }); return;
+  }
   if (msg.startsWith('[메신저 채널 질문]')) { // 메신저 "@산초" 흉내: 질문에 /실패해 가 있으면 죽고, /느리게 가 있으면 2초 걸린 뒤 평소처럼 (받은 글을 그대로 되울려서 서버가 무엇을 건넸는지 보인다)
     const q = msg.slice(msg.lastIndexOf('\n요청: ')); // 맨 끝의 "요청: …" 만 본다 (앞의 대화 속 글에는 반응하지 않는다)
     if (q.includes('/실패해')) { process.stderr.write('boom: 메신저 답변 중 죽음'); process.exit(3); }

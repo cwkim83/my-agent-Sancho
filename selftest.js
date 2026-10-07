@@ -173,6 +173,7 @@ async function run() {
   await runSafety5(ck);
   const people = await runUsers(ck);
   await runMessenger(ck, people);
+  await runMeeting(ck, people);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -299,7 +300,7 @@ async function runSeed(ck) {
   const get = async (n) => (await fetch(`${BASE}/api/db/${n}`, { headers: H })).json();
   const dbDir = path.join(dir, 'db');
   const snapshot = () => ['events', 'projects', 'tasks', 'notices'].map((n) => fs.readFileSync(path.join(dbDir, `${n}.json`), 'utf8')).join('\n');
-  for (const f of fs.readdirSync(dbDir)) if (f.endsWith('.json') && f !== 'sample-mails.json') fs.unlinkSync(path.join(dbDir, f)); // 앞 검사가 남긴 자료를 치우고 빈 저장소에서 시작 (연습용 메일 파일은 서버가 켜질 때 놓은 것이라 남긴다)
+  for (const f of fs.readdirSync(dbDir)) if (f.endsWith('.json') && f !== 'sample-mails.json' && f !== 'rooms.json') fs.unlinkSync(path.join(dbDir, f)); // 앞 검사가 남긴 자료를 치우고 빈 저장소에서 시작 (연습용 메일 파일은 서버가 켜질 때 놓은 것이라 남긴다)
 
   const r1 = await seed();
   const added = (await r1.json()).added || {};
@@ -2124,6 +2125,123 @@ async function runMessenger(ck, { CM, CS, CC }) { // CM 김민준(설계·일반
     && main.includes('/m/messenger.html') && main.includes("showMessenger(arg)"));
   [sT, sM, sS, sC, sDb].forEach((s) => s.ac.abort());
   await call('DELETE', '/api/db/projects/mp-proj', ck);
+}
+
+// 회의록: 회의실 예약표(30분 칸·겹치면 막기·일정에도 들어감) · 받아쓴 글 → 비서가 표로 정리 → db/meetings.json + 워드(파일함) · 할 일은 등록할 때만 tasks 에 · 녹취 원문 보관
+async function runMeeting(ck, { CM, CS, CC }) { // CM 김민준(일반) · CS 이서연(일반) · CC 최관리(관리자) · ck 첫 관리자
+  const call = (m, u, c, b) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json', Cookie: c }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const { until } = schedKit(ck);
+  const J = (r) => r.json();
+  const list = async (name, c = ck) => J(await call('GET', `/api/db/${name}`, c));
+  const book = (c, o = {}) => call('POST', '/api/rooms/book', c, { roomId: 'room1', date: '2030-03-04', start: '10:00', end: '11:00', title: '주간 설계 회의', ...o });
+  const OV = require('./officeview.js');
+
+  // 회의실·회의록 자료는 고치는 길이 이 화면의 서버 주소뿐
+  const rooms = await list('rooms');
+  check('회의실: 처음부터 2개(대회의실·소회의실, 운영 시간 있음)가 db/rooms.json 에 있고, 일반 업무 자료 주소로는 읽기만 되고(PUT·DELETE 는 403) 회의록 자료도 같음',
+    rooms.length === 2 && rooms.map((r) => r.id).join() === 'room1,room2' && rooms.every((r) => r.name && r.open === '08:00' && r.close === '19:00')
+    && (await Promise.all([['PUT', '/api/db/rooms/room1', { name: '바꿈' }], ['DELETE', '/api/db/rooms/room1'], ['PUT', '/api/db/meetings/x', { title: '몰래' }], ['DELETE', '/api/db/meetings/x']].map(([m, u, b]) => call(m, u, ck, b)))).every((r) => r.status === 403)
+    && (await call('GET', '/api/db/meetings', ck)).status === 200 && (await list('rooms')).length === 2);
+  check('로그인 없이는 예약·회의록 만들기·다시 정리·할 일 등록·지우기 모두 401', (await Promise.all([['POST', '/api/rooms/book'], ['DELETE', '/api/rooms/book/x'], ['POST', '/api/meetings'], ['POST', '/api/meetings/x/retry'], ['POST', '/api/meetings/x/tasks'], ['DELETE', '/api/meetings/x']]
+    .map(([m, u]) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{}' : undefined })))).every((r) => r.status === 401));
+
+  // ---- 예약
+  const r1 = await book(CM), b1 = await J(r1);
+  const evs = await list('events');
+  check('예약하면 일정(db/events.json)에도 들어감: 회의실 이름·시각·예약자가 적히고 일정 메뉴가 읽는 같은 자료에서 보임', r1.status === 200 && evs.some((e) => e.id === b1.event.id && e.roomId === 'room1' && e.kind === '회의' && e.date === '2030-03-04' && e.start === '10:00' && e.end === '11:00' && e.place === '본사 3층 대회의실' && e.bookedBy === 'minjun' && e.bookedByName === '김민준' && e.title === '주간 설계 회의'));
+  const bads = [{ roomId: 'nope' }, { date: '2030-02-31' }, { date: '' }, { title: '  ' }, { title: '가'.repeat(61) }, { start: '10:15' }, { end: '11:20' }, { start: '11:00', end: '10:30' }, { start: '10:00', end: '10:00' }, { start: '07:30', end: '08:30' }, { start: '18:30', end: '19:30' }, { projectId: 'nope' }, { start: 'x' }];
+  const badR = await Promise.all(bads.map((o) => book(CS, { start: '14:00', end: '15:00', ...o })));
+  check('예약 입력 검사: 없는 회의실·없는 날·빈 제목·긴 제목·30분 단위 아님·끝이 시작보다 빠름·운영 시간(08:00~19:00) 밖·없는 프로젝트는 모두 400 이고 예약이 안 생김', badR.every((r) => r.status === 400) && (await list('events')).filter((e) => e.roomId).length === 1);
+  const clash = [['10:00', '11:00'], ['09:30', '10:30'], ['10:30', '11:30'], ['09:00', '12:00'], ['10:30', '11:00']];
+  const cr = await Promise.all(clash.map(([start, end]) => book(CS, { start, end }))), why = (await cr[0].json()).error;
+  check('겹치면 막음(409): 똑같은 시간·앞쪽 걸침·뒤쪽 걸침·통째로 감쌈·안에 들어감 모두, 이유에 시각·제목·예약자가 나옴', cr.every((r) => r.status === 409) && why.includes('10:00~11:00') && why.includes('주간 설계 회의') && why.includes('김민준')
+    && (await list('events')).filter((e) => e.roomId).length === 1);
+  const ok2 = [await book(CS, { start: '11:00', end: '12:00', title: '바로 이어서' }), await book(CS, { start: '09:00', end: '10:00', title: '바로 앞' }), await book(CS, { roomId: 'room2', title: '다른 회의실' }), await book(CS, { date: '2030-03-05', title: '다른 날' })];
+  check('맞닿는 시간(11:00 시작·10:00 끝)·다른 회의실·다른 날은 예약됨', ok2.every((r) => r.status === 200));
+  const race = await Promise.all([book(CM, { start: '15:00', end: '16:00', title: '동시 1' }), book(CS, { start: '15:00', end: '16:00', title: '동시 2' })]);
+  check('같은 칸을 두 사람이 동시에 잡으면 한 명만 됨(200 하나·409 하나)', race.map((r) => r.status).sort().join() === '200,409' && (await list('events')).filter((e) => e.roomId === 'room1' && e.start === '15:00').length === 1);
+  await call('PUT', '/api/db/events/plain-e1', ck, { title: '회의실 없는 보통 일정', kind: '회의', date: '2030-03-04', endDate: '2030-03-04', start: '10:00', end: '11:00', place: '본사 3층 대회의실' });
+  check('예약 취소: 예약한 사람과 관리자만(남이 하면 403), 취소하면 일정에서도 사라지고, 회의실 예약이 아닌 보통 일정은 이 주소로 못 지움(404)',
+    (await call('DELETE', `/api/rooms/book/${b1.event.id}`, CS)).status === 403 && (await call('DELETE', `/api/rooms/book/plain-e1`, ck)).status === 404 && (await list('events')).some((e) => e.id === 'plain-e1')
+    && (await call('DELETE', `/api/rooms/book/${b1.event.id}`, CM)).status === 200 && !(await list('events')).some((e) => e.id === b1.event.id) && (await call('DELETE', `/api/rooms/book/${b1.event.id}`, CM)).status === 404
+    && (await call('DELETE', `/api/rooms/book/${(await J(ok2[0])).event.id}`, ck)).status === 200);
+  await call('DELETE', '/api/db/events/plain-e1', ck);
+
+  // ---- 회의록 만들기
+  await call('PUT', '/api/db/projects/mp-meet', ck, { name: '메신저 시험 프로젝트2', client: '가나다전자', status: '진행중', progress: 0, start: '2030-01-01', due: '2030-12-31', owner: '' });
+  const SCRIPT = '[14:01:05] 김민준: 오늘은 압력용기 도면 2차안을 검토하겠습니다.\n[14:02:40] 이서연: 노즐 위치가 바뀌어서 견적을 다시 받아야 합니다.\n[14:04:10] 박지호: 검사 계획서는 제가 쓰겠습니다.';
+  const mk = (c, o = {}) => call('POST', '/api/meetings', c, { title: '가나다전자 압력용기 도면 2차 검토 회의', date: '2030-03-04', attendees: '김민준, 이서연,박지호, 김민준', roomId: 'room1', projectId: 'mp-meet', transcript: SCRIPT, source: 'paste', ...o });
+  const mbad = await Promise.all([{ transcript: '   ' }, { transcript: '가'.repeat(60001) }, { date: '2030-02-31' }, { roomId: 'nope' }, { projectId: 'nope' }, { attendees: Array.from({ length: 21 }, (_, i) => `사람${i}`) }, { start: '25:00' }].map((o) => mk(CM, o)));
+  check('회의록 만들기 입력 검사: 빈 글·6만 자 초과·없는 날짜·없는 회의실·없는 프로젝트·참석자 21명·이상한 시각은 400 이고 아무것도 안 만들어짐', mbad.every((r) => r.status === 400) && (await list('meetings')).length === 0);
+  const t0 = Date.now(), c1 = await mk(CM), m1 = (await J(c1)).meeting;
+  check('만들면 바로 "정리 중" 으로 저장되고(정리를 기다리지 않음) 녹취 원문·참석자(쉼표로 나눠 중복 뺌)·회의실 이름·프로젝트가 적힘', c1.status === 200 && Date.now() - t0 < 1500 && m1.status === '정리 중' && m1.transcript === SCRIPT && m1.attendees.join() === '김민준,이서연,박지호' && m1.place === '본사 3층 대회의실' && m1.projectId === 'mp-meet' && m1.createdBy === 'minjun' && m1.source === '붙여넣기');
+  const done1 = await until(async () => ((await list('meetings')).find((m) => m.id === m1.id) || {}).status === '정리됨', 15000), M1 = (await list('meetings')).find((m) => m.id === m1.id) || { summary: {} };
+  const S = M1.summary || {};
+  check('비서가 정리해 오면 서버가 모양을 검사해 저장: 안건·논의(주제 없는 것 버림)·결정(긴 글 300자로)·할 일(빈 할 일 버림, 이상한 날짜는 빈칸), 모르는 칸은 버림 — 그리고 녹취 원문은 그대로 붙어 있음',
+    done1 && S.agenda.length === 3 && S.discussion.length === 1 && S.discussion[0].topic === '도면 치수' && S.discussion[0].points.length === 2 && S.decisions.length === 3 && S.decisions[2].length === 300
+    && S.actions.length === 3 && S.actions[0].task === '도면 2차안 수정' && S.actions[0].owner === '김민준' && S.actions[0].due === '2026-10-09' && S.actions[1].due === '' && S.actions[2].owner === '박지호' && !JSON.stringify(M1).includes('군더더기') && M1.transcript === SCRIPT);
+  const args = fs.readFileSync(path.join(dir, 'fake-meeting-args.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)), a1 = args[0];
+  check('비서에게는 도구도 권한도 없이 받아쓴 글만 줌(--tools ""), 글에는 제목·날짜·참석자·날짜 계산용 달력이 같이 감', a1.tools === '' && a1.prompt.startsWith('[회의록 정리]') && a1.prompt.includes('노즐 위치가 바뀌어서') && a1.prompt.includes('참석자: 김민준, 이서연, 박지호') && a1.prompt.includes('2030-03-04(월)') && a1.prompt.includes('날짜 계산용 달력') && a1.prompt.includes('2030-03-24'));
+
+  // ---- 워드 회의록 (파일함)
+  const docName = M1.docFile, docPath = path.join(dir, '파일함', docName || 'x');
+  let doc = null; try { doc = OV.viewFile(docPath, 'docx'); } catch { /* 아래에서 실패로 */ }
+  const tbl = doc ? doc.blocks.filter((b) => b.t === 'table') : [], flat = doc ? JSON.stringify(doc.blocks) : '';
+  check('워드 회의록이 파일함에 만들어짐(회의록_제목_날짜.docx): 제목·정보 표·안건·논의·결정·할 일(담당·기한) 표·녹취 원문이 들어 있고 특수 문자(<b> &)도 그대로 보임', docName === '회의록_가나다전자 압력용기 도면 2차 검토 회의_2030-03-04.docx' && !!doc && doc.blocks[0].text === '회의록' && tbl.length === 5
+    && tbl[0].rows.some((r) => r[0] === '참석자' && r[1].includes('박지호')) && tbl[0].rows.some((r) => r[0] === '장소' && r[1] === '본사 3층 대회의실') && tbl[4].rows[1].join('|') === '1|도면 2차안 수정|김민준|2026-10-09' && tbl[4].rows[2][3] === '-'
+    && flat.includes('도면 2차안으로 확정한다') && flat.includes('<b>태그</b> & 기호') && flat.includes('[14:02:40] 이서연') && tbl[2].rows[1][1].includes('노즐 위치 확인'));
+  const py = require('child_process').spawnSync('python', ['-c', 'import docx,sys; d=docx.Document(sys.argv[1]); print(len(d.tables), len(d.paragraphs))', docPath], { encoding: 'utf8' });
+  console.log(`      (파이썬 docx 로 열어 보기: ${py.status === 0 ? `열림 — 표 ${py.stdout.trim().split(' ')[0]}개` : '이 PC 에 파이썬 docx 가 없어 건너뜀'})`);
+  if (py.status === 0) check('워드 회의록은 파이썬 python-docx 로도 열림(표 5개)', py.stdout.trim().startsWith('5 '));
+  const dl = await fetch(`${BASE}/api/files/${encodeURIComponent('파일함')}/${encodeURIComponent(docName)}?dl=1`, { headers: { Cookie: CS } }), op = await call('POST', '/api/files/open', CM, { box: '파일함', name: docName });
+  check('파일함의 워드 파일은 받기(내려받기)·열기가 됨', dl.status === 200 && dl.headers.get('content-disposition').includes('attachment') && (await dl.arrayBuffer()).byteLength > 1500 && op.status === 200);
+
+  // ---- 할 일 등록 (물어본 뒤에만)
+  const tk = (c, id, b) => call('POST', `/api/meetings/${id}/tasks`, c, b);
+  check('할 일 등록: 정리 직후에는 tasks 에 아무것도 안 들어가 있음(등록은 주인이 눌러야), 만든 사람이 아닌 일반 사용자는 403, 잘못된 번호는 400', !(await list('tasks')).some((t) => t.meetingId === m1.id) && (await tk(CS, m1.id, { indexes: [0] })).status === 403 && (await tk(CM, m1.id, { indexes: [9] })).status === 400 && (await tk(CM, m1.id, { indexes: ['0'] })).status === 400);
+  const g1 = await J(await tk(CM, m1.id, { indexes: [0, 2, 0] })), T = (await list('tasks')).filter((t) => t.meetingId === m1.id);
+  check('고른 할 일만 tasks 에 등록됨(같은 번호를 두 번 보내도 한 번): 할 일 이름·담당·기한·프로젝트·상태("할 일")·어느 회의에서 왔는지(meetingId), 기한이 없으면 빈칸', g1.created === 2 && T.length === 2
+    && T.some((t) => t.title === '도면 2차안 수정' && t.owner === '김민준' && t.due === '2026-10-09' && t.status === '할 일' && t.projectId === 'mp-meet') && T.some((t) => t.title === '검사 계획서 작성' && t.owner === '박지호' && t.due === ''));
+  const g2 = await J(await tk(CM, m1.id, { indexes: [0, 1, 2] })), g3 = await J(await tk(CM, m1.id, {}));
+  const M1b = (await list('meetings')).find((m) => m.id === m1.id);
+  check('이미 등록한 할 일은 다시 만들지 않고(남은 것만), 회의록에 "등록됨" 표시(taskId)가 남음, 다 등록하면 0개', g2.created === 1 && g3.created === 0 && (await list('tasks')).filter((t) => t.meetingId === m1.id).length === 3 && M1b.summary.actions.every((a) => /^t[0-9a-f]{10}$/.test(a.taskId)));
+  check('관리자는 남이 만든 회의록의 할 일도 등록할 수 있음(관리자 chief 는 200)', (await tk(CC, m1.id, {})).status === 200);
+
+  // ---- 실패와 다시 정리
+  const fail = (await J(await mk(CM, { title: '죽는 회의', transcript: '[10:00:00] /실패해 안녕' }))).meeting;
+  await until(async () => ((await list('meetings')).find((m) => m.id === fail.id) || {}).status === '정리 실패', 10000);
+  const F = (await list('meetings')).find((m) => m.id === fail.id);
+  check('비서가 죽으면 "정리 실패" 와 쉬운 이유가 남고, 녹취 원문은 그대로 보관됨(받아쓴 글을 잃지 않음)', F.status === '정리 실패' && F.error.includes('Claude 가 오류로 끝났습니다') && F.transcript.includes('/실패해') && F.summary === null && F.docFile === '');
+  const bad = (await J(await mk(CM, { title: '형식 틀린 회의', transcript: '[10:00:00] /잘못된형식' }))).meeting;
+  await until(async () => ((await list('meetings')).find((m) => m.id === bad.id) || {}).status === '정리 실패', 10000);
+  check('비서의 답이 JSON 이 아니면 "정리 실패"(표로 바꾸지 못했어요) — 이상한 글이 저장되지 않음', ((await list('meetings')).find((m) => m.id === bad.id) || {}).error.includes('표로 바꾸지 못했어요') && ((await list('meetings')).find((m) => m.id === bad.id) || {}).summary === null);
+  const once = (await J(await mk(CM, { title: '한 번만 실패하는 회의', transcript: '[10:00:00] /한번만실패 안녕' }))).meeting;
+  await until(async () => ((await list('meetings')).find((m) => m.id === once.id) || {}).status === '정리 실패', 10000);
+  const rt = (c, id) => call('POST', `/api/meetings/${id}/retry`, c);
+  check('다시 정리: 만든 사람과 관리자만(남은 403), 눌러서 성공하면 정리됨으로 바뀌고 워드 파일도 만들어짐', (await rt(CS, once.id)).status === 403 && (await rt(CM, once.id)).status === 200
+    && await until(async () => ((await list('meetings')).find((m) => m.id === once.id) || {}).status === '정리됨', 10000) && !!((await list('meetings')).find((m) => m.id === once.id) || {}).docFile);
+  check('이미 할 일을 등록한 회의록은 다시 정리할 수 없음(409) — 등록한 할 일이 겹쳐 생기지 않게', (await rt(CM, m1.id)).status === 409);
+  const fence = (await J(await mk(CM, { title: '코드블록으로 답하는 회의', transcript: '[10:00:00] /펜스 안녕' }))).meeting;
+  check('비서가 앞뒤에 말이나 코드 블록 표시(```)를 붙여도 JSON 만 뽑아 정리됨', await until(async () => ((await list('meetings')).find((m) => m.id === fence.id) || {}).status === '정리됨', 10000));
+  const slow = (await J(await mk(CM, { title: '느린 회의', transcript: '[10:00:00] /느리게 안녕', projectId: undefined }))).meeting;
+  check('정리하는 중에는 할 일 등록·다시 정리가 409(아직 안 끝남)', (await tk(CM, slow.id, {})).status === 409 && (await rt(CM, slow.id)).status === 409 && await until(async () => ((await list('meetings')).find((m) => m.id === slow.id) || {}).status === '정리됨', 10000));
+  const dup = (await J(await mk(CM, {}))).meeting;
+  await until(async () => ((await list('meetings')).find((m) => m.id === dup.id) || {}).status === '정리됨', 10000);
+  check('같은 제목·날짜의 회의록 파일은 덮어쓰지 않고 번호가 붙음(-2)', ((await list('meetings')).find((m) => m.id === dup.id) || {}).docFile === '회의록_가나다전자 압력용기 도면 2차 검토 회의_2030-03-04-2.docx' && fs.existsSync(docPath));
+
+  // ---- 보기·지우기 권한
+  check('회의록은 업무 자료라 누구나 읽음(이서연도 김민준의 회의록 목록을 봄)', (await list('meetings', CS)).some((m) => m.id === m1.id));
+  const del = (c, id) => call('DELETE', `/api/meetings/${id}`, c);
+  const tasksBefore = (await list('tasks')).length;
+  check('회의록 지우기: 만든 사람과 관리자만(이서연은 403), 지워도 파일함의 워드 파일과 이미 등록한 할 일은 그대로, 없는 회의록은 404',
+    (await del(CS, m1.id)).status === 403 && (await del(CM, m1.id)).status === 200 && !(await list('meetings')).some((m) => m.id === m1.id) && fs.existsSync(docPath) && (await list('tasks')).length === tasksBefore && (await del(CM, m1.id)).status === 404 && (await del(CC, fail.id)).status === 200);
+
+  // ---- 화면
+  const pg = await fetch(BASE + '/m/meeting.html', { headers: { Cookie: CM } }), html = await pg.text(), main = await (await fetch(BASE + '/', { headers: { Cookie: CM } })).text();
+  check('화면: /m/meeting.html 은 로그인해야 열리고(401), 회의실 예약표·한국어 음성 인식(ko-KR·계속 받아쓰기)·녹취 시작/일시정지/끝내기·붙여넣기 칸·녹취 원문·할 일 등록 질문이 있으며, 음성이 외부 서버로 간다는 안내가 있음',
+    pg.status === 200 && (await fetch(BASE + '/m/meeting.html')).status === 401 && ['회의실 예약표', 'SpeechRecognition', "'ko-KR'", 'continuous = true', 'interimResults = true', '회의 녹취 시작', '일시정지', '끝내기', '받아쓴 글 붙여넣기', '녹취 원문 보기', '할 일을 등록할까요?', '구글·마이크로소프트 서버', '/api/rooms/book', '/api/meetings'].every((w) => html.includes(w)));
+  check('메인 화면: 회의록 메뉴가 그 화면을 띄우고 마이크를 쓸 수 있게 허용(allow="microphone")', main.includes('/m/meeting.html') && main.includes('showMeeting()') && main.includes('allow="microphone"'));
+  await call('DELETE', '/api/db/projects/mp-meet', ck);
 }
 
 // 여러 사람이 쓰기 전의 data/ (chats·memory.md·schedule.json·journal/ 이 data/ 바로 아래) 를 첫 관리자의 개인 폴더로 옮기는가: 옮기기만 하고 지우지 않고, 이미 있는 건 덮어쓰지 않는다

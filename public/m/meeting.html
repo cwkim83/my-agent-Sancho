@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>회의록</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --amber: #b54708; --amber-bg: #fef0c7; --green: #067647; --green-bg: #dcfae6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; overflow-y: auto; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  [hidden] { display: none !important; }
+  .page { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .top { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+  .top h2 { margin: 0; font-size: 20px; }
+  .top .sub { color: var(--sub); font-size: 13px; }
+  .card { margin-bottom: 16px; padding: 14px 16px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+  .card h3 { margin: 0; font-size: 16px; }
+  .cardhead { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 6px; }
+  .hint { margin: 2px 0 10px; color: var(--sub); font-size: 13px; }
+  .btn { padding: 7px 14px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font-weight: 600; }
+  .btn:disabled { background: #98a2b3; }
+  .btn.ghost { background: #fff; color: #344054; border: 1px solid #d0d5dd; }
+  .btn.ghost:hover:not(:disabled) { background: #f2f4f7; }
+  .btn.red { background: #d92d20; } .btn.amber { background: #dc6803; } .btn.dark { background: #475467; }
+  .mini { padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; }
+  .mini:hover { background: var(--blue-bg); }
+  input[type=text], input[type=date], select, textarea { width: 100%; padding: 7px 10px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; background: #fff; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  label.f { display: block; font-size: 12px; font-weight: 600; color: #344054; }
+  label.f > :not(span) { margin-top: 3px; font-weight: 400; }
+
+  /* 회의실 예약표 */
+  .rtabs { display: flex; gap: 6px; }
+  .rtabs button { padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: #344054; }
+  .rtabs button.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+  .weeknav { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  #weekLabel { min-width: 150px; text-align: center; color: #344054; font-weight: 600; }
+  .rwrap { overflow: auto; max-height: 520px; border: 1px solid var(--line); border-radius: 10px; }
+  .rg { display: grid; grid-template-columns: 52px repeat(7, minmax(92px, 1fr)); min-width: 780px; }
+  .rg .hd { position: sticky; top: 0; z-index: 3; padding: 4px 6px; background: #f9fafb; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); text-align: center; font-size: 12px; color: var(--sub); }
+  .rg .hd.today { background: var(--blue-bg); color: var(--blue); font-weight: 700; }
+  .rg .hd b { display: block; color: var(--text); font-size: 13px; }
+  .times { position: relative; }
+  .times span { position: absolute; right: 6px; transform: translateY(-50%); color: var(--sub); font-size: 11px; }
+  .col { position: relative; border-left: 1px solid var(--line); cursor: pointer;
+    background-image: linear-gradient(#e4e7eb 1px, transparent 1px), linear-gradient(#f0f2f5 1px, transparent 1px); background-size: 100% 48px, 100% 24px; }
+  .col.today { background-color: #fbfdff; }
+  .col.past { background-color: #fafafa; }
+  .ghost { position: absolute; left: 2px; right: 2px; height: 24px; border-radius: 6px; background: rgba(47, 111, 237, .15); border: 1px dashed var(--blue); color: var(--blue); font-size: 11px; padding: 0 6px; pointer-events: none; }
+  .bk { position: absolute; left: 3px; right: 3px; padding: 2px 6px; overflow: hidden; border-radius: 6px; background: #d9e6ff; border-left: 4px solid var(--blue); color: #1d3f91; font-size: 12px; line-height: 1.3; cursor: pointer; }
+  .bk.mine { background: #cdeed8; border-left-color: #12b76a; color: #05603a; }
+  .bk b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bk:hover { box-shadow: 0 1px 6px rgba(16, 24, 40, .25); }
+
+  /* 녹취 */
+  .metaf { display: grid; grid-template-columns: 2fr 1fr 2fr 1.2fr 1.4fr; gap: 10px; margin: 8px 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .chip { padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: #475467; font-size: 12px; line-height: 22px; }
+  .chip.on { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); }
+  .tabs { display: flex; gap: 4px; margin: 12px 0 10px; border-bottom: 1px solid var(--line); }
+  .tabs button { padding: 7px 14px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--sub); font-weight: 600; }
+  .tabs button.on { color: var(--blue); border-bottom-color: var(--blue); }
+  .ctl { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  #recState { margin-left: 6px; font-weight: 600; color: var(--sub); }
+  #recState.rec { color: #d92d20; } #recState.rec::before { content: '● '; animation: blink 1s infinite; }
+  #recState.pause { color: var(--amber); }
+  @keyframes blink { 50% { opacity: .2; } }
+  .note { margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; background: var(--amber-bg); color: var(--amber); font-size: 13px; }
+  .note.err { background: var(--red-bg); color: var(--red); }
+  .tl { margin-top: 10px; max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: #fcfcfd; }
+  .tl .l { display: flex; gap: 8px; align-items: flex-start; padding: 4px 10px; border-bottom: 1px solid #f0f2f5; }
+  .tl .l time { flex: none; color: var(--sub); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .tl .l .tx { flex: 1; min-width: 0; overflow-wrap: anywhere; outline: none; }
+  .tl .l .tx:focus { background: var(--blue-bg); }
+  .tl .l button { flex: none; border: 0; background: none; color: #98a2b3; }
+  .tl .l button:hover { color: var(--red); }
+  .tl .empty { padding: 18px; text-align: center; color: #98a2b3; }
+  .tl .interim { padding: 4px 10px; color: #98a2b3; font-style: italic; }
+  .pasteTa { min-height: 150px; resize: vertical; }
+
+  /* 회의록 목록 + 자세히 */
+  .mincols { display: grid; grid-template-columns: 250px 1fr; gap: 14px; margin-top: 8px; }
+  #mlist { display: flex; flex-direction: column; gap: 6px; align-content: start; max-height: 640px; overflow-y: auto; }
+  .mi { display: block; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; color: inherit; }
+  .mi:hover { border-color: #c4cad4; } .mi.sel { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
+  .mi b { display: block; overflow-wrap: anywhere; } .mi small { color: var(--sub); }
+  .st { padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #f2f4f7; color: var(--sub); }
+  .st.ok { background: var(--green-bg); color: var(--green); } .st.run { background: var(--blue-bg); color: var(--blue); } .st.fail { background: var(--red-bg); color: var(--red); }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid #c4d4fb; border-top-color: var(--blue); border-radius: 50%; animation: sp 0.8s linear infinite; vertical-align: -2px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  #mdetail { min-width: 0; }
+  #mdetail h4 { margin: 14px 0 6px; font-size: 14px; }
+  #mdetail .dh { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px 10px; }
+  #mdetail .dh h3 { flex: 1; min-width: 200px; overflow-wrap: anywhere; font-size: 18px; }
+  #mdetail .meta { margin: 4px 0 0; color: var(--sub); font-size: 13px; }
+  table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.t th, table.t td { padding: 6px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  table.t th { background: #f2f4f7; white-space: nowrap; }
+  table.t td.n { width: 44px; text-align: center; color: var(--sub); }
+  table.t td ul { margin: 0; padding-left: 16px; }
+  .reg { color: var(--green); font-weight: 600; white-space: nowrap; }
+  .fcard { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
+  .fcard .fi { flex: 1; min-width: 0; } .fcard .fi b { display: block; overflow-wrap: anywhere; } .fcard .fi small { color: var(--sub); }
+  .fcard a, .fcard button { padding: 5px 10px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font-size: 13px; text-decoration: none; }
+  details.raw { margin-top: 12px; } details.raw summary { cursor: pointer; font-weight: 600; }
+  details.raw pre { margin: 6px 0 0; padding: 10px; max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fcfcfd; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.6 Consolas, "Malgun Gothic", monospace; }
+  .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  .toast { position: fixed; z-index: 30; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 9px 16px; border-radius: 10px; background: #1d2939; color: #fff; font-size: 14px; box-shadow: 0 8px 24px rgba(16, 24, 40, .3); }
+
+  .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(16, 24, 40, .45); }
+  .mc { width: min(460px, 100%); max-height: 90vh; overflow-y: auto; padding: 18px 20px; background: #fff; border-radius: 14px; box-shadow: 0 20px 48px rgba(16, 24, 40, .3); }
+  .mc h3 { margin: 0 0 10px; } .mc .g { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; } .mc .g .full { grid-column: 1 / -1; }
+  .mc .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .mc .err { margin-top: 8px; min-height: 1.4em; color: var(--red); font-size: 13px; }
+  .askl { margin: 8px 0; padding: 0; list-style: none; } .askl li { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid #f0f2f5; } .askl li small { color: var(--sub); display: block; }
+
+  @media (max-width: 800px) {
+    .metaf { grid-template-columns: 1fr 1fr; } .mincols { grid-template-columns: 1fr; } #mlist { max-height: 220px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top"><h2>회의록</h2><span class="sub">회의실 예약 · 회의 녹취 · 회의록 정리</span></div>
+
+  <section class="card">
+    <div class="cardhead"><h3>🏢 회의실 예약표</h3><div class="rtabs" id="roomTabs"></div>
+      <div class="weeknav"><button class="mini" id="prevW" aria-label="지난 주">◀</button><button class="mini" id="thisW">이번 주</button><button class="mini" id="nextW" aria-label="다음 주">▶</button><span id="weekLabel"></span></div></div>
+    <div class="hint">빈 칸을 누르면 예약해요 (30분 단위). 예약하면 일정 메뉴에도 들어가고, 같은 시간에 겹치면 막혀요. 초록색은 내가 예약한 것이에요.</div>
+    <div class="rwrap"><div class="rg" id="rg"></div></div>
+  </section>
+
+  <section class="card">
+    <div class="cardhead"><h3>🎙 회의 녹취</h3></div>
+    <div class="metaf">
+      <label class="f"><span>회의 제목</span><input type="text" id="mTitle" maxlength="80" placeholder="예: 압력용기 도면 2차 검토 회의"></label>
+      <label class="f"><span>날짜</span><input type="date" id="mDate"></label>
+      <label class="f"><span>참석자 (쉼표로 구분)</span><input type="text" id="mAtt" placeholder="이름을 쓰거나 아래에서 눌러 고르세요"><div class="chips" id="peopleChips"></div></label>
+      <label class="f"><span>회의실 (선택)</span><select id="mRoom"></select></label>
+      <label class="f"><span>프로젝트 (선택)</span><select id="mProj"></select></label>
+    </div>
+    <div class="tabs"><button class="on" data-tab="rec">🎙 음성으로 받아쓰기</button><button data-tab="paste">📋 받아쓴 글 붙여넣기</button></div>
+
+    <div id="recPane">
+      <div class="ctl">
+        <button class="btn red" id="recStart">🎙 회의 녹취 시작</button>
+        <button class="btn amber" id="recPause" hidden>⏸ 일시정지</button>
+        <button class="btn dark" id="recStop" hidden>■ 끝내기 → 회의록 만들기</button>
+        <button class="mini" id="recDrop" hidden>녹취 버리기</button>
+        <span id="recState"></span>
+      </div>
+      <div class="note" id="srNote" hidden></div>
+      <div class="tl" id="tl"><div class="empty">"회의 녹취 시작"을 누르고 말하면 말한 시각과 함께 여기에 쌓여요. 잘못 알아들은 글은 눌러서 고칠 수 있어요.</div></div>
+    </div>
+    <div id="pastePane" hidden>
+      <textarea class="pasteTa" id="pasteTa" placeholder="회의를 받아쓴 글을 여기에 붙여 넣으세요. (마이크가 없거나 음성 인식이 안 되는 브라우저에서도 쓸 수 있어요)&#10;예: [14:01] 김민준: 오늘은 도면 2차안을 검토하겠습니다…"></textarea>
+      <div class="acts"><button class="btn" id="pasteGo">붙여넣은 글로 회의록 만들기</button><span class="hint" id="pasteN" style="margin:0"></span></div>
+    </div>
+    <div class="hint" style="margin-top:10px">끝내면 받아쓴 글을 비서가 안건·논의·결정·할 일(담당·기한) 표로 정리하고, 워드 회의록을 파일함에 만들어요. 녹취 원문은 회의록에 붙여 보관해요. 할 일은 확인한 뒤에 등록해요.</div>
+  </section>
+
+  <section class="card">
+    <div class="cardhead"><h3>📝 회의록</h3></div>
+    <div class="mincols"><div id="mlist"></div><div id="mdetail"></div></div>
+  </section>
+</div>
+
+<div class="modal" id="bookModal" hidden>
+  <form class="mc" id="bookForm" role="dialog" aria-modal="true" aria-labelledby="bkT">
+    <h3 id="bkT">회의실 예약</h3>
+    <div class="g">
+      <label class="f full"><span>회의실</span><input type="text" id="bkRoom" disabled></label>
+      <label class="f"><span>날짜</span><input type="date" id="bkDate" required></label>
+      <label class="f"><span>프로젝트 (선택)</span><select id="bkProj"></select></label>
+      <label class="f"><span>시작</span><select id="bkStart"></select></label>
+      <label class="f"><span>끝</span><select id="bkEnd"></select></label>
+      <label class="f full"><span>회의 제목</span><input type="text" id="bkTitle" maxlength="60" required></label>
+    </div>
+    <div class="err" id="bkErr" role="alert"></div>
+    <div class="row"><button type="button" class="btn ghost" id="bkCancel">닫기</button><button class="btn" id="bkOk" type="submit">예약하기</button></div>
+  </form>
+</div>
+<div class="modal" id="bkDetail" hidden><div class="mc" id="bkDetailBody" role="dialog" aria-modal="true"></div></div>
+<div class="modal" id="askModal" hidden><div class="mc" id="askBody" role="dialog" aria-modal="true"></div></div>
+
+<script src="/m/db.js"></script>
+<script src="/m/cal.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pad = (n) => String(n).padStart(2, '0');
+  const hmsOf = (iso) => { const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+  const minOf = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3));
+  const hmOf = (n) => `${pad(Math.floor(n / 60))}:${pad(n % 60)}`;
+  const ROW = 24; // 30분 한 칸의 높이(px)
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  let me = null, people = [], rooms = [], events = [], projects = [], meetings = [], roomId = null, week = cal.weekStart(cal.ymd(new Date())), selId = null, awaitMade = null;
+
+  const api = async (url, opt) => {
+    const r = await fetch(url, opt);
+    if (r.status === 401) { (window.top || window).location.replace('/'); throw new Error('login'); }
+    return r;
+  };
+  const jcall = async (method, url, body) => { const r = await api(url, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }); return { ok: r.ok, status: r.status, j: await r.json().catch(() => ({})) }; };
+  const toast = (t) => { const d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); };
+
+  // ======================= 회의실 예약표 =======================
+  function renderRooms() {
+    $('roomTabs').innerHTML = rooms.map((r) => `<button data-r="${esc(r.id)}" class="${r.id === roomId ? 'on' : ''}">${esc(r.name)} <small>${esc(r.place || '')}${r.seats ? ` · ${r.seats}명` : ''}</small></button>`).join('');
+    $('roomTabs').querySelectorAll('button').forEach((b) => (b.onclick = () => { roomId = b.dataset.r; renderRooms(); }));
+    const room = rooms.find((r) => r.id === roomId), days = cal.weekDays(week), today = cal.ymd(new Date());
+    $('weekLabel').textContent = `${days[0].slice(5).replace('-', '/')} ~ ${days[6].slice(5).replace('-', '/')}`;
+    if (!room) { $('rg').innerHTML = '<div style="grid-column:1/-1;padding:20px;color:#98a2b3">회의실이 없어요. data/db/rooms.json 을 확인해 주세요.</div>'; return; }
+    const open = minOf(room.open || '08:00'), close = minOf(room.close || '19:00'), rows = (close - open) / 30, H = rows * ROW;
+    const dn = '월화수목금토일';
+    const mine = (e) => me && e.bookedBy === me.username;
+    $('rg').innerHTML = `<div class="hd"></div>${days.map((d, i) => `<div class="hd ${d === today ? 'today' : ''}"><b>${dn[i]}</b>${d.slice(5).replace('-', '/')}</div>`).join('')}
+      <div class="times" style="height:${H}px">${Array.from({ length: Math.floor(rows / 2) + 1 }, (_, h) => `<span style="top:${h * 2 * ROW}px">${hmOf(open + h * 60)}</span>`).join('')}</div>
+      ${days.map((d) => `<div class="col ${d === today ? 'today' : d < today ? 'past' : ''}" data-date="${d}" style="height:${H}px">${events.filter((e) => e && e.roomId === room.id && e.date === d).map((e) => {
+        const s = cal.isTime(e.start) ? minOf(e.start) : open, z = cal.isTime(e.end) ? minOf(e.end) : close;
+        return `<div class="bk ${mine(e) ? 'mine' : ''}" data-id="${esc(e.id)}" style="top:${(s - open) / 30 * ROW}px;height:${Math.max((z - s) / 30 * ROW - 2, 14)}px" title="${esc(e.title)}"><b>${esc(e.title)}</b>${esc(e.start || '')}${e.end ? `~${esc(e.end)}` : ''} ${esc(e.bookedByName || '')}</div>`;
+      }).join('')}</div>`).join('')}`;
+    $('rg').querySelectorAll('.col').forEach((col) => {
+      let ghost = null;
+      const slotOf = (ev) => Math.max(0, Math.min(rows - 1, Math.floor((ev.clientY - col.getBoundingClientRect().top) / ROW)));
+      col.onmousemove = (ev) => { if (ev.target.closest('.bk')) { if (ghost) ghost.hidden = true; return; } if (!ghost) { ghost = document.createElement('div'); ghost.className = 'ghost'; col.appendChild(ghost); } const k = slotOf(ev); ghost.hidden = false; ghost.style.top = `${k * ROW}px`; ghost.textContent = hmOf(open + k * 30); };
+      col.onmouseleave = () => { if (ghost) ghost.hidden = true; };
+      col.onclick = (ev) => { if (ev.target.closest('.bk')) return; openBook(col.dataset.date, open + slotOf(ev) * 30, room); };
+    });
+    $('rg').querySelectorAll('.bk').forEach((b) => (b.onclick = () => openBookDetail(events.find((e) => e && e.id === b.dataset.id))));
+  }
+  const slotOptions = (room, from, to, sel) => { const o = []; for (let m = from; m <= to; m += 30) o.push(`<option value="${hmOf(m)}" ${m === sel ? 'selected' : ''}>${hmOf(m)}</option>`); return o.join(''); };
+  function openBook(date, startMin, room) {
+    const open = minOf(room.open || '08:00'), close = minOf(room.close || '19:00'), end = Math.min(startMin + 60, close);
+    $('bkRoom').value = `${room.name}${room.place ? ` (${room.place})` : ''}`; $('bkRoom').dataset.id = room.id; $('bkDate').value = date; $('bkTitle').value = ''; $('bkErr').textContent = '';
+    $('bkStart').innerHTML = slotOptions(room, open, close - 30, startMin); $('bkEnd').innerHTML = slotOptions(room, open + 30, close, end);
+    $('bkProj').innerHTML = `<option value="">(없음)</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}`;
+    $('bookModal').hidden = false; $('bkTitle').focus();
+  }
+  $('bkStart').onchange = () => { const s = minOf($('bkStart').value); if (minOf($('bkEnd').value) <= s) $('bkEnd').value = hmOf(s + 30); };
+  $('bkCancel').onclick = () => ($('bookModal').hidden = true);
+  $('bookForm').onsubmit = async (e) => {
+    e.preventDefault(); $('bkOk').disabled = true; $('bkErr').textContent = '';
+    try {
+      const r = await jcall('POST', '/api/rooms/book', { roomId: $('bkRoom').dataset.id, date: $('bkDate').value, start: $('bkStart').value, end: $('bkEnd').value, title: $('bkTitle').value, projectId: $('bkProj').value || undefined });
+      if (!r.ok) throw new Error(r.j.error || '예약하지 못했어요.');
+      $('bookModal').hidden = true; toast(`✓ 예약했어요: ${r.j.event.place} ${r.j.event.start}~${r.j.event.end} (일정에도 들어갔어요)`); await loadEvents();
+    } catch (er) { if (er.message !== 'login') $('bkErr').textContent = er.message; }
+    $('bkOk').disabled = false;
+  };
+  function openBookDetail(ev) {
+    if (!ev) return;
+    const can = me.role === 'admin' || ev.bookedBy === me.username, proj = projects.find((p) => p.id === ev.projectId);
+    $('bkDetailBody').innerHTML = `<h3>${esc(ev.title)}</h3><p style="margin:0;color:#475467">${esc(ev.place)}<br>${esc(ev.date)} ${esc(ev.start || '')}~${esc(ev.end || '')}<br>예약자: ${esc(ev.bookedByName || '-')}${proj ? `<br>프로젝트: ${esc(proj.name)}` : ''}</p>
+      <div class="row"><button class="btn ghost" id="bdClose">닫기</button>${can ? '<button class="btn red" id="bdCancel">예약 취소</button>' : ''}</div>`;
+    $('bkDetail').hidden = false; $('bdClose').onclick = () => ($('bkDetail').hidden = true);
+    if (can) $('bdCancel').onclick = async () => {
+      if (!confirm(`이 예약을 취소할까요?\n\n${ev.title} (${ev.date} ${ev.start}~${ev.end})\n일정에서도 지워져요.`)) return;
+      const r = await jcall('DELETE', `/api/rooms/book/${encodeURIComponent(ev.id)}`);
+      $('bkDetail').hidden = true; if (!r.ok) alert(r.j.error || '취소하지 못했어요.'); else toast('예약을 취소했어요.'); loadEvents();
+    };
+  }
+  [$('bookModal'), $('bkDetail'), $('askModal')].forEach((m) => (m.onclick = (e) => { if (e.target === m) m.hidden = true; }));
+  $('prevW').onclick = () => { week = cal.addDays(week, -7); renderRooms(); };
+  $('nextW').onclick = () => { week = cal.addDays(week, 7); renderRooms(); };
+  $('thisW').onclick = () => { week = cal.weekStart(cal.ymd(new Date())); renderRooms(); };
+  async function loadEvents() { try { events = arr(await db.list('events')); } catch { events = []; } renderRooms(); }
+
+  // ======================= 녹취 (브라우저 음성 인식) =======================
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let state = 'idle', rec = null, lines = [], recStart = null, accMs = 0, tickAt = 0, timer = null, interim = '', consented = false, quickFails = [], saveT = null;
+  const draftKey = () => `sancho-meeting-draft:${me ? me.username : ''}`;
+  const lsGet = () => { try { return JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch { return null; } };
+  const lsSet = (v) => { try { v ? localStorage.setItem(draftKey(), JSON.stringify(v)) : localStorage.removeItem(draftKey()); } catch { /* 저장 못 해도 녹취는 계속된다 */ } };
+  const saveDraft = () => { clearTimeout(saveT); saveT = setTimeout(() => lsSet(lines.length || state !== 'idle' ? { lines, recStart, accMs: elapsed(), form: formVals() } : null), 300); }; // 새로고침해도 받아쓴 글을 잃지 않게
+  const elapsed = () => accMs + (state === 'rec' ? Date.now() - tickAt : 0);
+  const clock = (ms) => { const s = Math.floor(ms / 1000); return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`; };
+  const formVals = () => ({ title: $('mTitle').value, date: $('mDate').value, att: $('mAtt').value, room: $('mRoom').value, proj: $('mProj').value });
+  function note(t, err) { $('srNote').hidden = !t; $('srNote').textContent = t || ''; $('srNote').className = `note ${err ? 'err' : ''}`; }
+  function renderRec() {
+    $('recStart').hidden = state !== 'idle'; $('recPause').hidden = state === 'idle'; $('recStop').hidden = state === 'idle'; $('recDrop').hidden = state === 'idle' && !lines.length;
+    $('recPause').textContent = state === 'pause' ? '▶ 이어서 녹취' : '⏸ 일시정지';
+    $('recState').className = state; $('recState').textContent = state === 'rec' ? `녹취 중 ${clock(elapsed())}` : state === 'pause' ? `일시정지 ${clock(elapsed())}` : '';
+    $('tl').innerHTML = lines.length || interim
+      ? `${lines.map((l, i) => `<div class="l"><time>${esc(hmsOf(l.t))}</time><span class="tx" contenteditable="plaintext-only" data-i="${i}">${esc(l.text)}</span><button data-del="${i}" title="이 줄 지우기" aria-label="이 줄 지우기">✕</button></div>`).join('')}${interim ? `<div class="interim">${esc(interim)}</div>` : ''}`
+      : '<div class="empty">"회의 녹취 시작"을 누르고 말하면 말한 시각과 함께 여기에 쌓여요. 잘못 알아들은 글은 눌러서 고칠 수 있어요.</div>';
+    $('tl').querySelectorAll('.tx').forEach((el) => (el.onblur = () => { const t = el.textContent.trim(); if (t) lines[el.dataset.i].text = t; else lines.splice(el.dataset.i, 1); renderRec(); saveDraft(); }));
+    $('tl').querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => { lines.splice(Number(b.dataset.del), 1); renderRec(); saveDraft(); }));
+    $('tl').scrollTop = $('tl').scrollHeight;
+  }
+  function startRecognition() {
+    const r0 = new SR(); rec = r0; r0.lang = 'ko-KR'; r0.continuous = true; r0.interimResults = true; // 이 인식기가 아직 "현재"일 때만 반응한다 (멈췄다 바로 이어 켜도 옛것이 끼어 두 번 받아쓰지 않게)
+    r0.onresult = (e) => {
+      if (rec !== r0) return;
+      interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i], t = (r[0].transcript || '').trim();
+        if (r.isFinal) { if (t) lines.push({ t: new Date().toISOString(), text: t }); } else interim += r[0].transcript;
+      }
+      renderRec(); saveDraft();
+    };
+    r0.onerror = (e) => {
+      if (rec !== r0) return;
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { fail('마이크를 쓸 수 없어요. 주소창의 마이크 허용을 확인해 주세요. (또는 "받아쓴 글 붙여넣기"를 쓰세요)'); }
+      else if (e.error === 'audio-capture') fail('마이크를 찾을 수 없어요. 마이크가 연결돼 있는지 확인해 주세요. (또는 "받아쓴 글 붙여넣기"를 쓰세요)');
+      else if (e.error === 'network') fail('음성 인식 서버에 연결하지 못했어요. 인터넷 연결을 확인하거나 "받아쓴 글 붙여넣기"를 쓰세요.');
+      else note(`음성 인식 오류: ${e.error}`, true);
+    };
+    r0.onend = () => { // 크롬은 조용하면 스스로 멈춘다 → 녹취 중이면 바로 다시 켠다
+      if (rec !== r0) return;
+      interim = ''; if (state !== 'rec') { renderRec(); return; }
+      const now = Date.now(); quickFails = quickFails.filter((t) => now - t < 4000); quickFails.push(now);
+      if (quickFails.length > 6) return fail('음성 인식이 자꾸 멈춰요. 마이크와 인터넷 연결을 확인해 주세요. (받아쓴 글은 그대로 있어요)');
+      setTimeout(() => { if (state === 'rec') try { startRecognition(); } catch { /* 이미 켜져 있음 */ } }, 250);
+    };
+    r0.start();
+  }
+  function fail(msg) { pauseRec(); note(msg, true); }
+  function startRec() {
+    if (lines.length && !confirm('받아쓴 글이 남아 있어요. 지우고 새로 시작할까요?\n(아니오 = 이어서 녹취)')) { resumeRec(); return; }
+    if (!consented && !confirm('음성 인식은 브라우저(Chrome·Edge)가 말소리를 구글·마이크로소프트 서버로 보내 글로 바꾸는 방식이에요.\n회의 내용이 회사 밖으로 나갈 수 있어요.\n\n민감한 회의라면 "취소"를 누르고, 받아쓴 글을 붙여넣는 방법을 쓰세요.\n계속할까요?')) return;
+    consented = true; lines = []; interim = ''; accMs = 0; recStart = new Date().toISOString(); quickFails = []; note('');
+    state = 'rec'; tickAt = Date.now(); startRecognition(); renderRec(); saveDraft();
+  }
+  function pauseRec() { if (state === 'rec') accMs += Date.now() - tickAt; state = 'pause'; try { rec && rec.stop(); } catch { /* */ } interim = ''; renderRec(); saveDraft(); }
+  function resumeRec() { note(''); quickFails = []; state = 'rec'; tickAt = Date.now(); try { startRecognition(); } catch { /* */ } renderRec(); saveDraft(); }
+  function stopRec() {
+    if (state === 'rec') accMs += Date.now() - tickAt;
+    const endedAt = new Date().toISOString(); state = 'idle'; try { rec && rec.stop(); } catch { /* */ } interim = '';
+    if (!lines.length) { renderRec(); return alert('받아쓴 내용이 아직 없어요. 말한 내용이 글로 보이는지 확인해 주세요.'); }
+    const text = lines.map((l) => `[${hmsOf(l.t)}] ${l.text}`).join('\n');
+    submitMeeting({ source: 'record', transcript: text, start: hmsOf(recStart).slice(0, 5), end: hmsOf(endedAt).slice(0, 5) }, () => { lines = []; recStart = null; accMs = 0; lsSet(null); renderRec(); });
+  }
+  $('recStart').onclick = startRec;
+  $('recPause').onclick = () => (state === 'rec' ? pauseRec() : resumeRec());
+  $('recStop').onclick = stopRec;
+  $('recDrop').onclick = () => { if (!confirm('받아쓴 글을 지울까요? 되돌릴 수 없어요.')) return; state = 'idle'; try { rec && rec.stop(); } catch { /* */ } lines = []; interim = ''; accMs = 0; lsSet(null); note(''); renderRec(); };
+  setInterval(() => { if (state === 'rec') $('recState').textContent = `녹취 중 ${clock(elapsed())}`; }, 1000);
+  document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => { document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b)); $('recPane').hidden = b.dataset.tab !== 'rec'; $('pastePane').hidden = b.dataset.tab !== 'paste'; }));
+  $('pasteTa').oninput = () => ($('pasteN').textContent = $('pasteTa').value.trim() ? `${$('pasteTa').value.trim().length.toLocaleString('ko-KR')}자` : '');
+  $('pasteGo').onclick = () => { const t = $('pasteTa').value.trim(); if (!t) return alert('받아쓴 글을 먼저 붙여 넣어 주세요.'); submitMeeting({ source: 'paste', transcript: t }, () => { $('pasteTa').value = ''; $('pasteN').textContent = ''; }); };
+  ['mTitle', 'mDate', 'mAtt', 'mRoom', 'mProj'].forEach((id) => $(id).addEventListener('input', saveDraft));
+
+  async function submitMeeting(extra, onDone) { // 받아쓴 글 + 위쪽 정보를 서버로: 바로 "정리 중"인 회의록이 만들어지고, 정리는 뒤에서 된다
+    $('recStop').disabled = $('pasteGo').disabled = true;
+    try {
+      const r = await jcall('POST', '/api/meetings', { title: $('mTitle').value, date: $('mDate').value, attendees: $('mAtt').value, roomId: $('mRoom').value || undefined, projectId: $('mProj').value || undefined, ...extra });
+      if (!r.ok) throw new Error(r.j.error || '회의록을 만들지 못했어요.');
+      onDone(); $('mTitle').value = ''; selId = r.j.meeting.id; awaitMade = selId; toast('받아쓴 글을 비서에게 넘겼어요. 정리하는 동안 기다려 주세요.');
+      await loadMeetings(); $('mlist').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      if (e.message !== 'login') { alert(e.message); if (state === 'idle' && lines.length) { state = 'pause'; renderRec(); } } // 못 보냈어도 받아쓴 글은 그대로 둔다
+    }
+    $('recStop').disabled = $('pasteGo').disabled = false;
+  }
+
+  // ======================= 회의록 목록·자세히 =======================
+  const canEdit = (m) => me && (me.role === 'admin' || m.createdBy === me.username);
+  const sortedMeetings = () => [...meetings].filter((m) => m && typeof m === 'object' && m.id).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  async function loadMeetings() {
+    try { meetings = arr(await db.list('meetings')); } catch { meetings = []; }
+    if (!sortedMeetings().some((m) => m.id === selId)) selId = (sortedMeetings()[0] || {}).id || null;
+    renderMeetings();
+    const m = meetings.find((x) => x && x.id === awaitMade);
+    if (m && m.status === '정리됨') { awaitMade = null; if (canEdit(m) && arr((m.summary || {}).actions).some((a) => !a.taskId)) askTasks(m); }
+    else if (m && m.status === '정리 실패') awaitMade = null;
+  }
+  function renderMeetings() {
+    const list = sortedMeetings();
+    $('mlist').innerHTML = list.length ? list.map((m) => `<button class="mi ${m.id === selId ? 'sel' : ''}" data-id="${esc(m.id)}"><b>${esc(m.title)}</b><small>${esc(m.date)} · ${esc(m.createdByName || '')}</small><br>${m.status === '정리됨' ? '<span class="st ok">정리됨</span>' : m.status === '정리 실패' ? '<span class="st fail">정리 실패</span>' : '<span class="st run"><span class="spin"></span> 정리 중</span>'}</button>`).join('')
+      : '<div class="hint">아직 회의록이 없어요. 위에서 회의를 녹취하거나 받아쓴 글을 붙여넣어 보세요.</div>';
+    $('mlist').querySelectorAll('.mi').forEach((b) => (b.onclick = () => { selId = b.dataset.id; renderMeetings(); }));
+    const m = list.find((x) => x.id === selId); $('mdetail').innerHTML = m ? detailHtml(m) : '<div class="hint" style="margin-top:20px">왼쪽에서 회의록을 고르면 표로 정리된 내용이 보여요.</div>';
+    if (m) wireDetail(m);
+  }
+  const table = (head, rows, cls = '') => `<table class="t ${cls}"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+  function detailHtml(m) {
+    const S = m.summary && typeof m.summary === 'object' ? m.summary : null, edit = canEdit(m), acts = arr(S && S.actions);
+    const when = `${esc(m.date)}${m.start ? ` ${esc(m.start)}${m.end ? `~${esc(m.end)}` : ''}` : ''}`, proj = projects.find((p) => p.id === m.projectId);
+    const head = `<div class="dh"><h3>${esc(m.title)}</h3>${m.status === '정리됨' ? '<span class="st ok">정리됨</span>' : m.status === '정리 실패' ? '<span class="st fail">정리 실패</span>' : '<span class="st run"><span class="spin"></span> 비서가 정리하는 중…</span>'}</div>
+      <div class="meta">${when}${m.place ? ` · ${esc(m.place)}` : ''}${proj ? ` · 프로젝트 ${esc(proj.name)}` : ''} · 참석자 ${esc(arr(m.attendees).join(', ') || '-')} · 만든 사람 ${esc(m.createdByName || '')} · ${esc(m.source || '')}</div>`;
+    let body = '';
+    if (m.status === '정리 실패') body = `<div class="note err" style="margin-top:10px">⚠ ${esc(m.error || '정리하지 못했어요.')} 받아쓴 글(녹취 원문)은 아래에 그대로 있어요.</div>`;
+    else if (!S) body = '<div class="hint" style="margin-top:10px">받아쓴 글을 읽고 안건·논의·결정·할 일을 표로 정리하고 있어요. 보통 10~40초 걸려요.</div>';
+    else {
+      const unreg = acts.filter((a) => !a.taskId).length;
+      body = `<h4>1. 안건</h4>${arr(S.agenda).length ? table(['번호', '안건'], arr(S.agenda).map((a, i) => `<tr><td class="n">${i + 1}</td><td>${esc(a)}</td></tr>`)) : '<div class="hint">(없음)</div>'}
+        <h4>2. 논의</h4>${arr(S.discussion).length ? table(['주제', '논의 내용'], arr(S.discussion).map((d) => `<tr><td style="width:28%"><b>${esc(d.topic)}</b></td><td><ul>${arr(d.points).map((p) => `<li>${esc(p)}</li>`).join('')}</ul></td></tr>`)) : '<div class="hint">(없음)</div>'}
+        <h4>3. 결정 사항</h4>${arr(S.decisions).length ? table(['번호', '결정'], arr(S.decisions).map((a, i) => `<tr><td class="n">${i + 1}</td><td>${esc(a)}</td></tr>`)) : '<div class="hint">(없음)</div>'}
+        <h4>4. 할 일 (담당·기한)</h4>${acts.length ? table(['', '할 일', '담당', '기한', '할 일 등록'], acts.map((a, i) => `<tr><td class="n">${edit && !a.taskId ? `<input type="checkbox" data-act="${i}" checked aria-label="등록할 할 일 선택">` : i + 1}</td><td>${esc(a.task)}</td><td>${esc(a.owner || '-')}</td><td>${esc(a.due || '-')}</td><td>${a.taskId ? '<span class="reg">✓ 등록됨</span>' : '<span style="color:#98a2b3">아직</span>'}</td></tr>`)) : '<div class="hint">(없음)</div>'}
+        ${acts.length && edit ? `<div class="acts"><button class="btn" id="regBtn" ${unreg ? '' : 'disabled'}>${unreg ? '선택한 할 일을 할 일(tasks)에 등록' : '모두 등록했어요'}</button><span class="hint" style="margin:0">등록하면 대시보드 "마감 임박"·달력·프로젝트에 나와요.</span></div>` : ''}`;
+    }
+    const doc = m.docFile ? `<div class="fcard"><span style="font-size:26px">📄</span><div class="fi"><b>${esc(m.docFile)}</b><small>워드 회의록 · 파일함</small></div><a href="/api/files/${encodeURIComponent('파일함')}/${encodeURIComponent(m.docFile)}?dl=1" download>⬇ 받기</a><button type="button" id="openDoc">열기</button></div>` : (m.docError ? `<div class="note err">⚠ ${esc(m.docError)}</div>` : '');
+    const raw = `<details class="raw"><summary>녹취 원문 보기 (${esc(String(m.transcript || '').split('\n').length)}줄 · ${esc(m.source || '')})</summary><pre>${esc(m.transcript || '')}</pre></details>`;
+    const acts2 = edit ? `<div class="acts">${m.status !== '정리 중' ? '<button class="mini" id="retryBtn">다시 정리</button>' : ''}<button class="mini" id="delBtn" style="color:var(--red)">회의록 삭제</button></div>` : '';
+    return head + body + doc + raw + acts2;
+  }
+  function wireDetail(m) {
+    const q = (id) => $('mdetail').querySelector(`#${id}`);
+    if (q('regBtn')) q('regBtn').onclick = () => registerTasks(m, [...$('mdetail').querySelectorAll('input[data-act]:checked')].map((c) => Number(c.dataset.act)));
+    if (q('openDoc')) q('openDoc').onclick = async (ev) => { ev.target.disabled = true; const r = await jcall('POST', '/api/files/open', { box: '파일함', name: m.docFile }); ev.target.disabled = false; if (!r.ok) alert(r.j.error || '열지 못했어요. ⬇ 받기로 내려받아 열어 주세요.'); };
+    if (q('retryBtn')) q('retryBtn').onclick = async () => { const r = await jcall('POST', `/api/meetings/${encodeURIComponent(m.id)}/retry`); if (!r.ok) alert(r.j.error || '다시 정리하지 못했어요.'); else { awaitMade = m.id; loadMeetings(); } };
+    if (q('delBtn')) q('delBtn').onclick = async () => {
+      if (!confirm(`이 회의록을 지울까요?\n\n${m.title} (${m.date})\n녹취 원문도 함께 지워져요. 파일함의 워드 파일과 이미 등록한 할 일은 그대로 남아요.`)) return;
+      const r = await jcall('DELETE', `/api/meetings/${encodeURIComponent(m.id)}`); if (!r.ok) alert(r.j.error || '지우지 못했어요.'); loadMeetings();
+    };
+  }
+  async function registerTasks(m, idx) {
+    if (!idx.length) return alert('등록할 할 일을 골라 주세요.');
+    if (!confirm(`할 일 ${idx.length}개를 할 일(tasks)에 등록할까요?\n\n${idx.map((i) => `· ${m.summary.actions[i].task} (${m.summary.actions[i].owner || '담당 미정'}, ${m.summary.actions[i].due || '기한 미정'})`).join('\n')}`)) return false;
+    const r = await jcall('POST', `/api/meetings/${encodeURIComponent(m.id)}/tasks`, { indexes: idx });
+    if (!r.ok) { alert(r.j.error || '등록하지 못했어요.'); return false; }
+    toast(`✓ 할 일 ${r.j.created}개를 등록했어요. 대시보드·달력·프로젝트에서 볼 수 있어요.`); await loadMeetings(); return true;
+  }
+  function askTasks(m) { // 끝낸 직후: 정리된 할 일을 등록할지 묻는다
+    const acts = arr(m.summary.actions);
+    $('askBody').innerHTML = `<h3>할 일을 등록할까요?</h3><p style="margin:0 0 6px;color:#475467">"${esc(m.title)}" 회의록이 정리됐어요. 회의에서 나온 할 일 ${acts.length}개를 할 일(tasks)에 등록하면 대시보드 "마감 임박"과 달력에 나와요.</p>
+      <ul class="askl">${acts.map((a, i) => `<li><input type="checkbox" data-ask="${i}" checked ${a.taskId ? 'disabled' : ''}><div>${esc(a.task)}<small>담당 ${esc(a.owner || '미정')} · 기한 ${esc(a.due || '미정')}</small></div></li>`).join('')}</ul>
+      <div class="row"><button class="btn ghost" id="askLater">나중에</button><button class="btn" id="askOk">선택한 할 일 등록</button></div>`;
+    $('askModal').hidden = false; $('askLater').onclick = () => ($('askModal').hidden = true);
+    $('askOk').onclick = async () => { const idx = [...$('askBody').querySelectorAll('input[data-ask]:checked')].map((c) => Number(c.dataset.ask)); if (!idx.length) { $('askModal').hidden = true; return; } if (await registerTasks(m, idx)) $('askModal').hidden = true; };
+  }
+
+  // ======================= 시작 =======================
+  (async () => {
+    try {
+      me = await (await api('/api/me')).json();
+      [people, rooms, projects] = await Promise.all([api('/api/messenger/people').then((r) => r.json()), db.list('rooms'), db.list('projects')]);
+      people = arr(people); rooms = arr(rooms).filter((r) => r && r.id); projects = arr(projects).filter((p) => p && p.id); roomId = (rooms[0] || {}).id;
+      $('mDate').value = cal.ymd(new Date());
+      $('mRoom').innerHTML = `<option value="">(선택 안 함)</option>${rooms.map((r) => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}`;
+      $('mProj').innerHTML = `<option value="">(선택 안 함)</option>${projects.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.client ? ` · ${esc(p.client)}` : ''}</option>`).join('')}`;
+      $('peopleChips').innerHTML = people.map((p) => `<button type="button" class="chip" data-n="${esc(p.name)}">${esc(p.name)}</button>`).join('');
+      const syncChips = () => { const have = $('mAtt').value.split(/[,，、]/).map((x) => x.trim()); $('peopleChips').querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', have.includes(c.dataset.n))); };
+      $('peopleChips').querySelectorAll('.chip').forEach((c) => (c.onclick = () => { const have = $('mAtt').value.split(/[,，、]/).map((x) => x.trim()).filter(Boolean), i = have.indexOf(c.dataset.n); if (i >= 0) have.splice(i, 1); else have.push(c.dataset.n); $('mAtt').value = have.join(', '); syncChips(); saveDraft(); }));
+      $('mAtt').addEventListener('input', syncChips);
+      if (!SR) { $('recStart').disabled = true; note('이 브라우저는 음성 인식을 지원하지 않아요. Chrome·Edge 에서 쓸 수 있어요. 지금은 위의 "받아쓴 글 붙여넣기"를 써 주세요.'); }
+      const d = lsGet(); // 새로고침 전에 받아쓴 글이 남아 있으면 이어서 쓸 수 있게
+      if (d && arr(d.lines).length) { lines = d.lines; recStart = d.recStart; accMs = d.accMs || 0; state = 'pause'; const f = d.form || {}; $('mTitle').value = f.title || ''; if (f.date) $('mDate').value = f.date; $('mAtt').value = f.att || ''; $('mRoom').value = f.room || ''; $('mProj').value = f.proj || ''; syncChips(); note('저장해 둔 녹취가 남아 있어요. "이어서 녹취"로 계속하거나 "끝내기"로 회의록을 만드세요.'); }
+      renderRec(); await Promise.all([loadEvents(), loadMeetings()]);
+      db.watch('events', loadEvents); db.watch('meetings', loadMeetings);
+    } catch (e) { if (e.message !== 'login') document.body.insertAdjacentHTML('afterbegin', '<div class="note err" style="margin:16px">⚠ 화면을 불러오지 못했어요. 서버가 켜져 있는지 확인해 주세요.</div>'); }
+  })();
+</script>
+</body>
+</html>

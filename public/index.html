@@ -424,6 +424,7 @@
     else if (current === 'WBS') showWbs(arg);
     else if (current === '메일정리') showMail();
     else if (current === '메신저') showMessenger(arg);
+    else if (current === '회의록') showMeeting();
     else if (current === '설정') showSettings(arg);
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
   }
@@ -453,6 +454,7 @@
   function showCalendar() { $('main').innerHTML = '<iframe class="frame" src="/m/calendar.html" title="일정"></iframe>'; }
   function showProjects() { $('main').innerHTML = '<iframe class="frame" src="/m/projects.html" title="프로젝트"></iframe>'; }
   function showMessenger(cid) { $('main').innerHTML = `<iframe class="frame" src="/m/messenger.html${cid ? '?c=' + encodeURIComponent(cid) : ''}" title="메신저"></iframe>`; }
+  function showMeeting() { $('main').innerHTML = '<iframe class="frame" src="/m/meeting.html" title="회의록" allow="microphone"></iframe>'; } // 음성 인식(녹취)에 마이크가 필요하다
   function showMail() { $('main').innerHTML = '<iframe class="frame" src="/m/mail.html" title="메일정리"></iframe>'; }
   function showWbs(pid) { $('main').innerHTML = `<iframe class="frame" src="/m/wbs.html${pid ? '?p=' + encodeURIComponent(pid) : ''}" title="WBS"></iframe>`; }
   window.addEventListener('message', (e) => {
