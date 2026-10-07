@@ -3722,8 +3722,8 @@ async function runVoice() {
   check('화면: 🎤 단추·한국어(ko-KR) 음성 인식·말이 끊기면 자동 전송 흐름이 있음', ['id="mic"', 'webkitSpeechRecognition', "r.lang = 'ko-KR'", 'r.continuous = false', 'r.interimResults = true', '말이 끊겼다 → 자동으로 보낸다'].every((w) => html.includes(w)));
   check('화면: 설정 "산초야 호출 대기"(기본 꺼짐·마이크가 서버로 소리를 보낸다는 경고)·비슷한 소리 판별(vlib.wake)·시작이 막히면 다시 시도(쉬며 6번까지)·호출어로 시작하지 않은 말은 버림',
     ['id="vcWake"', '산초야 호출 대기', 'vlib.wake(t)', 'WK.fails > 6', 'Math.min(1000 * 2 ** (WK.fails - 1), 15000)', '시작이 막히면'].every((w) => html.includes(w)) && html.includes("LS.get('wake') === '1'") && html.includes('호출 대기는 켜 두는 동안 마이크가 계속 듣고'));
-  check('화면: 답 읽기 — 한국어 브라우저 목소리(speechSynthesis·ko-KR), 외부 목소리가 있으면 먼저 쓰고 실패하면 브라우저 목소리로, 읽는 동안 호출 대기는 쉼(내 목소리를 호출로 안 알아듣게)',
-    ['speechSynthesis', 'SpeechSynthesisUtterance', "u.lang = 'ko-KR'"].every((w) => html.includes(w)) && /playExternal\(text, my\)[\s\S]{0,260}playBrowser\(text, my\)/.test(html) && html.includes('wakeHold(1); setVoice(\'speaking\''));
+  check('화면: 답 읽기 — 한국어 브라우저 목소리(speechSynthesis·ko-KR, 이 PC 에 깔린 목소리를 먼저 골라 답 글이 밖으로 안 가게), 외부 목소리가 있으면 먼저 쓰고 실패하면 브라우저 목소리로, 읽는 동안 호출 대기는 쉼(내 목소리를 호출로 안 알아듣게)',
+    ['speechSynthesis', 'SpeechSynthesisUtterance', "u.lang = 'ko-KR'", 'kos.find((v) => v.localService) || kos[0]'].every((w) => html.includes(w)) && /playExternal\(text, my\)[\s\S]{0,260}playBrowser\(text, my\)/.test(html) && html.includes('wakeHold(1); setVoice(\'speaking\''));
   check('화면: 위쪽 표시(#voiceBar)가 말하는·듣는 동안 출렁이고(@keyframes wave) 움직임을 줄이는 설정(prefers-reduced-motion)이면 멈춤, 눌러서 읽기를 멈출 수 있음',
     ['id="voiceBar"', '@keyframes wave', 'data-state="speaking"', 'prefers-reduced-motion: reduce', "if (speaking) stopSpeaking()"].every((w) => html.includes(w)) && /<script src="\/m\/voice\.js"><\/script>/.test(html));
   check('화면: 설정 › 목소리 칸(브라우저 목소리 시험·외부 목소리 키 칸은 가림)이 있고 소리·글이 회사 밖으로 나간다는 경고가 있음', ['id="vcSpeak"', 'id="vcTest"', 'id="ttsKey" class="mask"', 'id="ttsTest"', '읽을 글이 그 서비스로 나가요', '말소리를 그 회사 서버로 보내'].every((w) => html.includes(w)));

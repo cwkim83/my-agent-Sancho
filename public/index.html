@@ -1417,7 +1417,9 @@
   function playBrowser(text, my) {
     return new Promise((ok) => {
       if (!SYN) return ok(false);
-      const parts = vlib.chunks(text), ko = (SYN.getVoices ? SYN.getVoices() : []).find((v) => /^ko/i.test(v.lang)); let i = 0;
+      const kos = (SYN.getVoices ? SYN.getVoices() : []).filter((v) => /^ko/i.test(v.lang));
+      const ko = kos.find((v) => v.localService) || kos[0]; // 이 PC 에 깔린 목소리를 먼저: "Google 한국의"·"Online" 목소리는 인터넷으로 읽어서 답 글이 브라우저 회사로 간다
+      const parts = vlib.chunks(text); let i = 0;
       const next = () => {
         if (my !== spk) return ok(true);
         if (i >= parts.length) return ok(true);
@@ -1464,8 +1466,11 @@
   }
 
   // ---------- 설정 › 목소리 ----------
-  const koVoices = () => (SYN && SYN.getVoices ? SYN.getVoices().filter((v) => /^ko/i.test(v.lang)).length : 0);
-  function showVoiceInfo() { const el = $('vcInfo'); if (el) el.textContent = `이 브라우저: 음성 인식 ${SR ? '✓' : '✗ (크롬·엣지에서 쓰세요)'} · 소리 내어 읽기 ${SYN ? '✓' : '✗'} · 한국어 목소리 ${koVoices()}개`; }
+  const koVoices = () => (SYN && SYN.getVoices ? SYN.getVoices().filter((v) => /^ko/i.test(v.lang)) : []);
+  function showVoiceInfo() {
+    const el = $('vcInfo'), kv = koVoices(), local = kv.filter((v) => v.localService).length; if (!el) return;
+    el.textContent = `이 브라우저: 음성 인식 ${SR ? '✓' : '✗ (크롬·엣지에서 쓰세요)'} · 소리 내어 읽기 ${SYN ? '✓' : '✗'} · 한국어 목소리 ${kv.length}개 (이 PC 안 ${local}개${kv.length && !local ? ' — 인터넷 목소리뿐이라 읽을 글이 브라우저 회사로 가요' : ''})`;
+  }
   async function showVoice() {
     const say = (t, err) => { const m = $('ttsMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
     showVoiceInfo(); syncVoiceUi();
