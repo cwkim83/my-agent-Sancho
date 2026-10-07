@@ -57,6 +57,23 @@ async function run(msg) {
     })();
     delta(text); out({ type: 'result', subtype: 'success', is_error: false, result: text }); return;
   }
+  if (msg.startsWith('[공수 정리]')) { // 공수 정리 흉내: 붙여넣은 글에 든 표시로 답이 달라진다. /실패해 → 죽음, /느리게 → 2초, /잘못된형식 → JSON 아님, /펜스 → 코드 블록으로 감쌈, /모호 → 이름이 같은 프로젝트 하나를 골라 버림(서버가 믿지 않고 물어야 함), /미래연도 → 연도를 한 해 뒤로 적음, /나쁜값 → 틀린 날짜·시간·빈 작업, /없는프로젝트 → 목록에 없는 id
+    const fs = require('fs'), text = (/\n---\n([\s\S]*?)\n---\n/.exec(msg) || [])[1] || '';
+    fs.appendFileSync('fake-manday-args.log', JSON.stringify({ tools: a.indexOf('--tools') >= 0 ? a[a.indexOf('--tools') + 1] : null, noPersist: a.includes('--no-session-persistence'), prompt: msg }) + '\n');
+    if (text.includes('/실패해')) { process.stderr.write('boom: 공수 정리 중 죽음'); process.exit(3); }
+    if (text.includes('/느리게')) await sleep(2000);
+    const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toLocaleDateString('sv-SE'); };
+    const idOf = (name) => { const m = new RegExp(`^- (\\S+) · ${name} · `, 'm').exec(msg); return m ? m[1] : null; };
+    const row = (date, 말, 작업, 시간, 야근 = false, id = idOf(말)) => ({ 날짜: date, 프로젝트말: 말, 프로젝트id: id, 후보: [], 작업, 시간, 야근 });
+    let j;
+    if (text.includes('/모호')) j = { 기록: [row(day(-1), '시험 압력용기', '도면검토', 3)] };
+    else if (text.includes('/미래연도')) j = { 기록: [row(`${new Date().getFullYear() + 1}${day(-2).slice(4)}`, '시험 펌프', '설계', 4)] };
+    else if (text.includes('/나쁜값')) j = { 기록: [row('2026-02-31', '시험 펌프', '날짜 틀림', 2), row(day(-1), '시험 펌프', '시간 글자', 'abc'), row(day(-1), '시험 펌프', '하루 30시간', 30), row(day(-1), '시험 펌프', '   ', 1), row(day(-1), '시험 펌프', '15분 단위 아님', 1.1), row(day(-401), '시험 펌프', '너무 오래됨', 1), { 몰래: '모르는 칸', 날짜: day(-1), 작업: '모르는 칸은 버림', 시간: '2.5', 프로젝트말: '시험 펌프' }] };
+    else if (text.includes('/없는프로젝트')) j = { 기록: [{ ...row(day(-1), '존재하지 않는 프로젝트', '일', 1, false, 'zzz-없는id'), 후보: ['zzz-없는id', idOf('시험 펌프')] }] };
+    else j = { 기록: [row(day(-1), '시험 열교환기', '용접', 8), row(day(-1), '시험 열교환기', '용접', 2, true), row(day(-1), '시험 펌프', '도면검토', 3)] };
+    const out2 = JSON.stringify(j), t = text.includes('/잘못된형식') ? '시간 기록을 잘 정리했어요! (JSON 이 아님)' : text.includes('/펜스') ? `네, 정리했어요.\n\`\`\`json\n${out2}\n\`\`\`\n끝` : out2;
+    delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return;
+  }
   if (msg.startsWith('[메신저 채널 질문]')) { // 메신저 "@산초" 흉내: 질문에 /실패해 가 있으면 죽고, /느리게 가 있으면 2초 걸린 뒤 평소처럼 (받은 글을 그대로 되울려서 서버가 무엇을 건넸는지 보인다)
     const q = msg.slice(msg.lastIndexOf('\n요청: ')); // 맨 끝의 "요청: …" 만 본다 (앞의 대화 속 글에는 반응하지 않는다)
     if (q.includes('/실패해')) { process.stderr.write('boom: 메신저 답변 중 죽음'); process.exit(3); }

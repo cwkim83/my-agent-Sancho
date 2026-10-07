@@ -207,6 +207,12 @@
   let projects = [], pid = '', doc = wbs.emptyDoc(), etag = 'none', calc = wbs.compute(doc, wbs.today()), calcAsOf = wbs.today(), curDoc = doc, loadErr = '', shareName = '';
   let collapsed = new Set(), zoom = 'fit', dayW = 6, CW = W, editing = null, drag = null, later = false, seq = 0, firstScroll = true;
   let view = null; // Rev 보기 중이면 { rev, savedAt, note, auto, doc, asOf }
+  let md = null; // 이 프로젝트의 투입 공수(모든 사람의 합) { hours, overtime, mandays, records, people, from, to } — 공수 메뉴의 기록에서 서버가 더한다. 못 읽으면 null
+  async function loadMd() { // 공유 화면(로그인 없이 읽기 전용)에는 공수를 보이지 않는다
+    if (SHARE || !pid) return;
+    try { md = await api('GET', `/api/mandays/project/${encodeURIComponent(pid)}`); } catch { md = null; }
+    renderCards();
+  }
   let PM = QS.get('print') !== null, pmTmp = false; // 인쇄용 화면
   const ro = () => SHARE || !!view; // 읽기 전용: 공유 화면이거나 Rev 를 보는 중
 
@@ -300,6 +306,7 @@
       card('SPI · 일정 성과', fmtN(e.spi), 'EV ÷ PV (1 보다 작으면 늦음)', { neg: e.spi !== null && e.spi < 1 }),
       card('CPI · 비용 성과', fmtN(e.cpi), `AC ${e.ac === null ? '입력 안 됨' : fmtWon(e.ac)}${canEdit ? ' · 눌러서 입력' : ''}`, { edit: 'ac', neg: e.cpi !== null && e.cpi < 1 }),
       card('지연 작업', `${e.late}개`, '계획보다 10%p 넘게 뒤처짐', { neg: e.late > 0 }),
+      card('투입 공수', md ? `${md.hours}h` : '—', md ? (md.records ? `${Math.round(md.mandays * 100) / 100} M/D (1 M/D = 8시간)${md.overtime ? ` · 야근 ${md.overtime}h` : ''} · 기록 ${md.records}건 · ${md.people}명` : '아직 공수 기록이 없어요 (공수 메뉴)') : '공수를 읽지 못했어요'),
     ]).join('');
   }
 
@@ -601,7 +608,7 @@
     const want = QS.get('p');
     pid = projects.some((p) => p.id === want) ? want : projects.length ? (projects.find((p) => p.status === '진행중') || projects[0]).id : '';
     render();
-    if (pid) { db.watch('wbs-' + pid, load); await load(); }
+    if (pid) { db.watch('wbs-' + pid, load); db.watch('mandays', loadMd); loadMd(); await load(); }
     db.watch('projects', async () => { await loadProjects(); if (!editing) render(); });
     autoPrint();
   }

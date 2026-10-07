@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>공수</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --amber: #b54708; --amber-bg: #fef0c7; --green: #067647; --green-bg: #dcfae6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; overflow-y: auto; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  [hidden] { display: none !important; }
+  .page { max-width: 1040px; margin: 0 auto; padding: 16px; }
+  .top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 12px; }
+  .top h2 { margin: 0; font-size: 20px; }
+  .top .sub { color: var(--sub); font-size: 13px; }
+  .top .sp { flex: 1; }
+  .top label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #344054; }
+  .btn { padding: 7px 14px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font-weight: 600; }
+  .btn:disabled { background: #98a2b3; }
+  .btn.ghost { background: #fff; color: #344054; border: 1px solid #d0d5dd; }
+  .btn.ghost:hover:not(:disabled) { background: #f2f4f7; }
+  .btn.green { background: #079455; }
+  .mini { padding: 2px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 12px; color: #344054; }
+  .mini:hover:not(:disabled) { background: var(--blue-bg); }
+  .mini.red { color: var(--red); border-color: #f4b7b0; }
+  input[type=text], input[type=date], input[type=number], select, textarea { width: 100%; padding: 6px 9px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; background: #fff; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .card { margin-bottom: 14px; padding: 14px 16px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 16px; }
+  .card h3 small { font-weight: 400; color: var(--sub); font-size: 12px; }
+  .hint { margin: 2px 0 8px; color: var(--sub); font-size: 13px; }
+  .errbar { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; background: var(--red-bg); color: var(--red); font-size: 13px; }
+  .okbar { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; background: var(--green-bg); color: var(--green); font-size: 13px; }
+  .none { padding: 10px 2px; color: var(--sub); }
+  .pasterow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+  .pasterow textarea { flex: 1; min-width: 260px; resize: vertical; }
+  .stat { margin-top: 6px; color: var(--sub); font-size: 13px; min-height: 1.4em; }
+
+  table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.t th { padding: 5px 8px; text-align: left; font-size: 12px; font-weight: 600; color: var(--sub); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.t td { padding: 6px 8px; border-bottom: 1px solid #f0f2f5; vertical-align: middle; }
+  table.t .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.t tr.fresh td { background: #f0fbf4; }
+  table.t tr.sel td { background: var(--blue-bg); }
+  table.t tr.click { cursor: pointer; }
+  table.t tr.click:hover td { background: #f6f8fc; }
+  table.t tfoot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: 0; }
+  .ot { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); font-size: 11px; font-weight: 700; line-height: 18px; }
+  .dim { color: var(--sub); }
+  table.d td { padding: 4px 6px; border-bottom: 0; }
+  table.d tr.note td { padding: 0 6px 6px; font-size: 12px; }
+  .nt-ask { color: var(--amber); } .nt-bad { color: var(--red); } .nt-ok { color: var(--green); }
+  tr.askrow td { background: var(--amber-bg); }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+  .actions .sp { flex: 1; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .bars { display: flex; align-items: flex-end; gap: 10px; height: 170px; padding: 8px 4px 0; border-bottom: 1px solid var(--line); }
+  .col { flex: 1; max-width: 70px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; cursor: pointer; }
+  .col .v { font-size: 11px; color: #344054; font-variant-numeric: tabular-nums; }
+  .col .b { width: 100%; min-height: 2px; border-radius: 6px 6px 0 0; background: #8fb0f5; }
+  .col.sel .b { background: var(--blue); }
+  .col:hover .b { background: #5b8def; }
+  .labels { display: flex; gap: 10px; padding: 3px 4px 0; }
+  .labels span { flex: 1; max-width: 70px; text-align: center; font-size: 12px; color: var(--sub); }
+  .hbar { display: block; height: 10px; border-radius: 999px; background: #eceff3; min-width: 90px; }
+  .hbar i { display: block; height: 100%; border-radius: 999px; background: var(--blue); }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top"><h2>공수</h2><span class="sub">1 M/D = 8시간 · 야근 시간도 시간에 더해요 · 내 기록은 나만 봐요</span><span class="sp"></span>
+    <label>월 <select id="mSel" style="width:auto"></select></label><button class="btn ghost" id="exportBtn" title="내 기록과 월별·프로젝트별 합계를 엑셀 파일로 받아요">📥 엑셀 내보내기</button></div>
+  <div class="errbar" id="err" hidden></div>
+  <div class="okbar" id="ok" hidden></div>
+
+  <section class="card">
+    <h3>한 줄 붙여넣기 <small>— 날짜·프로젝트·작업·시간을 비서가 나눠 줘요</small></h3>
+    <div class="pasterow">
+      <textarea id="paste" rows="2" maxlength="2000" placeholder="예: 10/6 열교환기 용접 8h, 야근 2h / 압력용기 도면검토 3h"></textarea>
+      <button class="btn" id="parseBtn">비서가 정리하기</button><button class="btn ghost" id="addRowBtn" title="붙여넣지 않고 한 줄씩 직접 적어요">＋ 직접 줄 추가</button>
+    </div>
+    <div class="stat" id="pstat"></div>
+    <div id="draftBox" hidden>
+      <h3 style="margin-top:12px">정리 결과 <small>— 맞는지 확인하고, 프로젝트를 모르는 줄은 골라 주세요. 저장해야 기록돼요.</small></h3>
+      <table class="t d"><thead><tr><th style="width:150px">날짜</th><th style="width:230px">프로젝트</th><th>작업</th><th style="width:90px">시간</th><th style="width:52px">야근</th><th style="width:34px"></th></tr></thead><tbody id="draftBody"></tbody></table>
+      <div class="actions"><button class="mini" id="addDraft">＋ 줄 추가</button><span class="sp"></span><span class="stat" id="dstat" style="margin:0"></span><button class="btn ghost" id="draftCancel">취소</button><button class="btn green" id="draftSave">저장</button></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>내 기록 <small id="recSub"></small></h3>
+    <div id="recBox"></div>
+  </section>
+
+  <div class="two">
+    <section class="card"><h3>월별 합계 <small>(막대는 M/D)</small></h3><div id="monthBox"></div></section>
+    <section class="card"><h3>프로젝트별 합계 <small id="projSub"></small></h3><div id="projBox"></div></section>
+  </div>
+</div>
+
+<script src="/m/db.js"></script>
+<script src="/m/manday-calc.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let me = {}, projects = [], records = [], month = '', draft = null, askDel = '', fresh = new Set(), freshTimer = null, parsing = false;
+  const showErr = (m) => { $('err').hidden = !m; $('err').textContent = m || ''; };
+  const showOk = (m) => { $('ok').hidden = !m; $('ok').textContent = m || ''; };
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `요청에 실패했어요. (${r.status})`);
+    return j;
+  }
+
+  // ---------- 이름 ----------
+  // 이름이 같은 프로젝트가 둘이면(고객사만 다름) 고객사를 붙여서 구분한다
+  const labelOf = (p) => (projects.filter((q) => q.name === p.name).length > 1 && p.client ? `${p.name} (${p.client})` : p.name);
+  const labels = () => Object.fromEntries(projects.map((p) => [p.id, labelOf(p)]));
+  const projName = (r) => manday.nameOf(r, labels());
+  const hm = (h) => `${manday.fmtH(h)}h`;
+  const mdTxt = (h) => `${manday.fmtMd(h)} M/D`;
+
+  // ---------- 붙여넣기 → 정리 결과(초안) ----------
+  const today = () => manday.today();
+  const blankRow = () => ({ date: today(), projectId: null, projectText: '', candidates: [], task: '', hours: 8, overtime: false, problem: '', src: '직접' });
+  function openDraft(rows, src) { draft = { rows: rows.map((r) => ({ ...r, src })), }; renderDraft(); }
+  function projOptions(r) {
+    const cand = r.candidates.map((id) => projects.find((p) => p.id === id)).filter(Boolean), rest = projects.filter((p) => !cand.includes(p));
+    const opt = (p) => `<option value="${esc(p.id)}" ${r.projectId === p.id ? 'selected' : ''}>${esc(labelOf(p))}</option>`;
+    return `<option value="__ask" ${r.projectId === null ? 'selected' : ''}>— 프로젝트를 골라 주세요 —</option>${cand.length ? `<optgroup label="맞을 수 있는 프로젝트">${cand.map(opt).join('')}</optgroup>` : ''}`
+      + `<optgroup label="${cand.length ? '다른 프로젝트' : '프로젝트'}">${rest.map(opt).join('')}</optgroup><option value="__none" ${r.projectId === '' ? 'selected' : ''}>기타 업무 (프로젝트 없음)</option>`;
+  }
+  function renderDraft() {
+    $('draftBox').hidden = !draft;
+    if (!draft) return;
+    $('draftBody').innerHTML = draft.rows.map((r, i) => `<tr data-i="${i}"><td><input type="date" data-f="date" value="${esc(r.date)}" aria-label="날짜"></td>
+      <td><select data-f="proj" aria-label="프로젝트">${projOptions(r)}</select></td><td><input type="text" data-f="task" value="${esc(r.task)}" maxlength="60" aria-label="작업"></td>
+      <td><input type="number" data-f="hours" step="0.25" min="0" max="24" value="${r.hours ?? ''}" aria-label="시간"></td><td style="text-align:center"><input type="checkbox" data-f="ot" ${r.overtime ? 'checked' : ''} aria-label="야근"></td>
+      <td><button class="mini" data-rm="${i}" aria-label="이 줄 빼기">✕</button></td></tr><tr class="note"><td colspan="6" id="nt${i}"></td></tr>`).join('');
+    refreshDraft();
+  }
+  // 줄마다 "물어볼 것"과 문제를 보여 주고, 다 풀렸을 때만 저장할 수 있게 한다 (입력칸은 다시 그리지 않아 글자 칸의 포커스가 안 끊긴다)
+  function rowNote(r) {
+    const why = manday.rowProblem(r, today());
+    if (why) return { cls: 'nt-bad', text: `⚠ ${why}`, ok: false };
+    if (r.projectId === null) return { cls: 'nt-ask', text: r.candidates.length > 1 ? `❓ "${r.projectText}" 에 맞는 프로젝트가 ${r.candidates.length}개라 어느 것인지 알 수 없어요. 골라 주세요.` : r.projectText ? `❓ "${r.projectText}" 는 프로젝트 목록에 없어요. 프로젝트를 고르거나 "기타 업무"로 해 주세요.` : '❓ 프로젝트를 골라 주세요 (프로젝트 없는 일이면 "기타 업무").', ok: false };
+    return { cls: 'nt-ok', text: '', ok: true };
+  }
+  function refreshDraft() {
+    if (!draft) return;
+    const notes = draft.rows.map(rowNote);
+    notes.forEach((n, i) => { const el = $(`nt${i}`); if (el) { el.className = n.cls; el.textContent = n.text; } });
+    document.querySelectorAll('#draftBody tr[data-i]').forEach((tr, i) => tr.classList.toggle('askrow', notes[i] && notes[i].cls === 'nt-ask'));
+    const bad = notes.filter((n) => !n.ok).length, total = manday.total(draft.rows.map((r) => ({ ...r, date: '2000-01-01', hours: Number(r.hours) })).filter((r) => r.hours > 0));
+    $('dstat').textContent = bad ? `확인이 필요한 줄 ${bad}개` : `${draft.rows.length}줄 · ${hm(total.hours)} (${mdTxt(total.hours)})`;
+    $('draftSave').disabled = !!bad || !draft.rows.length;
+    $('draftSave').textContent = `저장 (${draft.rows.length}줄)`;
+  }
+  $('draftBody').addEventListener('input', (e) => {
+    const tr = e.target.closest('tr[data-i]'); if (!tr) return;
+    const r = draft.rows[Number(tr.dataset.i)], f = e.target.dataset.f;
+    if (f === 'date') r.date = e.target.value; else if (f === 'task') r.task = e.target.value; else if (f === 'hours') r.hours = e.target.value === '' ? null : Number(e.target.value); else if (f === 'ot') r.overtime = e.target.checked;
+    else if (f === 'proj') r.projectId = e.target.value === '__ask' ? null : e.target.value === '__none' ? '' : e.target.value;
+    refreshDraft();
+  });
+  $('draftBody').addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (b) { draft.rows.splice(Number(b.dataset.rm), 1); if (!draft.rows.length) draft = null; renderDraft(); } });
+  $('addDraft').onclick = () => { draft.rows.push(blankRow()); renderDraft(); };
+  $('addRowBtn').onclick = () => { if (!draft) draft = { rows: [] }; draft.rows.push(blankRow()); renderDraft(); };
+  $('draftCancel').onclick = () => { draft = null; renderDraft(); };
+  $('draftSave').onclick = async () => {
+    $('draftSave').disabled = true; showErr('');
+    try {
+      const j = await api('POST', '/api/mandays', { rows: draft.rows.map((r) => ({ date: r.date, projectId: r.projectId, task: r.task, hours: Number(r.hours), overtime: r.overtime, src: r.src })) });
+      fresh = new Set(j.items.map((x) => x.id)); clearTimeout(freshTimer); freshTimer = setTimeout(() => { fresh = new Set(); renderRecords(); }, 8000);
+      if (j.items.length) month = manday.monthOf(j.items[0].date); // 방금 넣은 기록이 보이는 달로
+      showOk(`${j.saved}줄을 저장했어요${j.skipped ? ` (똑같은 ${j.skipped}줄은 이미 있어서 건너뛰었어요)` : ''}. 잘못 들어갔으면 아래 표에서 지우고 다시 넣어 주세요.`);
+      draft = null; $('paste').value = ''; $('pstat').textContent = ''; renderDraft(); await load();
+    } catch (e) { showErr(e.message); refreshDraft(); }
+  };
+  $('parseBtn').onclick = async () => {
+    const text = $('paste').value.trim();
+    if (!text) { $('pstat').textContent = '시간을 적은 글을 먼저 붙여 넣어 주세요.'; return; }
+    if (parsing) return;
+    parsing = true; $('parseBtn').disabled = true; showErr(''); showOk(''); $('pstat').textContent = '⏳ 비서가 읽고 있어요… (보통 10~30초)';
+    try {
+      const j = await api('POST', '/api/mandays/parse', { text });
+      openDraft(j.rows, '붙여넣기');
+      const ask = draft.rows.filter((r) => !rowNote(r).ok).length;
+      $('pstat').textContent = `${j.rows.length}줄로 나눴어요.${ask ? ` 확인이 필요한 ${ask}줄이 있어요.` : ' 맞으면 저장을 눌러 주세요.'}`;
+    } catch (e) { $('pstat').textContent = ''; showErr(e.message); }
+    parsing = false; $('parseBtn').disabled = false;
+  };
+
+  // ---------- 내 기록 · 합계 ----------
+  const inMonth = (r) => !month || manday.monthOf(r.date) === month;
+  function renderMonthSel() {
+    const ms = manday.months(records);
+    if (month && !ms.includes(month)) month = ms.length ? ms[ms.length - 1] : '';
+    $('mSel').innerHTML = `<option value="">전체 기간</option>${[...ms].reverse().map((m) => `<option value="${m}" ${m === month ? 'selected' : ''}>${m.replace('-', '년 ')}월</option>`).join('')}`;
+    $('mSel').value = month;
+  }
+  function renderRecords() {
+    const list = records.filter(inMonth), t = manday.total(list);
+    $('recSub').textContent = month ? `— ${month.replace('-', '년 ')}월` : '— 전체 기간';
+    $('recBox').innerHTML = list.length ? `<table class="t"><thead><tr><th>날짜</th><th>프로젝트</th><th>작업</th><th class="n">시간</th><th class="n">M/D</th><th></th><th></th></tr></thead><tbody>${list.map((r) => `<tr class="${fresh.has(r.id) ? 'fresh' : ''}">
+      <td>${esc(r.date.slice(5).replace('-', '/'))} <span class="dim">${['일', '월', '화', '수', '목', '금', '토'][new Date(`${r.date}T00:00:00`).getDay()]}</span></td><td>${esc(projName(r))}</td><td>${esc(r.task)}</td><td class="n">${hm(r.hours)}</td><td class="n dim">${manday.fmtMd(r.hours)}</td>
+      <td>${r.overtime ? '<span class="ot">야근</span>' : ''}</td><td class="n">${askDel === r.id ? `<span style="color:var(--red)">지울까요?</span> <button class="mini red" data-del="${esc(r.id)}">네</button> <button class="mini" data-no="1">아니요</button>` : `<button class="mini" data-ask="${esc(r.id)}" aria-label="기록 지우기">✕</button>`}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="3">합계 (${list.length}줄)</td><td class="n">${hm(t.hours)}</td><td class="n">${manday.fmtMd(t.hours)}</td><td colspan="2">${t.overtime ? `<span class="ot">야근 ${hm(t.overtime)}</span>` : ''}</td></tr></tfoot></table>`
+      : '<div class="none">아직 기록이 없어요. 위 칸에 "10/6 열교환기 용접 8h, 야근 2h / 도면검토 3h" 처럼 붙여 넣어 보세요.</div>';
+  }
+  function renderSummary() {
+    const rows = manday.monthRows(records), maxMd = Math.max(0, ...rows.map((m) => manday.md(m.hours)));
+    $('monthBox').innerHTML = rows.length ? `<div class="bars" id="bars">${rows.map((m) => `<div class="col ${m.month === month ? 'sel' : ''}" data-m="${m.month}" title="${m.month} · ${hm(m.hours)}"><span class="v">${manday.fmtMd(m.hours)}</span><div class="b" style="height:${maxMd ? Math.max(2, Math.round((manday.md(m.hours) / maxMd) * 120)) : 2}px"></div></div>`).join('')}</div>
+      <div class="labels">${rows.map((m) => `<span>${esc(m.month.slice(2).replace('-', '.'))}</span>`).join('')}</div>
+      <table class="t" style="margin-top:10px"><thead><tr><th>월</th><th class="n">시간</th><th class="n">야근</th><th class="n">M/D</th></tr></thead><tbody>${rows.map((m) => `<tr class="click ${m.month === month ? 'sel' : ''}" data-m="${m.month}"><td>${m.month.replace('-', '년 ')}월</td><td class="n">${hm(m.hours)}</td><td class="n dim">${m.overtime ? hm(m.overtime) : '-'}</td><td class="n"><b>${manday.fmtMd(m.hours)}</b></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>전체</td><td class="n">${hm(manday.total(records).hours)}</td><td class="n">${manday.total(records).overtime ? hm(manday.total(records).overtime) : '-'}</td><td class="n">${manday.fmtMd(manday.total(records).hours)}</td></tr></tfoot></table>` : '<div class="none">기록이 쌓이면 월별 합계가 나와요.</div>';
+    const pr = manday.projectRows(records, month, labels()), maxP = Math.max(0, ...pr.map((r) => r.hours)), tp = manday.total(records.filter(inMonth));
+    $('projSub').textContent = month ? `— ${month.replace('-', '년 ')}월` : '— 전체 기간';
+    $('projBox').innerHTML = pr.length ? `<table class="t"><thead><tr><th>프로젝트</th><th class="n">시간</th><th class="n">야근</th><th class="n">M/D</th><th style="width:30%"></th></tr></thead><tbody>${pr.map((r) => `<tr><td>${esc(r.name)}</td><td class="n">${hm(r.hours)}</td><td class="n dim">${r.overtime ? hm(r.overtime) : '-'}</td><td class="n"><b>${manday.fmtMd(r.hours)}</b></td>
+      <td><span class="hbar"><i style="width:${maxP ? Math.round((r.hours / maxP) * 100) : 0}%"></i></span></td></tr>`).join('')}</tbody><tfoot><tr><td>합계</td><td class="n">${hm(tp.hours)}</td><td class="n">${tp.overtime ? hm(tp.overtime) : '-'}</td><td class="n">${manday.fmtMd(tp.hours)}</td><td></td></tr></tfoot></table>` : '<div class="none">이 기간의 기록이 없어요.</div>';
+  }
+  function render() { renderMonthSel(); renderRecords(); renderSummary(); }
+
+  async function load() {
+    try { records = (await api('GET', '/api/mandays')).items; showErr(''); } catch (e) { showErr(`공수 기록을 읽지 못했어요: ${e.message}`); records = []; }
+    try { projects = (await db.list('projects')).filter((p) => p && typeof p.id === 'string'); } catch { projects = []; }
+    if (month === '' && !loaded) { const ms = manday.months(records); month = ms.length ? ms[ms.length - 1] : ''; } // 처음 열면 기록이 있는 가장 최근 달
+    loaded = true;
+    render(); if (draft) renderDraft();
+  }
+  let loaded = false;
+
+  // ---------- 연결 ----------
+  $('mSel').onchange = () => { month = $('mSel').value; render(); };
+  document.addEventListener('click', (e) => {
+    const m = e.target.closest('[data-m]'), a = e.target.closest('[data-ask]'), d = e.target.closest('[data-del]'), n = e.target.closest('[data-no]');
+    if (m) { month = m.dataset.m; render(); }
+    else if (a) { askDel = a.dataset.ask; renderRecords(); }
+    else if (n) { askDel = ''; renderRecords(); }
+    else if (d) api('DELETE', `/api/mandays/${encodeURIComponent(d.dataset.del)}`).then(() => { askDel = ''; return load(); }).catch((x) => { askDel = ''; showErr(x.message); renderRecords(); });
+  });
+  $('exportBtn').onclick = () => { const a = document.createElement('a'); a.href = `/api/mandays/export${month ? `?month=${encodeURIComponent(month)}` : ''}`; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); };
+
+  (async () => {
+    try { me = await api('GET', '/api/me'); } catch { /* 이름 없이도 동작 */ }
+    await load();
+    db.watch('mandays', load); db.watch('projects', load); // 다른 곳에서 바뀌어도(프로젝트 이름 포함) 따라 바뀐다
+  })();
+</script>
+</body>
+</html>
