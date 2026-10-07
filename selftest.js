@@ -11,6 +11,7 @@ const PORT = 8791;
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test-'));
 const PW = 'test-password-123';
+const LICENSOR = 'cwkim@sejong-21c.com'; // 연락용으로 일부러 공개한 저작권자 이메일(LICENSE 추가 조건 3) — "실제 이메일 없음" 점검의 유일한 예외
 const UD = path.join(dir, 'users', 'tester'); // 첫 관리자(아이디 tester)의 개인 폴더: 대화·기억·예약·일지가 여기에 있다
 let pass = 0, failed = 0;
 
@@ -2988,10 +2989,10 @@ async function runHelp(ck, { CM }) {
   // 저작권 표시(LICENSE 추가 조건 2): 파일·README·화면 셋 중 하나라도 빠지면 실패 → 비서의 자기 수정이 표시를 지우면 관문에서 되돌려진다
   const CR = '김철우 (cwkim83)', lf = (f) => read(f).replace(/\r\n/g, '\n'), licLf = lf('LICENSE'), mit = lf('LICENSE-MIT'), apache = lf('LICENSE-APACHE'), notice = lf('NOTICE'); // git 이 윈도우에서 CRLF 로 꺼내도 같게
   check('저작권·라이선스: LICENSE(MIT 또는 Apache-2.0 + Commons Clause 상업적 배포 금지 + 표시 유지 + 강좌 CC BY-NC-ND 4.0)·LICENSE-MIT·LICENSE-APACHE·NOTICE 에 "Copyright (c) 2026 김철우 (cwkim83)" · README 와 화면 셋(대시보드 메뉴 밑·로그인·도움말)에 "© 2026 김철우 (cwkim83)" 가 있음',
-    ['Copyright (c) 2026 ' + CR, 'LICENSE-MIT', 'LICENSE-APACHE', 'Commons Clause License Condition v1.0', 'the right to\nSell the Software', 'Licensor: ' + CR, 'CC BY-NC-ND 4.0'].every((w) => licLf.includes(w))
+    ['Copyright (c) 2026 ' + CR, 'LICENSE-MIT', 'LICENSE-APACHE', 'Commons Clause License Condition v1.0', 'the right to\nSell the Software', 'Licensor: ' + CR, 'CC BY-NC-ND 4.0', '[추가 조건 3] 재배포·공개 전에 알리기', 'Redistribution or publication without such notice is not licensed', 'Downloading\nand using the Software by yourself does not require notice', LICENSOR].every((w) => licLf.includes(w))
     && mit.startsWith('MIT License\n\nCopyright (c) 2026 ' + CR + '\n') && mit.includes('Permission is hereby granted') && mit.includes('Additional Conditions in LICENSE')
     && apache.includes('Apache License') && apache.includes('Version 2.0, January 2004') && apache.includes('END OF TERMS AND CONDITIONS') && apache.includes('Copyright 2026 ' + CR)
-    && notice.includes('Copyright (c) 2026 ' + CR) && notice.includes('Commons Clause') && readme.includes('Copyright (c) 2026 ' + CR) && readme.includes('CC BY-NC-ND 4.0')
+    && notice.includes('Copyright (c) 2026 ' + CR) && notice.includes('Commons Clause') && notice.includes(LICENSOR) && readme.includes(LICENSOR) && read('public', 'm', 'help.html').includes(LICENSOR) && readme.includes('Copyright (c) 2026 ' + CR) && readme.includes('CC BY-NC-ND 4.0')
     && [['public', 'index.html'], ['public', 'login.html'], ['public', 'm', 'help.html']].every((p) => read(...p).includes('© 2026 ' + CR)) && read('public', 'index.html').includes("join('') + COPYRIGHT"));
   check('docs/상세-설명.md: 예전 README 의 상세 내용(8편 안전장치·개인정보 표·결재·공수 규칙·워크플로)이 그대로 옮겨져 있고 맨 위에서 README 와 도움말을 안내함 · 청사진에 "1~10편 모두 구현" 진행 상태가 적힘',
     ['## 8편 안전장치', '개인정보가 밖으로 나가는 지점', '## 결재', '## 공수', '### 워크플로 메뉴', '명령 실행을 켰을 때의 한계'].every((w) => detail.includes(w)) && detail.includes('[README.md](../README.md)') && read('docs', 'blueprint.md').includes('1~10편 모두 구현'));
@@ -3981,7 +3982,9 @@ function runGit() {
   check('공개 전 점검 ②: 지금 파일과 지난 기록 어디에도 이 PC 의 사용자 폴더 경로(C:\\Users\\이름)·전화번호·주민등록번호 모양이 없음',
     git('grep', '-qE', PERSONAL).code === 1 && (revs.length === 0 || git('grep', '-qE', PERSONAL, ...revs).code === 1));
   const mails = [...git('grep', '-ohIE', EMAIL).out.split('\n'), ...(revs.length ? git('grep', '-ohIE', EMAIL, ...revs).out.split('\n').map((l) => l.replace(/^[0-9a-f]{40}:/, '')) : [])].filter(Boolean);
-  check(`공개 전 점검 ③: 저장소 파일(지난 기록 포함)의 이메일 주소 ${new Set(mails).size}가지는 모두 가짜(.example·example.com) — 실제 주소 없음`, mails.length > 0 && mails.every(fake));
+  const where = git('grep', '-lIF', LICENSOR).out.split('\n').filter(Boolean); // 연락용 주소가 어느 파일에 있나 — 라이선스·안내 글 밖으로 퍼지지 않게
+  check(`공개 전 점검 ③: 저장소 파일(지난 기록 포함)의 이메일 주소 ${new Set(mails).size}가지는 모두 가짜(.example·example.com)이거나 연락용으로 일부러 공개한 저작권자 주소 하나뿐이고, 그 주소는 LICENSE·NOTICE·README·도움말(과 이 점검)에만 있음`,
+    mails.length > 0 && mails.every((e) => fake(e) || e === LICENSOR) && where.length > 0 && where.every((f) => ['LICENSE', 'NOTICE', 'README.md', 'public/m/help.html', 'selftest.js'].includes(f)));
   check('공개 전 점검 ④: data/ 는 지난 기록에서도 한 번도 커밋된 적 없음 · 커밋 작성자 이메일은 실제 주소가 아님(GitHub noreply·localhost)',
     !git('log', '--all', '--format=', '--name-only').out.split('\n').some((f) => f.startsWith('data/')) && git('log', '--all', '--format=%ae%n%ce').out.split('\n').filter(Boolean).every((e) => /@users\.noreply\.github\.com$|@localhost$/.test(e)));
 }

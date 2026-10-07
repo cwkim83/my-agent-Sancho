@@ -8,9 +8,9 @@ The code in this repository is available under your choice of:
   - MIT License         → LICENSE-MIT
   - Apache License 2.0  → LICENSE-APACHE
 
-단, 어느 쪽을 고르든 아래 [추가 조건 1·2]가 함께 붙고, MIT·Apache-2.0 이 허락하는
+단, 어느 쪽을 고르든 아래 [추가 조건 1·2·3]이 함께 붙고, MIT·Apache-2.0 이 허락하는
 범위보다 우선합니다. (MIT 의 "sell" 허락과 Apache-2.0 의 판매 허락은 이 조건으로 빠집니다.)
-Whichever you choose, Additional Conditions 1 and 2 below apply as well and take
+Whichever you choose, Additional Conditions 1, 2 and 3 below apply as well and take
 precedence over the permissions of the MIT License and the Apache License 2.0.
 
 ------------------------------------------------------------------------------
@@ -35,7 +35,8 @@ Software: Sancho (나의 AI 비서 Sancho)
 License:  MIT OR Apache-2.0
 Licensor: 김철우 (cwkim83)
 
-한국어 요약: 개인·사내·교육 목적으로 쓰고 고치고 나눠 주는 것은 됩니다. 하지만 이
+한국어 요약: 개인·사내·교육 목적으로 쓰고 고치고 나눠 주는 것은 됩니다(나눠 주거나 올리기
+전에는 [추가 조건 3]대로 먼저 알려야 합니다). 하지만 이
 소프트웨어(또는 고친 판)를 돈이나 대가를 받고 팔거나, 유료 서비스·유료 호스팅·유료
 강의/교재에 넣어 배포하는 것은 안 됩니다. 상업적으로 쓰려면 저작권자의 서면 허락이
 필요합니다.
@@ -52,6 +53,24 @@ Removing or altering these notices terminates the rights granted under the Licen
 복사하거나 고친 판에서도 이 LICENSE·LICENSE-MIT·LICENSE-APACHE·NOTICE 파일과
 "Copyright (c) 2026 김철우 (cwkim83)", 앱 화면의 "© 2026 김철우 (cwkim83)" 표시를
 그대로 두어야 합니다. 지우거나 바꾸면 이 라이선스로 받은 권리가 끝납니다.
+
+------------------------------------------------------------------------------
+[추가 조건 3] 재배포·공개 전에 알리기 — Notify before redistribution or publication
+------------------------------------------------------------------------------
+Before you give the Software (or a modified version) to others, publish it in a
+repository, website or file share, or include it in a course, book, event or
+other material that others will receive, you must notify the Licensor by email
+at cwkim@sejong-21c.com, stating who you are, where, and for what purpose.
+Redistribution or publication without such notice is not licensed. Downloading
+and using the Software by yourself does not require notice.
+
+이 소프트웨어(또는 고친 판)를 다른 사람에게 주거나, 저장소·사이트·자료실에 올리거나,
+다른 사람이 받게 되는 강의·교재·행사 자료에 담아 공개하기 전에, 저작권자에게 먼저
+이메일(cwkim@sejong-21c.com)로 알려야 합니다. 누가·어디에·무엇을 위해 쓰는지 적어 주세요.
+알리지 않고 재배포·공개하면 이 라이선스로 받은 권리가 없습니다. 내려받아 혼자 쓰는
+것은 알리지 않아도 됩니다.
+(이것은 "알림"이지 "허락 요청"이 아닙니다. 다만 팔거나 유료로 제공하는 것은 [추가 조건 1]
+에 따라 여전히 저작권자의 서면 허락이 있어야 합니다.)
 
 ------------------------------------------------------------------------------
 강좌 자료 / Course materials
