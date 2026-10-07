@@ -560,7 +560,69 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs·approval·okr)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
 // 여러 사람이 쓰므로 누구의 비서인지도 알려 준다: 개인 폴더(기억·예약·일지가 있는 곳)와 역할. 지침에 적힌 memory.md·schedule.json·journal/ 은 이 폴더 안의 것이다
 const userHint = (u) => `이 사람의 개인 폴더: users/${u.username}/ (작업 폴더 기준). 지침의 memory.md·schedule.json·journal/ 은 모두 이 폴더 안의 것이다: users/${u.username}/memory.md · users/${u.username}/schedule.json · users/${u.username}/journal/<날짜>.md. data/ 바로 아래의 memory.md·schedule.json·journal/ 은 쓰지 않는다. 다른 사람의 폴더(users/ 아래 다른 이름)는 열지 않는다. 역할: ${isAdmin(u) ? '관리자' : '일반 사용자'}${u.dept ? `, 부서: ${u.dept}` : ''}.`;
-const brainCtx = (u, d = new Date()) => `주인 이름: ${u.name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${userHint(u)} ${SKILL_HINT}`;
+const brainCtx = (u, d = new Date()) => `주인 이름: ${u.name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${userHint(u)} ${SKILL_HINT}${kbHint()}`;
+
+// ---------- 10편: 위키(data/wiki/<주제>.md)와 스킬(data/.claude/skills/<이름>/SKILL.md) — 비서가 배운 것을 쌓는다 ----------
+// 위키: 비서가 "위키에 저장해" 로 파일을 직접 쓴다 (data/wiki 는 쓰기가 허용된 폴더).
+// 스킬: 비서는 .claude 를 못 고치므로(READONLY_FILES) users/<아이디>/skill-draft.md 에 초안만 놓고, 말이 끝나면 서버가 검사해 저장한다 (결재 초안과 같은 방식).
+// 두뇌는 격리 설정(--disable-slash-commands) 때문에 스킬을 스스로 찾아 쓰지 못한다 → 서버가 매 실행마다 저장된 스킬 목록(이름 — 언제 쓰는지)을 알려 주고, 비서가 맞는 것을 Read 로 읽는다.
+const WIKI_DIR = path.join(DATA_DIR, 'wiki'), SKILL_DIR = path.join(DATA_DIR, '.claude', 'skills');
+fs.mkdirSync(WIKI_DIR, { recursive: true });
+const BUILTIN_SKILLS = new Set(fs.readdirSync(SKILLS_SRC).map((n) => n.toLowerCase())); // 기본 스킬(platform·wbs…): 목록에 안 나오고, 지우거나 같은 이름으로 덮을 수 없다 (윈도우는 대소문자를 안 가려 소문자로 비교)
+const KB_MAX = { wiki: 200_000, skill: 8000, desc: 300, skills: 30 };
+const SKILL_NAME_RE = /^[0-9A-Za-z가-힣][0-9A-Za-z가-힣-]{0,39}$/;
+const WIKI_NAME_RE = /^[^\\/:*?"<>|\u0000-\u001f.][^\\/:*?"<>|\u0000-\u001f]{0,59}$/; // 폴더·윈도우 금지 글자·점으로 시작하는 이름은 안 된다
+const wikiFile = (name) => (typeof name === 'string' && name === name.trim() && WIKI_NAME_RE.test(name) && !RESERVED_NAME.test(name.toLowerCase()) ? path.join(WIKI_DIR, `${name}.md`) : null);
+const skillDirOf = (name) => (typeof name === 'string' && SKILL_NAME_RE.test(name) && !RESERVED_NAME.test(name.toLowerCase()) && !BUILTIN_SKILLS.has(name.toLowerCase()) ? path.join(SKILL_DIR, name) : null);
+const skillDesc = (text) => { const m = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(text), d = m && /^description:[ \t]*(.*)$/m.exec(m[1]); return d ? d[1].trim() : ''; };
+const newestFirst = (a, b) => b.at.localeCompare(a.at);
+function wikiList() { // [{ name, size, at }] 최근 순. data/wiki 바로 아래의 .md 만 (하위 폴더·이상한 이름은 안 보인다)
+  let files = []; try { files = fs.readdirSync(WIKI_DIR); } catch { return []; }
+  return files.filter((f) => f.endsWith('.md')).flatMap((f) => { const name = f.slice(0, -3), full = wikiFile(name); try { const s = full && fs.statSync(full); return s && s.isFile() ? [{ name, size: s.size, at: s.mtime.toISOString() }] : []; } catch { return []; } }).sort(newestFirst);
+}
+function skillList() { // 주인이 저장한 스킬(기본 스킬 제외): [{ name, description, at }] 최근 순
+  let ds = []; try { ds = fs.readdirSync(SKILL_DIR); } catch { return []; }
+  return ds.flatMap((name) => { const d = skillDirOf(name); try { const f = d && path.join(d, 'SKILL.md'), s = f && fs.statSync(f); return s && s.isFile() ? [{ name, description: skillDesc(fs.readFileSync(f, 'utf8')), at: s.mtime.toISOString() }] : []; } catch { return []; } }).sort(newestFirst);
+}
+function kbHint() { // 두뇌에 알리는 글: 저장된 스킬(이름 — 언제 쓰는지)과 위키 문서 이름. 둘 다 없으면 ''
+  const sk = skillList().slice(0, KB_MAX.skills), wk = wikiList().slice(0, 40);
+  return (sk.length ? ` 주인이 저장한 스킬: ${sk.map((s) => `「${s.name}」 — ${s.description.slice(0, 120)}`).join(' / ')}. 요청이 이 설명에 맞으면 그 스킬의 .claude/skills/<이름>/SKILL.md 를 먼저 Read 로 읽고 순서대로 따른다.` : '')
+    + (wk.length ? ` 위키 문서(data/wiki/<이름>.md): ${wk.map((w) => w.name).join(', ')}. 관련 질문이면 먼저 읽고 참고한다.` : '');
+}
+const skillDraftFile = (u) => userFile(u, 'skill-draft.md');
+const asksSkill = (s) => /스킬/.test(s) && /(저장|만들|남겨|등록|추가|기록)/.test(s); // 주인이 이번 말에서 직접 스킬 저장을 시켰는가 (웹 페이지·파일 속 글이 시켜서 만들어지지 않게)
+function takeSkillDraft(user, content, drop) { // 비서가 놓고 간 초안을 검사해 스킬로 저장한다 → 채팅에 덧붙일 한 줄 ('' 이면 초안이 없었음). 파일은 한 번 보고 지운다
+  const file = skillDraftFile(user); let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return ''; }
+  fs.rmSync(file, { force: true });
+  if (drop) return ''; // 주인이 ■ 로 중지한 대화: 만들지 않는다
+  if (!asksSkill(content)) { addNotice('스킬 저장을 시키지 않았는데 초안이 생겼어요', `${user.name} 님의 대화 중 비서가 스킬 초안을 놓았지만, 말에 스킬 저장 요청이 없어서 저장하지 않았어요. 웹 페이지나 파일 속 글이 시킨 것일 수 있어요.`, '주의', undefined, user.username); return '⚠ 스킬 저장을 시키지 않아서 저장하지 않았어요.'; }
+  if (!isAdmin(user)) return '⚠ 스킬 저장은 관리자만 할 수 있어요. (스킬은 모든 사람의 비서에게 적용돼서요) 저장하지 않았어요.';
+  const m = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw), field = (k) => ((new RegExp(`^${k}:[ \\t]*(.*)$`, 'm').exec(m ? m[1] : '') || [])[1] || '').trim();
+  const name = field('name'), desc = cleanText(field('description')).replace(/\s+/g, ' '), body = m ? cleanText(m[2]) : ''; // 앞머리에서는 name·description 두 줄만 가져간다 (허용 도구·훅 같은 다른 칸은 버림)
+  if (!m || !body) return '⚠ 스킬 초안의 모양이 맞지 않아 저장하지 못했어요. (맨 위 --- 사이에 name·description, 그 아래에 순서) 한 번 더 시켜 주세요.';
+  const dir = skillDirOf(name);
+  if (!dir) return `⚠ 스킬 이름 「${name.slice(0, 40)}」 을(를) 쓸 수 없어요. 한글·영문·숫자·하이픈(-) 40자까지이고, 기본 스킬(platform·wbs·mail…)과 같은 이름은 안 돼요.`;
+  if (!desc || desc.length > KB_MAX.desc) return `⚠ 스킬의 "언제 쓰는지(description)"는 1~${KB_MAX.desc}자로 적어야 해요. 저장하지 못했어요.`;
+  if (body.length > KB_MAX.skill) return `⚠ 스킬 본문이 너무 길어요(${KB_MAX.skill}자까지). 저장하지 못했어요.`;
+  const had = fs.existsSync(dir);
+  if (!had && skillList().length >= KB_MAX.skills) return `⚠ 스킬은 ${KB_MAX.skills}개까지 저장할 수 있어요. 안 쓰는 스킬을 스킬 칸에서 지우고 다시 시켜 주세요.`;
+  fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---\n\n${body}\n`);
+  return `🧩 스킬을 ${had ? '고쳐 ' : ''}저장했어요: 「${name}」 — 다음 대화부터 비서가 먼저 읽고 따라요. (채팅 왼쪽 **스킬** 칸에서 열어 보고 지울 수 있어요)`;
+}
+// /api/wiki[/<이름>] · /api/skills[/<이름>] — GET 목록·내용, DELETE 지우기. 저장은 비서가 한다 (위키는 파일을 직접, 스킬은 초안 → 서버 검사). 스킬은 모두의 비서에 적용되니 지우기는 관리자만
+function kbApi(req, res, user, kind, raw) {
+  const wiki = kind === 'wiki', M = req.method, canEdit = wiki || isAdmin(user);
+  let name = null; if (raw !== undefined) { try { name = decodeURIComponent(raw); } catch { return send(res, 400, { error: '주소가 올바르지 않습니다.' }); } }
+  if (name === null) return M === 'GET' ? send(res, 200, { items: wiki ? wikiList() : skillList(), canEdit }) : send(res, 405, { error: '허용되지 않는 요청입니다.' });
+  const dir = wiki ? null : skillDirOf(name), file = wiki ? wikiFile(name) : dir && path.join(dir, 'SKILL.md');
+  if (!file || !fs.existsSync(file)) return send(res, 404, { error: wiki ? '없는 위키 문서예요.' : '없는 스킬이에요.' });
+  if (M === 'GET') return send(res, 200, { name, text: fs.readFileSync(file, 'utf8').slice(0, KB_MAX.wiki), canEdit });
+  if (M !== 'DELETE') return send(res, 405, { error: '허용되지 않는 요청입니다.' });
+  if (!canEdit) return send(res, 403, { error: '스킬은 관리자만 지울 수 있어요.' });
+  fs.rmSync(wiki ? file : dir, { recursive: true, force: true });
+  return send(res, 200, { ok: true });
+}
 
 // 두뇌가 실패했을 때 이유를 쉬운 한국어로 — 대화(streamReply)와 예약(askBrainOnce)이 같이 쓴다
 const STALE_SESSION_MSG = '이전 대화의 기억을 찾지 못했습니다. 같은 말을 한 번 더 보내시면 새 기억으로 시작합니다.';
@@ -751,6 +813,7 @@ function streamReply(res, chat, content, user, atts = []) {
   const gateFile = gate ? path.join(os.tmpdir(), `sancho-gate-${crypto.randomBytes(8).toString('hex')}.json`) : null;
   if (gateFile) fs.writeFileSync(gateFile, JSON.stringify({ tools: gate.tools, emails: gate.emails, once: gate.once }));
   const boxBefore = boxSnap();
+  try { fs.rmSync(skillDraftFile(user), { force: true }); } catch { /* 묵은 스킬 초안은 이번 차례 것이 아니니 치운다 (이번 차례에 놓은 것만 저장되게) */ }
   chat.messages.push({ role: 'user', content, at: nowIso(), ...(atts.length ? { attachments: atts } : {}) });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
   saveChat(user, chat);
@@ -797,6 +860,8 @@ function streamReply(res, chat, content, user, atts = []) {
     }
     let drafted = ''; try { drafted = takeApprovalDraft(user, aborted); } catch (e) { drafted = `⚠ 기안 초안을 처리하지 못했어요: ${e.message}`; } // 비서가 "기안서 써 줘"로 놓고 간 초안 → 작성중 기안
     if (drafted) emit(`${gap()}${drafted}`);
+    let skilled = ''; try { skilled = takeSkillDraft(user, content, aborted); } catch (e) { skilled = `⚠ 스킬 초안을 처리하지 못했어요: ${e.message}`; } // 비서가 "스킬로 저장해"로 놓고 간 초안 → 검사해서 스킬로
+    if (skilled) emit(`${gap()}${skilled}`);
     if (sm && sm.ok) { // 자기 수정: 비서의 답이 끝났으니 바뀐 파일을 검사한다 (몇 분 걸릴 수 있어, 이 사이 이 대화는 "답하는 중")
       const ok = !aborted && !!result && !result.is_error;
       return selfmodAfter({ user, content, ok, emit, gap }).then(complete, (e) => { emit(`${gap()}⚠ 자기 수정 처리 중 오류: ${e.message}`); complete({}); });
@@ -2226,6 +2291,8 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, added: Object.fromEntries(names.map((n) => [n, sample[n].length])) });
     }
 
+    const kb = p.match(/^\/api\/(wiki|skills)(?:\/([^/]+))?$/);
+    if (kb) return kbApi(req, res, user, kb[1], kb[2]);
     if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory(user).map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });
     if (p === '/api/memory/delete' && req.method === 'POST') {
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }

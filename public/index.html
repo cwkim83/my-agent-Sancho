@@ -129,6 +129,17 @@
   #mem .item button { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--sub); }
   #mem .item button:hover { background: #fee4e2; color: #b42318; }
   #mem .none { padding: 4px 8px; color: var(--sub); font-size: 12px; }
+  /* 위키·스킬 칸 (10편): 평소엔 제목 한 줄로 접어 두고, 열면 목록. 이름을 누르면 내용, ✕ 는 지우기 */
+  .chatlist { min-height: 0; overflow-y: auto; }
+  .kb { flex: none; border-top: 1px solid var(--line); }
+  .kb summary { padding: 10px 16px; font-size: 13px; font-weight: 600; color: var(--sub); cursor: pointer; }
+  .kb > div { max-height: 150px; overflow-y: auto; padding: 0 8px 10px; }
+  .kb .item { display: flex; gap: 4px; align-items: center; padding: 1px 4px 1px 8px; border-radius: 8px; font-size: 13px; }
+  .kb .item:hover { background: #f2f4f7; }
+  .kb .item > button:first-child { flex: 1; min-width: 0; padding: 5px 0; border: 0; background: none; text-align: left; color: #344054; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kb .item > button[data-del] { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--sub); }
+  .kb .item > button[data-del]:hover { background: #fee4e2; color: #b42318; }
+  .kb .none { padding: 4px 8px; color: var(--sub); font-size: 12px; }
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .pane-top { display: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fff; }
   .pane-top button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -568,7 +579,9 @@
       <section id="chat">
         <aside class="chatlist"><button class="new" id="newChat">＋ 새 대화</button><div id="list"></div>
           <div class="sched"><h3>예약 <span id="schN"></span></h3><div id="sch"></div></div>
-          <div class="memory"><h3>기억 <span id="memN"></span></h3><div id="mem"></div></div></aside>
+          <div class="memory"><h3>기억 <span id="memN"></span></h3><div id="mem"></div></div>
+          <details class="kb" id="wikiBox"><summary>위키 <span id="wikiN"></span></summary><div id="wiki"></div></details>
+          <details class="kb" id="skillBox"><summary>스킬 <span id="skillN"></span></summary><div id="skill"></div></details></aside>
         <div class="pane">
           <div class="pane-top"><button id="listBtn">📂 대화 목록</button></div>
           <div id="msgs"><div class="wrap" id="thread"></div></div>
@@ -596,6 +609,7 @@
     setBusy(busy);
     loadPerm();
     loadMemory();
+    loadKb();
     loadSched();
     $('mic').onclick = micToggle; $('spk').onclick = toggleSpeak; syncVoiceUi();
     loadList().then(() => (chatId ? openChat(chatId) : renderThread([]))).then(() => { // 다른 화면에서 "산초야"로 부른 말은 채팅 화면이 다 그려진 뒤에 보낸다
@@ -627,6 +641,36 @@
       if (!r.ok) alert((await r.json()).error);
       loadMemory();
     }));
+  }
+
+  // 위키(data/wiki/*.md)와 스킬(비서가 저장한 절차): 이름을 누르면 내용, ✕ 로 지우기. 저장은 채팅에서 "위키에 저장해"·"방금 한 일 스킬로 저장해"
+  const KB = { wiki: { box: 'wiki', n: 'wikiN', icon: '📄', none: '아직 없어요. 채팅에서 "… 위키에 저장해" 라고 말해 보세요.' }, skills: { box: 'skill', n: 'skillN', icon: '🧩', none: '아직 없어요. 일을 시킨 뒤 "방금 한 일 스킬로 저장해" 라고 말해 보세요.' } };
+  async function loadKb() {
+    for (const [kind, c] of Object.entries(KB)) {
+      const el = $(c.box); if (!el) return;
+      const r = await api('/api/' + kind); if (!r.ok) continue;
+      const { items, canEdit } = await r.json();
+      $(c.n).textContent = items.length ? `(${items.length})` : '';
+      el.innerHTML = items.length
+        ? items.map((x) => `<div class="item"><button data-n="${esc(x.name)}" title="${esc(x.description || x.name)}">${c.icon} ${esc(x.name)}</button>${canEdit ? `<button data-del="${esc(x.name)}" title="지우기" aria-label="${esc(x.name)} 지우기">✕</button>` : ''}</div>`).join('')
+        : `<div class="none">${c.none}</div>`;
+      el.querySelectorAll('[data-n]').forEach((b) => (b.onclick = () => openKb(kind, b.dataset.n)));
+      el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+        if (!confirm(`「${b.dataset.del}」 을(를) 지울까요?`)) return;
+        const d = await api(`/api/${kind}/${encodeURIComponent(b.dataset.del)}`, { method: 'DELETE' });
+        if (!d.ok) alert((await d.json()).error);
+        loadKb();
+      }));
+    }
+  }
+  async function openKb(kind, name) { // 내용을 창으로 (알림 결과와 같은 창)
+    const r = await api(`/api/${kind}/${encodeURIComponent(name)}`);
+    if (!r.ok) { alert((await r.json()).error); return loadKb(); }
+    let text = (await r.json()).text;
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text); // 스킬 앞머리(---)는 "언제 쓰는지" 한 줄로 바꿔 보여 준다
+    if (fm) text = `> 언제 쓰는지: ${(/^description:[ \t]*(.*)$/m.exec(fm[1]) || [])[1] || ''}\n\n${text.slice(fm[0].length)}`;
+    $('nmTitle').textContent = name; $('nmMeta').innerHTML = `<span class="lvl">${kind === 'wiki' ? '위키' : '스킬'}</span>`;
+    $('nmBody').innerHTML = md(text); $('noticeModal').hidden = false; $('nmClose').focus();
   }
 
   async function openChat(id) {
@@ -791,7 +835,7 @@
     if (!got && !out.querySelector('p') && !out.querySelector('.warnline')) out.innerHTML = '<span class="typing">(중지했습니다.)</span>';
     setBusy(false); aborter = null;
     if (got && !stopped && (byVoice || V.speak)) speakReply(got); // 답 읽어 주기 (사람이 중지한 답은 읽지 않는다)
-    loadList(); loadMemory(); // 비서가 방금 기억을 적었을 수 있다
+    loadList(); loadMemory(); loadKb(); // 비서가 방금 기억·위키·스킬을 적었을 수 있다
     loadPerm(); // 다른 곳(설정 화면·다른 탭)에서 바뀐 권한이 입력창 왼쪽 표시에 남지 않게
     if ($('input')) $('input').focus();
   }
