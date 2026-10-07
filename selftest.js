@@ -3541,6 +3541,148 @@ async function runAccess() {
   try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
 }
 
+// 커넥터 (9편 셋째 단계): claude.ai 가 부르는 /mcp-<비밀 48자> 창구 — MCP Streamable HTTP(JSON-RPC 2.0), 읽기 전용 도구 5개만, 이용 기록은 시각·도구 이름·성공 여부만. 전용 서버(포트 8803)로
+async function runConnector() {
+  const http = require('http'), P = 8803, B = `http://127.0.0.1:${P}`, d = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test-cn-'));
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), until = async (fn, ms = 8000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
+  const sha = (f) => crypto.createHash('sha1').update(fs.readFileSync(f)).digest('hex');
+  // ---- 시험 자료: 오늘 기준으로 만든다 (월요일 시작 한 주)
+  const addDays = (s, n) => { const [y, m, dd] = s.split('-').map(Number), t = new Date(y, m - 1, dd); t.setDate(t.getDate() + n); return t.toLocaleDateString('sv-SE'); };
+  const today = new Date().toLocaleDateString('sv-SE'), mon = addDays(today, -((new Date().getDay() + 6) % 7)), sun = addDays(mon, 6);
+  const ev = (id, title, date, extra = {}) => ({ id, title, kind: '회의', date, endDate: date, start: '10:00', end: '11:00', place: '본사', projectId: null, memo: '비밀 메모(보내면 안 됨)', ...extra });
+  const events = [ev('c-e1', '오늘 회의', today), ev('c-e2', '오늘 아침', today, { start: '09:00' }), ev('c-e3', '주초 일정', mon), ev('c-e4', '주말 일정', sun), ev('c-e5', '지난주 일정', addDays(mon, -1)), ev('c-e6', '다음주 일정', addDays(sun, 1)),
+    ev('c-e7', '여러 날 일정', addDays(mon, -1), { endDate: addDays(mon, 1) })];
+  const projects = [{ id: 'cn-p1', name: '커넥터 시험 프로젝트', client: '시험고객', status: '진행중', progress: 40, start: addDays(today, -30), due: addDays(today, 30), owner: '김가나', budget: 123456789, memo: '프로젝트 비밀메모' },
+    { id: 'cn-p2', name: 'WBS 없는 프로젝트', client: '', status: '계획', progress: 0, start: today, due: addDays(today, 60), owner: '' }];
+  const wbs = { bac: 987654321, ac: 55555, actualLog: {}, items: [{ code: '1', type: '대단락', name: '설계', weight: 1 },
+    { code: '1.1', type: '작업', name: '늦은 작업', owner: '이다라', start: addDays(today, -10), end: addDays(today, 10), progress: 0, weight: 1, memo: '작업 비밀 메모' },
+    { code: '1.2', type: '작업', name: '정상 작업', owner: '박마바', start: addDays(today, -10), end: addDays(today, -1), progress: 100, weight: 1 }] };
+  const tasks = [{ id: 'c-t1', title: '내 지난 할 일', projectId: 'cn-p1', due: addDays(today, -1), status: '진행중', owner: '커넥' }, { id: 'c-t2', title: '내 다음 할 일', projectId: 'cn-p1', due: addDays(today, 1), status: '할 일', owner: '커넥' },
+    { id: 'c-t3', title: '내 끝낸 할 일', projectId: null, due: addDays(today, -3), status: '완료', owner: '커넥' }, { id: 'c-t4', title: '남의 할 일', projectId: null, due: today, status: '할 일', owner: '다른사람' },
+    { id: 'c-t5', title: '마감 없는 내 할 일', projectId: null, due: '', status: '할 일', owner: '커넥' }];
+  for (const [f, v] of [['db/events.json', events], ['db/projects.json', projects], ['db/tasks.json', tasks], ['wbs/cn-p1.json', wbs]]) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), JSON.stringify(v, null, 2)); }
+  const dataHash = () => ['db/events.json', 'db/projects.json', 'db/tasks.json', 'wbs/cn-p1.json'].map((f) => sha(path.join(d, f))).join();
+  const env = { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js') };
+  const s = startServer(P, d, env); await s.ready;
+  const setup = await fetch(B + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '커넥', username: 'cnuser', password: PW }) });
+  const L = { 'Content-Type': 'application/json', Cookie: cookieOf(setup) };
+  const loc = (u, method = 'GET', body) => fetch(B + u, { method, headers: L, body: body ? JSON.stringify(body) : undefined });
+  const cfile = path.join(d, 'connector.json'), cj = () => JSON.parse(fs.readFileSync(cfile, 'utf8')), logFile = path.join(d, 'logs', 'connector.jsonl');
+  const logLines = () => { try { return fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+  const AC = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+  const rpc = async (p, msg, { method = 'POST', headers = {}, to = B } = {}) => {
+    const r = await fetch(to + p, { method, headers: { ...AC, ...headers }, body: method === 'POST' ? (typeof msg === 'string' ? msg : JSON.stringify(msg)) : undefined }), text = await r.text();
+    let json = null; try { json = JSON.parse(text); } catch { /* JSON 이 아님 */ }
+    return { status: r.status, headers: r.headers, text, json };
+  };
+  const call = (p, name, args, id = 1) => rpc(p, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, ...(args === undefined ? {} : { arguments: args }) } });
+  const out = (r) => JSON.parse(r.json.result.content[0].text);
+
+  // ① 도구 목록을 못박는다 (읽기 전용 5개, 이것뿐)
+  const mcpMod = require('./mcp.js'), mcpSrc = fs.readFileSync(path.join(__dirname, 'mcp.js'), 'utf8');
+  const WANT = ['get_delayed_wbs_tasks', 'get_my_tasks', 'get_today_events', 'get_week_events', 'list_projects'];
+  check('노출 도구 목록은 정확히 이 5개뿐: get_today_events · get_week_events · list_projects · get_delayed_wbs_tasks · get_my_tasks', mcpMod.TOOL_NAMES.length === 5 && [...mcpMod.TOOL_NAMES].sort().join() === WANT.join());
+  check('mcp.js 는 아무것도 불러오지 않음(require·import·fs·child_process·net·http·fetch·process·eval 없음) — 파일·네트워크·프로그램 실행이 아예 불가능, 쓰기·실행 도구를 넣을 수 없는 구조',
+    !/\brequire\s*\(|\bimport\b|\bfs\b|child_process|\bnet\b|\bhttps?\b|\bfetch\s*\(|\bprocess\b|\beval\s*\(|new\s+Function|writeFile|appendFile|\bspawn\b|\bexec\b/.test(mcpSrc));
+
+  // ② 주소 만들기 · 비밀 · 가림
+  const FAKE = '/mcp-' + 'A'.repeat(48);
+  check('주소를 만들기 전에는 어떤 /mcp-… 주소도 404', (await rpc(FAKE, { jsonrpc: '2.0', id: 1, method: 'ping' })).status === 404);
+  const mk = await loc('/api/settings/connector', 'POST'), mkText = await mk.text(), C1 = cj();
+  check('커넥터 주소 만들기: 200, 비밀은 영숫자 48자이고 data/connector.json 에만 있음(만든 사람 id·시각 포함), 응답·설정 목록에는 비밀 값이 없음',
+    mk.status === 200 && /^[A-Za-z0-9]{48}$/.test(C1.secret) && !!C1.userId && !!C1.createdAt && !mkText.includes(C1.secret) && !(await (await loc('/api/settings')).text()).includes(C1.secret) && JSON.parse(mkText).connector.exists === true);
+  const addr = await loc('/api/settings/connector/address');
+  check('이 PC 의 관리자는 주소를 복사할 수 있음(GET connector/address → /mcp-<비밀>), 비밀 파일은 비서가 못 읽는 목록(PRIVATE_FILES)에 있음', addr.status === 200 && (await addr.json()).path === `/mcp-${C1.secret}`
+    && /const PRIVATE_FILES = \[[^\]]*'connector\.json'/.test(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8')));
+  const html = await (await loc('/')).text();
+  check('설정 화면: 커넥터 칸(주소 만들기·복사·10초 보기·이용 기록)이 있고 도구 5개를 알려 주며, 화면 파일에 비밀 값이 없음', ['id="cnMake"', 'id="cnCopy"', 'id="cnShow"', 'id="cnLog"', ...WANT].every((w) => html.includes(w)) && !html.includes(C1.secret));
+  const PATH1 = `/mcp-${C1.secret}`;
+
+  // ③ 프로토콜 (JSON-RPC 2.0 · MCP Streamable HTTP)
+  const h0 = dataHash();
+  const init = await rpc(PATH1, { jsonrpc: '2.0', id: 'a1', method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
+  check('initialize: 부른 버전(2025-06-18)을 그대로 답하고, 도구 기능(tools)·서버 이름(sancho)·글자 id("a1")를 돌려줌, Content-Type 은 application/json', init.status === 200 && init.json.jsonrpc === '2.0' && init.json.id === 'a1' && init.json.result.protocolVersion === '2025-06-18'
+    && !!init.json.result.capabilities.tools && init.json.result.serverInfo.name === 'sancho' && /application\/json/.test(init.headers.get('content-type')));
+  check('initialize: 모르는 버전을 부르면 우리가 아는 최신 버전으로 답함', (await rpc(PATH1, { jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '1999-01-01' } })).json.result.protocolVersion === mcpMod.VERSIONS[0]);
+  const note = await rpc(PATH1, { jsonrpc: '2.0', method: 'notifications/initialized' });
+  check('알림(notifications/initialized)에는 본문 없이 202, ping 은 빈 결과', note.status === 202 && note.text === '' && JSON.stringify((await rpc(PATH1, { jsonrpc: '2.0', id: 3, method: 'ping' })).json.result) === '{}');
+  const list = await rpc(PATH1, { jsonrpc: '2.0', id: 4, method: 'tools/list' }), tools = list.json.result.tools;
+  check('tools/list: 도구 5개가 정확히 이 이름들이고, 모두 읽기 전용 표시(readOnlyHint true·destructiveHint false)와 인자 검사(additionalProperties false)가 있고, 이름은 get_/list_ 로만 시작(쓰기·실행 동사 없음)',
+    tools.length === 5 && tools.map((t) => t.name).sort().join() === WANT.join() && tools.every((t) => t.annotations.readOnlyHint === true && t.annotations.destructiveHint === false && t.inputSchema.type === 'object' && t.inputSchema.additionalProperties === false
+      && /^(get|list)_/.test(t.name) && !/(create|update|delete|remove|write|save|send|post|put|set|add|run|exec|shell|command|open|install|approve|reject)/i.test(t.name)));
+  const bad1 = await rpc(PATH1, { jsonrpc: '2.0', id: 5, method: 'resources/list' }), bad2 = await rpc(PATH1, '{ 이건 JSON 이 아님'), bad3 = await rpc(PATH1, {}), bad4 = await rpc(PATH1, { jsonrpc: '1.0', id: 6, method: 'ping' });
+  check('틀린 요청의 오류 번호: 모르는 메서드 -32601(resources 는 없음), 깨진 JSON 400/-32700, 빈 요청·버전 틀림 -32600', bad1.json.error.code === -32601 && bad2.status === 400 && bad2.json.error.code === -32700 && bad3.json.error.code === -32600 && bad4.json.error.code === -32600);
+  const batch = await rpc(PATH1, [{ jsonrpc: '2.0', id: 7, method: 'ping' }, { jsonrpc: '2.0', method: 'notifications/initialized' }, { jsonrpc: '2.0', id: 8, method: 'tools/list' }]);
+  check('배치(배열)는 알림을 빼고 답을 배열로, 알림만 있는 배치는 202', Array.isArray(batch.json) && batch.json.length === 2 && batch.json[1].id === 8 && (await rpc(PATH1, [{ jsonrpc: '2.0', method: 'notifications/initialized' }])).status === 202);
+  const g = await rpc(PATH1, null, { method: 'GET' }), del = await rpc(PATH1, null, { method: 'DELETE' });
+  check('GET·DELETE 는 405(Allow: POST) — 서버가 먼저 말을 거는 스트림·세션은 없음', g.status === 405 && /POST/.test(g.headers.get('allow') || '') && del.status === 405);
+
+  // ④ 도구 호출 결과 (독립적으로 다시 계산한 값과 비교)
+  const inRange = (e, a, b) => e.date <= b && (e.endDate || e.date) >= a;
+  const wantToday = events.filter((e) => inRange(e, today, today)).sort((x, y) => x.start.localeCompare(y.start)).map((e) => e.title);
+  const t1 = await call(PATH1, 'get_today_events'), o1 = out(t1);
+  check('get_today_events: 오늘에 걸친 일정만 시작 시각 순으로(오늘 아침 → 오늘 회의), 메모는 안 보냄', t1.json.result.isError === false && o1.date === today && o1.count === wantToday.length && o1.events.map((e) => e.title).join() === wantToday.join() && o1.events.every((e) => !('memo' in e)) && !JSON.stringify(o1).includes('비밀 메모'));
+  const t2 = await call(PATH1, 'get_week_events'), o2 = out(t2), wantWeek = events.filter((e) => inRange(e, mon, sun));
+  check('get_week_events: 이번 주(월~일)에 걸친 일정만 — 지난주·다음주 일정은 빠지고, 여러 날 일정은 걸친 날마다 나오되 총 개수에는 한 번만', o2.week_start === mon && o2.week_end === sun && o2.days.length === 7 && o2.total_events === wantWeek.length
+    && !JSON.stringify(o2).includes('지난주 일정') && !JSON.stringify(o2).includes('다음주 일정') && o2.days.find((x) => x.date === mon).events.some((e) => e.title === '여러 날 일정') && o2.days.find((x) => x.date === addDays(mon, 1)).events.some((e) => e.title === '여러 날 일정') && !o2.days.find((x) => x.date === addDays(mon, 2)).events.some((e) => e.title === '여러 날 일정'));
+  const t3 = await call(PATH1, 'list_projects'), o3 = out(t3), p1 = o3.projects.find((p) => p.id === 'cn-p1'), p2 = o3.projects.find((p) => p.id === 'cn-p2');
+  check('list_projects: 프로젝트 2개의 이름·상태·진도율, WBS 가 있는 쪽만 WBS 기준 진도와 지연 작업 수(1개), 금액(budget)·메모는 안 보냄', o3.count === 2 && p1.progress_percent === 40 && p1.status === '진행중' && p1.wbs.delayed_tasks === 1 && p1.wbs.actual_percent > 0 && !('wbs' in p2) && p2.progress_percent === 0
+    && !/budget|memo|123456789|프로젝트 비밀메모/.test(JSON.stringify(o3)));
+  const t4 = await call(PATH1, 'get_delayed_wbs_tasks'), o4 = out(t4), t4b = out(await call(PATH1, 'get_delayed_wbs_tasks', { project_id: 'cn-p1' }));
+  check('get_delayed_wbs_tasks: 지연 작업(늦은 작업)만 — 정상·완료 작업은 빠지고, 계획·실제 진도와 뒤처진 %p 를 알리며, 계약금액·실제 비용·메모는 안 보냄', o4.total_delayed === 1 && o4.projects.length === 1 && o4.projects[0].delayed_tasks[0].name === '늦은 작업' && o4.projects[0].delayed_tasks[0].behind_points > 10
+    && o4.projects[0].delayed_tasks[0].actual_percent === 0 && o4.projects[0].delayed_tasks[0].planned_percent > 50 && t4b.total_delayed === 1 && !/987654321|55555|작업 비밀 메모|bac|\"ac\"|memo/.test(JSON.stringify(o4)));
+  const t4c = await call(PATH1, 'get_delayed_wbs_tasks', { project_id: 'cn-p2' });
+  check('WBS 없는 프로젝트를 콕 집으면 프로토콜 오류가 아니라 isError 결과(쉬운 이유)로 알림', t4c.status === 200 && t4c.json.result.isError === true && t4c.json.result.content[0].text.includes('WBS'));
+  const t5 = await call(PATH1, 'get_my_tasks'), o5 = out(t5), o5b = out(await call(PATH1, 'get_my_tasks', { include_done: true }));
+  check('get_my_tasks: 만든 사람(커넥)의 끝나지 않은 할 일만 마감일 순(없는 것은 맨 뒤)·지난 마감 표시·프로젝트 이름, 남의 할 일은 안 나옴. include_done=true 면 완료한 것도',
+    o5.owner === '커넥' && o5.tasks.map((t) => t.title).join() === '내 지난 할 일,내 다음 할 일,마감 없는 내 할 일' && o5.tasks[0].overdue === true && o5.tasks[1].overdue === false && o5.tasks[0].project === '커넥터 시험 프로젝트' && !JSON.stringify(o5).includes('남의 할 일')
+    && o5b.count === 4 && o5b.tasks.some((t) => t.title === '내 끝낸 할 일'));
+  const e1 = await call(PATH1, 'delete_everything', {}), e2 = await call(PATH1, 'get_today_events', { 아무거나: 1 }), e3 = await call(PATH1, 'get_my_tasks', { include_done: 'yes' }), e4 = await call(PATH1, 'get_today_events', 'x'), e5 = await call(PATH1, 'get_delayed_wbs_tasks', { project_id: '../users' });
+  check('없는 도구·모르는 인자·틀린 자료형·이상한 id 는 모두 -32602 로 거절(쓰기 도구를 불러도 "없는 도구")', [e1, e2, e3, e4, e5].every((r) => r.json.error && r.json.error.code === -32602) && e1.json.error.message.includes('없는 도구'));
+  check('도구를 몇 번 불러도 자료 파일(일정·프로젝트·할 일·WBS)은 한 글자도 안 바뀜 — 읽기 전용', dataHash() === h0);
+
+  // ⑤ 이용 기록: 시각·도구 이름·성공 여부만
+  await call(PATH1, 'get_delayed_wbs_tasks', { project_id: 'ARGTEXT-물어본말-새면안됨' }); await call(PATH1, 'drop_database_now', {}); // (인자·없는 도구 이름이 기록에 새지 않는지)
+  const lg = logLines();
+  check('이용 기록: 줄마다 키가 정확히 at·tool·ok 뿐이고(시각·도구 이름·성공 여부), 도구를 부를 때만 남음(initialize·tools/list·ping 은 안 남음), 성공·실패가 구분됨',
+    lg.length >= 12 && lg.every((x) => Object.keys(x).sort().join() === 'at,ok,tool' && !isNaN(Date.parse(x.at)) && typeof x.ok === 'boolean') && !lg.some((x) => /initialize|ping|tools\/list/.test(x.tool))
+    && lg.some((x) => x.tool === 'get_today_events' && x.ok === true) && lg.some((x) => x.tool === 'get_delayed_wbs_tasks' && x.ok === false));
+  const rawLog = fs.readFileSync(logFile, 'utf8');
+  check('이용 기록에는 물어본 말(인자)·결과·없는 도구의 이름이 남지 않음 — 없는 도구는 "(알 수 없는 도구)" 로만', !rawLog.includes('ARGTEXT') && !rawLog.includes('drop_database_now') && !rawLog.includes('물어본말') && !rawLog.includes('오늘 회의') && !rawLog.includes(C1.secret) && lg.some((x) => x.tool === '(알 수 없는 도구)' && x.ok === false));
+  const lgApi = await (await loc('/api/settings/connector/log')).json();
+  check('설정의 이용 기록 목록(GET connector/log)은 최근 것부터 같은 내용을 보여 줌', lgApi.log.length >= 12 && lgApi.log[0].at >= lgApi.log[lgApi.log.length - 1].at && lgApi.log.every((x) => Object.keys(x).sort().join() === 'at,ok,tool'));
+
+  // ⑥ 다시 만들기: 옛 주소 무효
+  const rm = await loc('/api/settings/connector', 'POST'), C2 = cj(), PATH2 = `/mcp-${C2.secret}`;
+  check('다시 만들기: 새 비밀이 되고, 옛 주소는 바로 404, 새 주소는 됨, 옛 비밀은 data 의 어느 파일에도 안 남음', rm.status === 200 && C2.secret !== C1.secret && (await rpc(PATH1, { jsonrpc: '2.0', id: 1, method: 'ping' })).status === 404 && (await rpc(PATH2, { jsonrpc: '2.0', id: 1, method: 'ping' })).status === 200
+    && !filesUnder(d).some((f) => fs.readFileSync(f, 'utf8').includes(C1.secret)));
+
+  // ⑦ 외부 접속과의 관계 (터널을 거쳐 온 요청처럼)
+  const raw = (p, { method = 'POST', headers = {}, body } = {}) => new Promise((ok, no) => { const r = http.request({ host: '127.0.0.1', port: P, path: p, method, agent: false, headers: { ...headers, ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}) } }, (res) => { let t = ''; res.on('data', (c) => (t += c)); res.on('end', () => ok({ status: res.statusCode, text: t })); }); r.on('error', no); if (body) r.write(body); r.end(); });
+  const TUN = 'cn-test.trycloudflare.com', via = (ip, extra = {}) => ({ Host: TUN, 'cf-connecting-ip': ip, 'cf-ray': 'x', 'x-forwarded-proto': 'https', 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...extra });
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  check('외부 접속이 꺼져 있으면 비밀 주소를 알아도 밖에서 온 요청은 403(허용되지 않은 주소)', (await raw(PATH2, { headers: via('203.0.113.1'), body })).status === 403);
+  await loc('/api/settings/access/token', 'POST'); await loc('/api/settings/access', 'PUT', { on: true });
+  await sleep(600); // 켜는 순간 서버가 연결을 닫고 0.0.0.0 으로 다시 연다: 다시 열릴 때까지 기다린다
+  await until(async () => { try { return (await raw(PATH2, { headers: via('203.0.113.1'), body })).status !== 403; } catch { return false; } });
+  const viaOk = await raw(PATH2, { headers: via('203.0.113.2'), body }), viaWrong = await raw('/mcp-' + 'B'.repeat(48), { headers: via('203.0.113.3'), body });
+  check('외부 접속이 켜지면 토큰 쿠키 없이도 비밀 주소로는 도구 목록이 받아짐(claude.ai 서버는 쿠키를 못 냄) — 같은 터널의 다른 길(/ 등)은 여전히 토큰 관문(403), 틀린 비밀은 404',
+    viaOk.status === 200 && JSON.parse(viaOk.text).result.tools.length === 5 && (await raw('/', { method: 'GET', headers: via('203.0.113.2') })).status === 403 && (await raw('/api/me', { method: 'GET', headers: via('203.0.113.2') })).status === 403 && viaWrong.status === 404);
+  check('다른 사이트의 Origin 을 단 요청은 비밀 주소여도 403(브라우저로 부르는 길 차단), 자기 주소와 같은 Origin 은 통과', (await raw(PATH2, { headers: via('203.0.113.4', { Origin: 'https://evil.example' }), body })).status === 403 && (await raw(PATH2, { headers: via('203.0.113.4', { Origin: `https://${TUN}` }), body })).status === 200);
+  let last = 0; for (let i = 0; i < 12; i++) last = (await raw('/mcp-' + 'C'.repeat(48), { headers: via('203.0.113.9'), body })).status;
+  check('틀린 비밀을 11번 넘게 시도하면 그 IP 는 429 로 잠기고(맞는 비밀도 잠긴 동안은 안 됨), 다른 IP 는 영향 없음', last === 429 && (await raw(PATH2, { headers: via('203.0.113.9'), body })).status === 429 && (await raw(PATH2, { headers: via('203.0.113.10'), body })).status === 200);
+  await loc('/api/settings/access', 'PUT', { on: false });
+  await sleep(600); await until(async () => { try { return (await raw('/health', { method: 'GET' })).status === 200; } catch { return false; } }); // 끄면 다시 127.0.0.1 로 열린다
+
+  // ⑧ 만든 사람이 없어지면 "내 할 일"만 못 쓰고 나머지는 그대로
+  fs.writeFileSync(cfile, JSON.stringify({ ...C2, userId: 'nobody' }));
+  const orphan = await call(PATH2, 'get_my_tasks');
+  check('만든 사용자를 찾지 못하면 get_my_tasks 만 isError(주소를 다시 만들라는 안내), 다른 도구는 그대로', orphan.json.result.isError === true && orphan.json.result.content[0].text.includes('다시 만들') && out(await call(PATH2, 'list_projects')).count === 2);
+  check('비밀은 서버 로그와 data 의 다른 파일(connector.json 말고)에 남지 않음', !s.log.includes(C2.secret) && !filesUnder(d).some((f) => path.basename(f) !== 'connector.json' && fs.readFileSync(f, 'utf8').includes(C2.secret)));
+  s.kill();
+  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
+}
+
 // claude 프로그램이 아예 없는 PC 를 흉내: PATH 를 빈 폴더로 바꾼 서버를 하나 더 켠다
 async function runNoClaude() {
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-')), UD2 = path.join(dir2, 'users', 'two'); // 곧 만들 관리자 "two" 의 개인 폴더
@@ -3592,7 +3734,8 @@ tgServer.listen(8793, '127.0.0.1');
 const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793', SANCHO_UPLOAD_MAX: String(1024 * 1024), SANCHO_OPEN_SCRIPT: path.join(__dirname, 'test', 'fake-open.js'), SANCHO_OPEN_LOG: path.join(dir, 'open.log') }); // 예약 시계를 30초 대신 0.2초마다, 올리기 한도 1MB, "열기"는 가짜 프로그램
 srv.ready.then(async () => {
   try {
-    if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속 점검만 빨리 돌릴 때: SELFTEST_ONLY=access node selftest.js
+    if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속·커넥터 점검만 빨리 돌릴 때: SELFTEST_ONLY=access (또는 connector) node selftest.js
+    else if (process.env.SELFTEST_ONLY === 'connector') await runConnector();
     else {
       await run();
       await runNoClaude();
@@ -3602,6 +3745,7 @@ srv.ready.then(async () => {
       await runAudit7();
       await runEp8();
       await runAccess();
+      await runConnector();
       runGit();
     }
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다

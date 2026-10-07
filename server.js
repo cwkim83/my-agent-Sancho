@@ -427,7 +427,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json']; // (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
+const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', 'connector.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json']; // (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
 const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json', 'selfmod-log.json', '.rollback.json', 'logs/**']; // (8편: 자기 수정 기록·감시자가 남기는 되돌림 표시·로그도 비서가 꾸미지 못하게) // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
@@ -943,15 +943,27 @@ const plainSummary = (t, max) => { const s = t.replace(/\*\*/g, '').replace(/^#{
 //   GET /api/settings → { telegram: { token: "****"|"", chatId: "****"|"" }, permissions: { 연결된앱, 명령실행, 홈폴더 } }  (텔레그램 값 자체는 절대 안 보낸다)
 //   PUT /api/settings/telegram { token?, chatId? } (비운 칸은 그대로 둠) · DELETE → 지움 · POST /test → 시험 메시지 한 통
 //   PUT /api/settings/permissions { 연결된앱?, 명령실행?, 홈폴더?, 자기수정? } (true/false 만, 보낸 칸만 바뀜) → { permissions }
-async function settingsApi(req, res, sub, test) {
-  if (test && !(sub === 'telegram' && test === 'test') && !(sub === 'access' && test === 'token')) return false; // 없는 길(permissions/token 등)은 모른 척
+async function settingsApi(req, res, sub, test, user) {
+  if (test && !(sub === 'telegram' && test === 'test') && !(sub === 'access' && test === 'token') && !(sub === 'connector' && (test === 'address' || test === 'log'))) return false; // 없는 길(permissions/token 등)은 모른 척
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
+  if (sub === 'connector') { // 커넥터 (9편): GET connector/log → 최근 이용 기록 · GET connector/address → 주소(이 PC 에서만) · POST connector → 주소 만들기·다시 만들기(이 PC 에서만, 옛 주소는 바로 무효)
+    if (test === 'log') return M === 'GET' ? done(200, { log: connectorLogTail(20) }) : false;
+    if (test === 'address') {
+      if (M !== 'GET') return false;
+      if (isExternal(req)) return done(403, { error: '커넥터 주소는 이 PC 에서만 볼 수 있어요.' });
+      const c = readJson(CONNECTOR_FILE, null);
+      return c && SECRET_RE.test(String(c.secret)) ? done(200, { path: `/mcp-${c.secret}`, tunnel: tunnelUrl(), local: `http://127.0.0.1:${PORT}` }) : done(404, { error: '아직 커넥터 주소가 없어요. 먼저 만들어 주세요.' });
+    }
+    if (M !== 'POST') return false;
+    writeJson(CONNECTOR_FILE, { secret: newSecret(), userId: user.id, createdAt: nowIso() }); // 다시 만들면 옛 비밀은 사라져 옛 주소는 바로 못 쓴다. 비밀은 응답에도 안 담는다
+    return done(200, { ok: true, connector: connectorInfo() });
+  }
   let b = {};
   if (sub && !test && M === 'PUT') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
   // 여기부터는 await 없이: 읽기→고치기→쓰기를 한 번에
   let st; try { st = loadSettings(); } catch { return done(500, { error: 'data/settings.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
   const t = st.telegram && typeof st.telegram === 'object' ? st.telegram : {};
-  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st), access: accessInfo(st, req) }) : false;
+  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st), access: accessInfo(st, req), connector: connectorInfo() }) : false;
   if (sub === 'access') { // 외부 접속 (9편): GET access/token → 토큰 보기(이 PC 에서만) · POST access/token → 새 토큰 · PUT access { on } → 켜기·끄기
     const e = st.외부접속 && typeof st.외부접속 === 'object' ? st.외부접속 : {};
     if (test === 'token') {
@@ -1921,6 +1933,48 @@ function rebind(host) { // 열고 닫는 주소를 바꾼다. 열려 있던 연�
   server.closeAllConnections();
 }
 
+// ---------- 커넥터 (9편 셋째 단계): claude.ai 의 커스텀 커넥터가 부르는 /mcp-<비밀 48자> 창구 (MCP Streamable HTTP, JSON-RPC 2.0) ----------
+// 도구는 읽기 전용 5개뿐이고 mcp.js 가 처리한다(그 파일은 아무것도 불러오지 않아 쓰기·실행이 아예 불가능). 여기서는 주소의 비밀을 확인하고, 읽기 함수를 건네고, 이용 기록을 남긴다.
+// 비밀은 data/connector.json 에만 있고(두뇌도 못 읽음) 화면에는 가려서만 보인다. 이 주소는 외부 접속 토큰 관문을 지나지 않는다 — claude.ai 서버는 토큰 쿠키를 낼 수 없어서, 주소 속 비밀이 그 몫을 한다
+// (그래도 외부 접속이 꺼져 있으면 밖에서 온 요청은 이 주소도 막힌다). 주소를 아는 사람은 누구나 이 5가지를 "볼" 수 있으니, 새어 나갔으면 설정에서 다시 만든다(옛 주소는 바로 무효).
+const mcp = require('./mcp.js');
+const CONNECTOR_FILE = path.join(DATA_DIR, 'connector.json'); // { secret(영숫자 48자), userId(만든 사람: "내 할 일"의 주인), createdAt }
+const CONNECTOR_LOG = path.join(DATA_DIR, 'logs', 'connector.jsonl'); // 이용 기록: 줄마다 { at, tool, ok } — 시각·도구 이름·성공 여부만 (물어본 말·결과는 안 남김). logs/ 는 두뇌가 못 고친다
+const SECRET_RE = /^[A-Za-z0-9]{48}$/;
+const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const newSecret = () => Array.from({ length: 48 }, () => ALNUM[crypto.randomInt(ALNUM.length)]).join('');
+const calLib = (() => { const box = { window: {} }; require('vm').runInNewContext(fs.readFileSync(path.join(PUBLIC_DIR, 'm', 'cal.js'), 'utf8'), box); return box.window.cal; })(); // 화면과 같은 날짜·일정 계산을 그대로 쓴다 (규칙이 두 군데 생기지 않게)
+const readList = (name) => { try { return loadCollection(name); } catch { return []; } }; // 자료 파일이 깨져 있으면 빈 목록 (도구가 멈추지 않게)
+function wbsDoc(pid) { // 프로젝트의 WBS 파일 → 객체 | null (없거나 깨졌으면)
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(pid))) return null;
+  try { const d = JSON.parse(fs.readFileSync(wbsFile(pid), 'utf8').replace(/^﻿/, '')); return d && typeof d === 'object' && !Array.isArray(d) ? d : null; } catch { return null; }
+}
+function connectorLog(tool, ok) {
+  try {
+    fs.mkdirSync(path.dirname(CONNECTOR_LOG), { recursive: true });
+    fs.appendFileSync(CONNECTOR_LOG, JSON.stringify({ at: nowIso(), tool, ok: !!ok }) + '\n');
+    if (fs.statSync(CONNECTOR_LOG).size > 300_000) fs.writeFileSync(CONNECTOR_LOG, fs.readFileSync(CONNECTOR_LOG, 'utf8').trim().split('\n').slice(-1000).join('\n') + '\n'); // 너무 커지면 최근 1000줄만
+  } catch { /* 기록을 못 남겨도 도구는 그대로 */ }
+}
+const connectorLogTail = (n) => { try { return fs.readFileSync(CONNECTOR_LOG, 'utf8').trim().split('\n').slice(-n).map((l) => JSON.parse(l)).filter((x) => x && typeof x.at === 'string').reverse(); } catch { return []; } };
+function connectorInfo() { const c = readJson(CONNECTOR_FILE, null); return c && SECRET_RE.test(String(c.secret)) ? { exists: true, createdAt: String(c.createdAt || '') } : { exists: false, createdAt: '' }; } // 비밀은 안 담는다
+async function connectorEndpoint(req, res, secret, okOrigins) {
+  const key = 'mcp:' + String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress), left = lockedLeftMs(key); // 틀린 주소를 계속 시도하면 그 사람(IP)만 잠긴다 (로그인 잠금과 같은 장치)
+  if (left) return send(res, 429, { error: `너무 많이 틀렸습니다. ${Math.ceil(left / 60000)}분 뒤에 다시 시도하세요.` });
+  const c = readJson(CONNECTOR_FILE, null);
+  if (!c || !SECRET_RE.test(String(c.secret)) || !safeEq(sha('m:' + secret), sha('m:' + c.secret))) { recordFail(key); return send(res, 404, { error: '없는 주소입니다.' }); } // 주소가 없는 것과 틀린 것을 구별해 알려 주지 않는다
+  fails.delete(key);
+  if (req.headers.origin && !okOrigins.includes(req.headers.origin)) return send(res, 403, { error: '다른 사이트에서 온 요청은 받지 않습니다.' }); // 브라우저가 다른 사이트에서 부르는 길(DNS 리바인딩)을 막는다. claude.ai 서버는 Origin 을 안 붙인다
+  if (req.method !== 'POST') return send(res, 405, { error: '이 주소는 POST 만 받아요. (서버가 먼저 말을 거는 스트림은 없어요)' }, { Allow: 'POST' });
+  let body; try { body = await readBody(req, 100_000); } catch (e) { return send(res, e.message === 'too big' ? 413 : 400, { jsonrpc: '2.0', id: null, error: { code: e.message === 'too big' ? -32600 : -32700, message: e.message === 'too big' ? '요청이 너무 커요.' : 'JSON 을 읽지 못했어요.' } }); }
+  const u = readJson(USERS_FILE, []).find((x) => x.id === c.userId);
+  const ctx = { now: new Date(), cal: calLib, wbsCalc, events: () => readList('events'), projects: () => readList('projects'), tasks: () => readList('tasks'), wbsDoc, me: u ? { name: u.name, username: u.username } : null, log: connectorLog };
+  if (Array.isArray(body) && !body.length) return send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: '빈 배치예요.' } });
+  const out = (Array.isArray(body) ? body : [body]).map((m) => mcp.handleMessage(m, ctx)).filter(Boolean);
+  if (!out.length) { res.writeHead(202, { 'Cache-Control': 'no-store' }); return res.end(); } // 알림만 온 경우: 본문 없이 202
+  return send(res, 200, Array.isArray(body) ? out : out[0]);
+}
+
 // ---------- 요청 처리 ----------
 async function handle(req, res) {
   // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다. 외부 접속이 꺼져 있으면 밖에서 온 요청은 (토큰이 있어도) 모두 막힌다
@@ -1933,6 +1987,8 @@ async function handle(req, res) {
 
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  const mc = /^\/mcp-([A-Za-z0-9]{48})$/.exec(p); // 커넥터 창구: 주소 속 비밀이 열쇠라서 접속 토큰 관문보다 먼저 처리한다 (위의 "외부 접속이 꺼져 있으면 막힘"은 이미 지났다)
+  if (mc) return connectorEndpoint(req, res, mc[1], okOrigins);
   if (ext) {
     if (await accessGate(req, res, url, conf)) return; // 접속 토큰이 없으면 여기서 끝: 로그인 화면도 안 보인다
     // 위험한 일은 이 PC 에서만: 토큰과 비밀번호가 새도 밖에서는 권한(명령 실행·자기 수정)을 켜거나 서버를 다시 켜거나 이 PC 의 프로그램으로 파일을 열 수 없다
@@ -2096,8 +2152,8 @@ async function handle(req, res) {
 
     const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|phone|run))?)?$/);
     if (qm && await scheduleApi(req, res, qm[1], qm[2], user)) return;
-    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions|access)(?:\/(test|token))?)?$/);
-    if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
+    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions|access|connector)(?:\/(test|token|address|log))?)?$/);
+    if (gm && await settingsApi(req, res, gm[1], gm[2], user)) return;
     const mm = p.match(/^\/api\/mail\/(organize|draft|status)$/);
     if (mm && await mailApi(req, res, mm[1], user)) return;
     if (p === '/api/uploads' && await uploadApi(req, res)) return;

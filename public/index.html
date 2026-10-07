@@ -932,10 +932,10 @@
     ['자기수정', '자기 수정 (비서가 이 앱의 코드를 고침)', '🛠 수정', '비서가 이 앱의 코드(화면·서버)를 직접 고칠 수 있어요. 답이 끝나면 서버가 검사(문법·selftest, 몇 분)해서 통과하면 저장(커밋)하고 서버를 다시 켜요. 실패하면 바뀐 것을 모두 되돌리고 채팅에 이유를 보여 줘요. start.bat·검사 핵심 파일은 못 고쳐요. 켜져 있는 동안 비서에게 "명령 실행"은 주어지지 않아요. 서버를 start.bat 으로 켰고 앱 폴더에 저장 안 한 변경이 없을 때만 동작해요.',
       '자기 수정을 켤까요?\n\n비서가 이 앱의 코드를 직접 고칠 수 있게 돼요. 답이 끝나면 서버가 검사해서 통과하면 저장하고 서버를 다시 켜고(그동안 진행 중인 다른 답변·예약 실행은 끊겨요), 실패하면 모두 되돌려요.\nstart.bat·검사 핵심 파일은 못 고쳐요. 켜져 있는 동안 비서에게 "명령 실행"은 주어지지 않아요.'],
   ];
-  let perm = {}, access = { on: false, hasToken: false, tunnel: '', fromOutside: false }; // access: 외부 접속 상태 (토큰 값은 안 온다)
+  let perm = {}, access = { on: false, hasToken: false, tunnel: '', fromOutside: false }, connector = { exists: false, createdAt: '' }; // access: 외부 접속 상태 · connector: 커넥터 주소가 있는지 (토큰·비밀 값은 안 온다)
   async function loadPerm() { // 켜진 권한을 받아 입력창 왼쪽 표시를 그린다 (못 받으면 마지막 값 그대로)
     if (myRole !== 'admin') { if ($('permBadge')) $('permBadge').hidden = true; return; } // 일반 사용자에게는 권한 스위치도 그 표시도 없다
-    try { const r = await api('/api/settings'); if (r.ok) { const j = await r.json(); perm = j.permissions || {}; access = j.access || access; } } catch {}
+    try { const r = await api('/api/settings'); if (r.ok) { const j = await r.json(); perm = j.permissions || {}; access = j.access || access; connector = j.connector || connector; } } catch {}
     const el = $('permBadge'); if (!el) return;
     const on = PERMS.filter(([k]) => perm[k]), names = [...(access.on ? ['외부 접속'] : []), ...on.map((p) => p[1])].join(', ');
     const chips = (access.on ? '<span class="warn">🌐 외부</span>' : '') + on.map(([k, , chip]) => `<span class="${k === '명령실행' || k === '자기수정' ? 'warn' : ''}">${esc(chip)}</span>`).join('');
@@ -964,6 +964,46 @@
         c.disabled = access.fromOutside;
       };
     });
+  }
+
+  // ---------- 커넥터 (설정): claude.ai 의 커스텀 커넥터가 부르는 읽기 전용 주소 (/mcp-<비밀 48자>) ----------
+  // 비밀은 화면에 오지 않는다: 칸에는 ●●● 만 있고, [주소 복사]·[10초 보기] 를 누를 때만 서버(이 PC 에서만)에서 받는다
+  async function showConnector() {
+    const say = (t, err) => { const m = $('cnMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
+    const host = () => access.tunnel || 'https://(터널 주소)';
+    const draw = () => {
+      if (!$('cnAddr')) return;
+      const out = access.fromOutside, c = connector;
+      $('cnAddr').value = c.exists ? `${host()}/mcp-${'●'.repeat(48)}` : ''; $('cnAddr').placeholder = '아직 없음 — [커넥터 주소 만들기]를 눌러 주세요';
+      $('cnMake').textContent = c.exists ? '다시 만들기 (옛 주소 무효)' : '커넥터 주소 만들기';
+      $('cnMake').disabled = out; $('cnCopy').disabled = $('cnShow').disabled = !c.exists || out;
+      $('cnState').innerHTML = (c.exists ? `주소를 만든 때: ${esc(new Date(c.createdAt).toLocaleString('ko-KR'))}. ` : '') + `claude.ai 가 부르려면 <b>외부 접속 ${access.on ? '켜짐 ✓' : '꺼짐 ✗'}</b> · <b>터널 ${access.tunnel ? '켜짐 ✓' : '꺼짐 ✗'}</b> 이어야 해요.`;
+    };
+    const drawLog = async () => {
+      const el = $('cnLog'); if (!el) return;
+      try {
+        const j = await (await api('/api/settings/connector/log')).json(), rows = (j.log || []).slice(0, 10);
+        el.innerHTML = rows.length ? `<div class="utable sm"><table><thead><tr><th>시각</th><th>도구</th><th>결과</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${esc(new Date(x.at).toLocaleString('ko-KR'))}</td><td><code>${esc(String(x.tool))}</code></td><td class="${x.ok ? '' : 'bad'}">${x.ok ? '성공' : '실패'}</td></tr>`).join('')}</tbody></table></div>`
+          : '<p class="sub">아직 이용 기록이 없어요. (남기는 것은 시각·도구 이름·성공 여부뿐이고, 물어본 말은 남기지 않아요)</p>';
+      } catch (e) { if (e.message !== 'login') el.textContent = '이용 기록을 불러오지 못했어요.'; }
+    };
+    await loadPerm(); draw(); drawLog();
+    const fetchAddr = async () => { const r = await api('/api/settings/connector/address'), j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || '주소를 받지 못했어요.'); return j; };
+    $('cnMake').onclick = async () => {
+      const again = connector.exists;
+      if (!confirm(again ? '커넥터 주소를 다시 만들까요?\n\n옛 주소는 바로 못 쓰게 돼요. claude.ai 에 넣어 둔 커넥터는 새 주소로 다시 추가해야 해요.'
+        : '커넥터 주소를 만들까요?\n\n• 이 주소로는 일정·프로젝트 진도율·WBS 지연 작업·내 할 일을 "보기만" 할 수 있어요. 쓰기·실행은 못 해요.\n• 주소 뒤의 48자 비밀이 열쇠예요. 주소를 아는 사람은 누구나 이 5가지를 볼 수 있어요.\n• claude.ai 에서 물으면 그 내용이 claude.ai(Anthropic) 쪽으로 전달돼요. 회사 자료 방침을 확인하세요.')) return;
+      try { const r = await api('/api/settings/connector', { method: 'POST' }), j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || '만들지 못했어요.'); connector = j.connector; say(again ? '✓ 새 주소를 만들었어요. 옛 주소는 이제 못 써요. [주소 복사]로 가져가세요. (화면에는 비밀이 보이지 않아요)' : '✓ 주소를 만들었어요. [주소 복사]로 가져가세요. (화면에는 비밀이 보이지 않아요)'); draw(); }
+      catch (e) { if (e.message !== 'login') say(`⚠ ${e.message}`, true); }
+    };
+    $('cnCopy').onclick = async () => {
+      try { const a = await fetchAddr(); await navigator.clipboard.writeText((a.tunnel || a.local) + a.path); say(a.tunnel ? '✓ 주소를 클립보드에 복사했어요. claude.ai › 설정 › 커넥터 › 커스텀 커넥터 추가에 붙여 넣으세요. 붙여 넣은 뒤에는 클립보드를 다른 글로 덮어 주세요.' : '복사했어요. 다만 터널이 꺼져 있어서 이 PC 안 주소예요 — claude.ai 는 이 주소로 못 들어와요. 터널을 켠 뒤 다시 복사하세요.'); }
+      catch (e) { if (e.message !== 'login') say(`⚠ ${e.name === 'NotAllowedError' ? '복사하지 못했어요. [10초 보기]로 확인해 주세요.' : e.message}`, true); }
+    };
+    $('cnShow').onclick = async () => { // 10초만 보여 주고 다시 가린다
+      try { const a = await fetchAddr(); $('cnAddr').value = host() + a.path; setTimeout(draw, 10000); say('10초 뒤에 다시 가려져요. 주변에 화면을 보는 사람이 없는지 확인하세요.'); }
+      catch (e) { if (e.message !== 'login') say(`⚠ ${e.message}`, true); }
+    };
   }
 
   // ---------- 외부 접속 (설정): 기본 꺼짐. 켜면 서버가 0.0.0.0 으로 열리고, 밖에서 온 요청은 접속 토큰(+로그인)이 있어야 한다 ----------
@@ -1023,6 +1063,7 @@
     $('seedBtn').onclick = () => seed(false);
     showPerm();
     showAccess();
+    showConnector();
     showTelegram();
     $('restartBtn').onclick = restartServer;
     loadSelfmodLog();
@@ -1084,6 +1125,14 @@
               <li>이 PC 의 터미널에서 <code>node tunnel.js</code> (안에서 <code>cloudflared tunnel --url http://127.0.0.1:8790</code> 을 켜요. 이 PC 에 다른 터널 설정 <code>~/.cloudflared/config.yml</code> 이 있어도 영향받지 않게 빈 설정을 같이 지정해요). 나온 <code>https://….trycloudflare.com</code> 주소가 위에 보여요. 주소는 켤 때마다 바뀌어요.</li>
               <li>휴대폰 브라우저에서 그 주소를 열고, 토큰을 붙여 넣은 뒤 아이디·비밀번호로 로그인합니다.</li>
               <li>다 쓰면 터미널에서 Ctrl+C (또는 <code>node tunnel.js stop</code>) 로 터널을 끄고, 외부 접속도 끄세요.</li></ol></aside></div>
+        <div class="card"><h3>커넥터 <small>(claude.ai 에서 이 비서를 "읽기 전용"으로 부르기)</small></h3>
+          <p>claude.ai 의 <b>커스텀 커넥터</b>로 이 비서의 <b>일정·프로젝트 진도율·WBS 지연 작업·내 할 일을 "보기만"</b> 할 수 있어요. 도구는 5개뿐이에요: <code>get_today_events</code> · <code>get_week_events</code> · <code>list_projects</code> · <code>get_delayed_wbs_tasks</code> · <code>get_my_tasks</code>. <b>쓰기·실행 도구는 없어요.</b> 주소 뒤의 <b>48자 비밀</b>이 열쇠라서, 주소를 아는 사람은 누구나 이 5가지를 볼 수 있어요. 새로 만들면 옛 주소는 바로 못 써요.</p>
+          <p style="color:#b42318">⚠ claude.ai 에서 물으면 일정·프로젝트 내용이 claude.ai(Anthropic) 쪽으로 전달돼요. 회사 자료 방침을 확인하고 쓰세요. 커넥터를 claude.ai 에 추가하는 일은 각자 자기 계정에서 직접 해요.</p>
+          <div class="tgform"><label>커넥터 주소 <small>(비밀 부분은 가려서만 보여요)</small><input id="cnAddr" type="text" readonly autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"></label>
+            <div class="tgbtns"><button class="btn" id="cnMake">커넥터 주소 만들기</button><button class="btn ghost" id="cnCopy" disabled>주소 복사</button><button class="btn ghost" id="cnShow" disabled>10초 보기</button></div>
+            <div id="cnState" style="margin-top:12px;font-size:14px;color:var(--sub)"></div>
+            <div id="cnMsg" role="status" aria-live="polite" style="margin-top:6px;font-size:14px"></div></div>
+          <h4 style="margin:16px 0 6px;font-size:14px">이용 기록 <small style="font-weight:400;color:var(--sub)">(최근 10건 · 시각·도구 이름·성공 여부만)</small></h4><div id="cnLog">불러오는 중…</div></div>
         <div class="card"><h3>서버 다시 시작</h3>
           <p>먼저 서버가 직접 <b>문법 검사와 selftest</b> 를 돌려 보고(몇 분 걸려요), <b>모두 통과해야만</b> 껐다 켭니다. 하나라도 실패하면 켜 둔 채 그대로 두고 이유를 보여 줘요. 서버를 <code>start.bat</code> 으로 켰을 때만 쓸 수 있어요. 진행 중인 답변·예약 실행은 끊깁니다.</p>
           <button class="btn" id="restartBtn">서버 다시 시작</button><div id="restartMsg" role="status" aria-live="polite"></div></div>
