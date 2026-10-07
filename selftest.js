@@ -431,7 +431,7 @@ async function runPhone(ck) {
   }
   check('아이콘 파일: manifest 에 적힌 주소가 모두 로그인 없이 받아지고 진짜 PNG 이며 가로·세로가 적힌 크기(192·512)와 같음', okIcons);
   const mainHtml = await (await get('/', ck)).text(), loginHtml = await (await get('/')).text();
-  const pwa = (h) => ['<link rel="manifest" href="/manifest.webmanifest">', 'rel="apple-touch-icon"', 'name="theme-color"', 'width=device-width'].every((w) => h.includes(w));
+  const pwa = (h) => ['<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">', 'rel="apple-touch-icon"', 'name="theme-color"', 'width=device-width'].every((w) => h.includes(w));
   check('메인 화면과 로그인 화면이 manifest·홈 화면 아이콘·테마 색·폰 폭(viewport)을 선언함', pwa(mainHtml) && pwa(loginHtml));
   const tabs = [...mainHtml.matchAll(/<button type="button" role="tab" data-tab="(\w+)"/g)].map((x) => x[1]);
   check('휴대폰 메인 화면: 아래 탭 3개(채팅·대시보드·일정)와 ☰ 메뉴 뒤 어두운 막', tabs.join() === 'chat,dash,cal' && mainHtml.includes('id="scrim"') && mainHtml.includes('id="menuBtn"'));
@@ -3424,6 +3424,123 @@ function runGit() {
     git('grep', '-qE', TOKEN).code === 1 && (revs.length === 0 || git('grep', '-qE', TOKEN, ...revs).code === 1));
 }
 
+// 외부 접속 (9편 둘째 단계): 기본은 이 PC 안에서만 · 켜면 0.0.0.0 · 밖에서 온 요청은 접속 토큰(+로그인) · 켜면 위험 스위치 자동 꺼짐 · 터널 주소 표시. 전용 서버(포트 8802)로
+async function runAccess() {
+  const http = require('http'), net = require('net'), P = 8802, d = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test-acc-'));
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const until = async (fn, ms = 8000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
+  const env = { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js') };
+  let s = startServer(P, d, env); await s.ready;
+  const raw = (p, { to = '127.0.0.1', method = 'GET', headers = {}, body } = {}) => new Promise((ok, no) => { // fetch 는 Host 를 못 바꾸므로 http 로 직접. to: 접속할 주소(기본 이 PC)
+    const r = http.request({ host: to, port: P, path: p, method, headers: { ...headers, ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {}) } }, (res) => { let t = ''; res.on('data', (c) => (t += c)); res.on('end', () => ok({ status: res.statusCode, headers: res.headers, text: t })); });
+    r.on('error', no); if (body) r.write(body); r.end();
+  });
+  const TUN = 'abc-def-ghi.trycloudflare.com', via = (ip = '203.0.113.5', extra = {}) => ({ Host: TUN, 'cf-connecting-ip': ip, 'cf-ray': 'test', 'x-forwarded-proto': 'https', ...extra }); // 터널을 거쳐 온 요청처럼 (cloudflared 는 이 PC 안에서 접속하고, 이 머리글들이 붙는다)
+  const cookieHdr = (r) => [].concat(r.headers['set-cookie'] || []).map((c) => c.split(';')[0]).join('; ');
+  const json = (r) => { try { return JSON.parse(r.text); } catch { return {}; } };
+  const open = (host) => new Promise((ok) => { const c = net.connect({ host, port: P, timeout: 1500 }, () => { c.destroy(); ok(true); }); c.on('error', () => ok(false)); c.on('timeout', () => { c.destroy(); ok(false); }); });
+  const lan = Object.values(os.networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal); // 이 PC 의 LAN 주소 (없으면 LAN 점검은 건너뜀)
+  const setup = await fetch(`http://127.0.0.1:${P}/api/auth/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '접속', username: 'acc', password: PW }) });
+  const L = { 'Content-Type': 'application/json', Cookie: cookieOf(setup) }; // 이 PC 에서 로그인한 관리자
+  const loc = (u, method = 'GET', body) => fetch(`http://127.0.0.1:${P}${u}`, { method, headers: L, body: body ? JSON.stringify(body) : undefined });
+  const st = () => { try { return JSON.parse(fs.readFileSync(path.join(d, 'settings.json'), 'utf8')); } catch { return {}; } }; // 설정 파일은 처음 저장할 때 생긴다
+  if (!lan) console.log('건너뜀  이 PC 에 LAN 주소가 없어서 LAN 연결 점검은 통과로 처리');
+
+  // ① 기본은 꺼짐
+  const a0 = (await (await loc('/api/settings')).json()).access;
+  check('외부 접속 기본값: 꺼짐·토큰 없음·터널 없음·이 PC 에서 본 요청(fromOutside=false)', a0.on === false && a0.hasToken === false && a0.tunnel === '' && a0.fromOutside === false);
+  const off1 = await raw('/', { headers: via() });
+  check('꺼져 있으면 터널을 거쳐 온 요청은 모두 막힘(403 "허용되지 않은 주소")', off1.status === 403 && off1.text.includes('허용되지 않은 주소'));
+  check('꺼져 있으면 같은 와이파이(이 PC 의 LAN 주소)로는 아예 연결이 안 됨(127.0.0.1 에만 열림)', !lan || !(await open(lan.address)));
+  check('토큰이 없으면 외부 접속을 켤 수 없음(400)', (await loc('/api/settings/access', 'PUT', { on: true })).status === 400 && st().외부접속 === undefined);
+
+  // ② 토큰: 만들기·화면에는 안 옴·파일에만
+  const mk = await loc('/api/settings/access/token', 'POST'), mkText = await mk.text();
+  let TOKEN = st().외부접속.토큰;
+  check('접속 토큰 만들기: 200, 영숫자 32자, 응답·설정 목록에는 토큰 값이 없고 hasToken 만 알림', mk.status === 200 && /^[a-f0-9]{32}$/.test(TOKEN) && !mkText.includes(TOKEN) && !(await (await loc('/api/settings')).text()).includes(TOKEN) && JSON.parse(mkText).access.hasToken === true);
+  const rv = await loc('/api/settings/access/token');
+  check('이 PC 의 관리자는 토큰을 복사할 수 있음(GET access/token)', rv.status === 200 && (await rv.json()).token === TOKEN);
+  const html = await (await loc('/')).text();
+  check('설정 화면: 외부 접속 칸(스위치·가려진 토큰 칸·복사·10초 보기·새로 만들기·터널 안내)이 있고 토큰 칸은 읽기 전용이며 화면 파일에 토큰 값이 없음',
+    ['id="extOn"', 'id="extTok"', 'id="extCopy"', 'id="extShow"', 'id="extNew"', 'node tunnel.js', '0.0.0.0'].every((w) => html.includes(w)) && /id="extTok" type="text" readonly/.test(html) && !html.includes(TOKEN));
+
+  // ③ 켜기: 위험 스위치 자동 꺼짐 · 0.0.0.0
+  await loc('/api/settings/permissions', 'PUT', { 명령실행: true, 자기수정: true, 홈폴더: true });
+  const on = await loc('/api/settings/access', 'PUT', { on: true }), onj = await on.json();
+  check('외부 접속 켜기: "명령 실행"·"자기 수정"은 자동으로 꺼지고(응답·파일 모두) 다른 권한(홈 폴더)은 그대로', on.status === 200 && onj.access.on === true && onj.permissions.명령실행 === false && onj.permissions.자기수정 === false && onj.permissions.홈폴더 === true
+    && st().권한.명령실행 === false && st().권한.자기수정 === false && st().외부접속.켬 === true);
+  check('켜면 서버가 0.0.0.0 으로 다시 열림: 이 PC 로는 계속 되고, LAN 주소로도 연결됨', await until(async () => (!lan || await open(lan.address)) && (await raw('/health')).status === 200));
+  const lanR = lan ? await raw('/', { to: lan.address }) : null;
+  check('같은 와이파이로 직접 들어와도 토큰이 없으면 막힘(403 · 로그인 화면이 안 보임)', !lan || (lanR.status === 403 && lanR.text.includes('접속 토큰이 필요합니다') && !lanR.text.includes('id="form"')));
+
+  // ④ 토큰 관문 (터널을 거쳐 온 요청)
+  const noTok = await Promise.all(['/', '/index.html', '/login.html', '/api/auth/status', '/api/me', '/m/db.js', '/m/calendar.html', '/manifest.webmanifest', '/icons/icon-192.png', '/health', '/s/abcdefghijklmnopqrstuvwxyz'].map((u) => raw(u, { headers: via() })));
+  check('토큰 없이는 터널 주소로 어느 길(화면·API·업무 화면·manifest·아이콘·건강 검사·공유 링크)도 안 열림: 전부 403', noTok.every((r) => r.status === 403));
+  check('막힌 화면에는 앱 이름·로그인 칸이 없고 토큰 입력 칸만 있음, 쿠키도 안 줌', noTok[0].text.includes('접속 토큰') && !noTok[0].text.includes('Sancho') && !noTok[0].text.includes('id="form"') && !noTok.some((r) => r.headers['set-cookie']));
+  const wrong = await raw('/?t=0123456789abcdef0123456789abcdef', { headers: via('203.0.113.6') });
+  check('틀린 토큰(?t=)은 403 이고 쿠키를 안 줌', wrong.status === 403 && !wrong.headers['set-cookie']);
+  const good = await raw(`/?t=${TOKEN}&x=1`, { headers: via('203.0.113.7') }), ac = cookieHdr(good);
+  check('맞는 토큰(?t=)은 302 로 주소에서 토큰을 지우고(남은 ?x=1 은 그대로) 쿠키를 줌: HttpOnly·SameSite=Lax·https 이면 Secure, 쿠키 값에 토큰이 없음',
+    good.status === 302 && good.headers.location === '/?x=1' && /HttpOnly/.test(good.headers['set-cookie'][0]) && /SameSite=Lax/.test(good.headers['set-cookie'][0]) && /Secure/.test(good.headers['set-cookie'][0])
+    && /^sancho_access=[a-f0-9]{64}$/.test(ac) && !ac.includes(TOKEN) && good.headers['referrer-policy'] === 'no-referrer');
+  const pg = await raw('/', { headers: via('203.0.113.7', { Cookie: ac }) });
+  check('토큰 쿠키가 있으면 로그인 화면이 보임(토큰 + 로그인 두 겹: 로그인 전이라 업무 API 는 401)', pg.status === 200 && pg.text.includes('id="form"') && (await raw('/api/me', { headers: via('203.0.113.7', { Cookie: ac }) })).status === 401);
+  const jh = (ip, extra) => via(ip, { 'Content-Type': 'application/json', ...extra });
+  const inp = await raw('/_access', { method: 'POST', headers: jh('203.0.113.8'), body: JSON.stringify({ token: TOKEN }) });
+  check('입력 칸(POST /_access)으로도 들어감: 맞으면 200 + 쿠키, 틀리면 403, 다른 사이트의 Origin 이면 403', inp.status === 200 && /^sancho_access=/.test(cookieHdr(inp))
+    && (await raw('/_access', { method: 'POST', headers: jh('203.0.113.8'), body: JSON.stringify({ token: 'x'.repeat(32) }) })).status === 403
+    && (await raw('/_access', { method: 'POST', headers: jh('203.0.113.8', { Origin: 'https://evil.example' }), body: JSON.stringify({ token: TOKEN }) })).status === 403);
+  let last = 0; for (let i = 0; i < 12; i++) last = (await raw('/?t=' + 'f'.repeat(32), { headers: via('203.0.113.99') })).status; // 틀린 토큰을 계속 넣으면 그 사람(IP)만 잠긴다
+  check('틀린 토큰을 11번 넘게 넣으면 그 IP 는 429 로 잠기고(맞는 토큰도 잠긴 동안은 안 됨), 다른 IP 는 영향 없음', last === 429 && (await raw(`/?t=${TOKEN}`, { headers: via('203.0.113.99') })).status === 429 && (await raw(`/?t=${TOKEN}`, { headers: via('203.0.113.100') })).status === 302);
+
+  // ⑤ 토큰 + 로그인 뒤 (밖에서)
+  const O = { Origin: `https://${TUN}` };
+  const lg = await raw('/api/auth/login', { method: 'POST', headers: jh('203.0.113.7', { ...O, Cookie: ac }), body: JSON.stringify({ username: 'acc', password: PW }) }), both = `${ac}; ${cookieHdr(lg)}`;
+  check('밖에서 토큰 + 아이디·비밀번호로 로그인되고 세션 쿠키에 Secure 가 붙음', lg.status === 200 && /sancho_session=/.test(both) && /Secure/.test(lg.headers['set-cookie'][0]) && (await raw('/api/me', { headers: via('203.0.113.7', { Cookie: both }) })).status === 200);
+  const H = (extra = {}) => jh('203.0.113.7', { ...O, Cookie: both, ...extra });
+  const blocked = await Promise.all([raw('/api/settings/permissions', { method: 'PUT', headers: H(), body: JSON.stringify({ 명령실행: true }) }), raw('/api/settings/access', { method: 'PUT', headers: H(), body: JSON.stringify({ on: false }) }),
+    raw('/api/settings/access/token', { method: 'POST', headers: H() }), raw('/api/restart', { method: 'POST', headers: H() }), raw('/api/files/open', { method: 'POST', headers: H(), body: JSON.stringify({ box: 'x', name: 'y' }) })]);
+  check('밖에서는 (토큰·로그인이 맞아도) 권한 켜기·외부 접속 끄기·토큰 새로 만들기·서버 다시 시작·파일 열기가 모두 403(이 PC 에서만)', blocked.every((r) => r.status === 403 && String(json(r).error || '').includes('이 PC')) && st().권한.명령실행 === false && st().외부접속.켬 === true);
+  const revOut = await raw('/api/settings/access/token', { headers: H() }), setOut = await raw('/api/settings', { headers: H() });
+  check('밖에서는 토큰 값을 볼 수 없고(403), 설정 목록은 읽혀도 토큰이 없으며 fromOutside=true', revOut.status === 403 && !revOut.text.includes(TOKEN) && setOut.status === 200 && !setOut.text.includes(TOKEN) && json(setOut).access.fromOutside === true);
+  check('밖에서 다른 사이트(Origin)가 보낸 요청은 로그인된 상태여도 403', (await raw('/api/chats', { method: 'POST', headers: H({ Origin: 'https://evil.example' }) })).status === 403);
+
+  // ⑥ 이 PC 에서는 토큰 없이 그대로
+  check('이 PC 에서 127.0.0.1 로 직접 쓰는 것은 토큰 없이 그대로 됨(로그인 화면·API)', (await raw('/')).text.includes('id="form"') && (await raw('/api/auth/status')).status === 200 && (await loc('/api/me')).status === 200);
+  // ⑦ 켜진 채 위험 스위치를 다시 켜려면 경고(ack)
+  const noAck = await loc('/api/settings/permissions', 'PUT', { 명령실행: true }), ackd = await loc('/api/settings/permissions', 'PUT', { 명령실행: true, ack: true });
+  check('외부 접속이 켜진 채로 "명령 실행"을 켜려면 경고 확인(ack)이 필요: 없으면 409(needsAck)·그대로 꺼짐, 있으면 켜짐. 다른 권한은 경고 없이 됨', noAck.status === 409 && (await noAck.json()).needsAck === true && ackd.status === 200 && st().권한.명령실행 === true
+    && (await loc('/api/settings/permissions', 'PUT', { 연결된앱: true })).status === 200 && (await loc('/api/settings/permissions', 'PUT', { 연결된앱: false, 명령실행: false, 자기수정: false })).status === 200);
+  check('권한 요청의 이상한 값은 전처럼 거절(ack 만·모르는 칸)', (await loc('/api/settings/permissions', 'PUT', { ack: true })).status === 400 && (await loc('/api/settings/permissions', 'PUT', { 아무거나: true })).status === 400);
+
+  // ⑧ 터널 주소 표시 (node tunnel.js 가 적어 둔 파일, 살아 있는 프로그램일 때만)
+  const tf = path.join(d, 'tunnel.json'), tun = async () => (await (await loc('/api/settings')).json()).access.tunnel;
+  fs.writeFileSync(tf, JSON.stringify({ url: 'https://test-abc.trycloudflare.com', pid: process.pid })); const t1 = await tun();
+  fs.writeFileSync(tf, JSON.stringify({ url: 'https://test-abc.trycloudflare.com', pid: 2147483646 })); const t2 = await tun();
+  fs.writeFileSync(tf, JSON.stringify({ url: 'http://evil.example', pid: process.pid })); const t3 = await tun();
+  fs.rmSync(tf, { force: true });
+  check('터널 주소: 살아 있는 터널의 trycloudflare 주소만 화면에 알려 주고, 꺼진 터널·엉뚱한 주소는 안 보임', t1 === 'https://test-abc.trycloudflare.com' && t2 === '' && t3 === '');
+
+  // ⑨ 새 토큰 → 예전 토큰·쿠키 무효
+  const t0 = TOKEN; await loc('/api/settings/access/token', 'POST'); TOKEN = st().외부접속.토큰;
+  check('토큰을 새로 만들면 예전 토큰과 예전 쿠키는 바로 못 쓰고, 새 토큰은 됨', TOKEN !== t0 && (await raw('/', { headers: via('203.0.113.7', { Cookie: both }) })).status === 403 && (await raw(`/?t=${t0}`, { headers: via('203.0.113.50') })).status === 403 && (await raw(`/?t=${TOKEN}`, { headers: via('203.0.113.51') })).status === 302);
+
+  // ⑩ 껐다 켜도 설정이 이어짐
+  await new Promise((ok) => { s.once('exit', ok); s.kill(); }); s = startServer(P, d, env); await s.ready;
+  check('서버를 껐다 켜도 외부 접속 설정이 이어져 처음부터 0.0.0.0 으로 열리고 토큰 관문이 있음', s.log.includes('외부 접속 켜짐') && (!lan || ((await open(lan.address)) && (await raw('/', { to: lan.address })).status === 403)) && (await raw('/', { headers: via() })).status === 403);
+
+  // ⑪ 끄기 (끄기 전에 토큰 쿠키를 하나 받아 둔다: 꺼진 뒤에는 쿠키가 있어도 막혀야 한다)
+  const ac2 = cookieHdr(await raw(`/?t=${TOKEN}`, { headers: via('203.0.113.52') }));
+  const offR = await loc('/api/settings/access', 'PUT', { on: false });
+  check('외부 접속 끄기: 토큰은 남고(다시 켤 때 씀), 다시 이 PC 에서만 열려 LAN 연결이 안 되며 토큰 쿠키가 있어도 터널 요청은 403', offR.status === 200 && st().외부접속.켬 === false && st().외부접속.토큰 === TOKEN && /^sancho_access=/.test(ac2)
+    && await until(async () => !lan || !(await open(lan.address))) && (await raw('/', { headers: via('203.0.113.52', { Cookie: ac2 }) })).status === 403 && (await loc('/api/me')).status === 200);
+  // ⑫ 토큰이 새지 않음
+  const leaks = filesUnder(d).filter((f) => fs.readFileSync(f, 'utf8').includes(TOKEN) && path.basename(f) !== 'settings.json');
+  check('접속 토큰이 서버 로그와 data 의 다른 파일(settings.json 말고)에 남지 않음 — settings.json 은 비서도 못 읽는 파일', !s.log.includes(TOKEN) && leaks.length === 0 && fs.readFileSync(path.join(d, 'settings.json'), 'utf8').includes(TOKEN));
+  s.kill();
+  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
+}
+
 // claude 프로그램이 아예 없는 PC 를 흉내: PATH 를 빈 폴더로 바꾼 서버를 하나 더 켠다
 async function runNoClaude() {
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-')), UD2 = path.join(dir2, 'users', 'two'); // 곧 만들 관리자 "two" 의 개인 폴더
@@ -3475,14 +3592,18 @@ tgServer.listen(8793, '127.0.0.1');
 const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793', SANCHO_UPLOAD_MAX: String(1024 * 1024), SANCHO_OPEN_SCRIPT: path.join(__dirname, 'test', 'fake-open.js'), SANCHO_OPEN_LOG: path.join(dir, 'open.log') }); // 예약 시계를 30초 대신 0.2초마다, 올리기 한도 1MB, "열기"는 가짜 프로그램
 srv.ready.then(async () => {
   try {
-    await run();
-    await runNoClaude();
-    await runRestart();
-    await runMigrate();
-    await runAudit6();
-    await runAudit7();
-    await runEp8();
-    runGit();
+    if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속 점검만 빨리 돌릴 때: SELFTEST_ONLY=access node selftest.js
+    else {
+      await run();
+      await runNoClaude();
+      await runRestart();
+      await runMigrate();
+      await runAudit6();
+      await runAudit7();
+      await runEp8();
+      await runAccess();
+      runGit();
+    }
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
     check('서버 로그에 비밀번호 평문이 없음', !srv.log.includes(PW));
     const leaked = filesUnder(dir).filter((f) => fs.readFileSync(f, 'utf8').includes(PW));

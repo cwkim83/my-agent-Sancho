@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const PORT = Number(process.env.SANCHO_PORT) || 8790;
-const HOST = '127.0.0.1'; // 이 PC 에서만 접속 가능
+let listenHost = '127.0.0.1'; // 기본은 이 PC 에서만 접속 가능. 설정의 "외부 접속"을 켜면 0.0.0.0 (아래 "외부 접속")
 const DATA_DIR = process.env.SANCHO_DATA || path.join(__dirname, 'data');
 const guard = require('./guard.js'); // 관문·불변 층 (8편): 재시작 검사, 자기 수정의 되돌리기·커밋
 const APP_ROOT = process.env.SANCHO_APP_ROOT || __dirname; // 앱 코드 폴더 (점검에서만 임시 저장소로 바꾼다. 감시자는 이 환경변수를 지우고 켠다)
@@ -75,8 +75,8 @@ function currentUser(req) {
   if (!s || s.expires < Date.now()) return null;
   return readJson(USERS_FILE, []).find((u) => u.id === s.userId) || null;
 }
-const cookieHeader = (token, maxAge) =>
-  `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
+const cookieHeader = (token, maxAge, secure) => // secure: https(터널)로 들어온 요청이면 쿠키에 Secure 를 붙인다
+  `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 
 // ---------- 로그인 실패 잠금 ----------
 const fails = new Map(); // 아이디 -> { count, lockedUntil }
@@ -944,18 +944,41 @@ const plainSummary = (t, max) => { const s = t.replace(/\*\*/g, '').replace(/^#{
 //   PUT /api/settings/telegram { token?, chatId? } (비운 칸은 그대로 둠) · DELETE → 지움 · POST /test → 시험 메시지 한 통
 //   PUT /api/settings/permissions { 연결된앱?, 명령실행?, 홈폴더?, 자기수정? } (true/false 만, 보낸 칸만 바뀜) → { permissions }
 async function settingsApi(req, res, sub, test) {
+  if (test && !(sub === 'telegram' && test === 'test') && !(sub === 'access' && test === 'token')) return false; // 없는 길(permissions/token 등)은 모른 척
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
   let b = {};
   if (sub && !test && M === 'PUT') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
   // 여기부터는 await 없이: 읽기→고치기→쓰기를 한 번에
   let st; try { st = loadSettings(); } catch { return done(500, { error: 'data/settings.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
   const t = st.telegram && typeof st.telegram === 'object' ? st.telegram : {};
-  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st) }) : false;
+  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st), access: accessInfo(st, req) }) : false;
+  if (sub === 'access') { // 외부 접속 (9편): GET access/token → 토큰 보기(이 PC 에서만) · POST access/token → 새 토큰 · PUT access { on } → 켜기·끄기
+    const e = st.외부접속 && typeof st.외부접속 === 'object' ? st.외부접속 : {};
+    if (test === 'token') {
+      if (isExternal(req)) return done(403, { error: '접속 토큰은 이 PC 에서만 볼 수 있어요.' });
+      if (M === 'GET') return ACCESS_TOKEN.test(e.토큰) ? done(200, { token: e.토큰 }) : done(404, { error: '아직 접속 토큰이 없어요. 먼저 만들어 주세요.' });
+      if (M !== 'POST') return false;
+      st.외부접속 = { ...e, 토큰: crypto.randomBytes(16).toString('hex') }; writeJson(SETTINGS_FILE, st); // 새로 만들면 예전 토큰·그 토큰으로 들어온 기기의 쿠키는 바로 못 쓴다
+      return done(200, { ok: true, access: accessInfo(st, req) });
+    }
+    if (test || M !== 'PUT') return false;
+    if (!b || typeof b.on !== 'boolean') return done(400, { error: '켤지 끌지 on 을 true/false 로 보내 주세요.' });
+    if (b.on && !ACCESS_TOKEN.test(e.토큰)) return done(400, { error: '먼저 접속 토큰을 만들어 주세요. 토큰이 없으면 외부 접속을 켤 수 없어요.' });
+    const was = onOf(st);
+    st.외부접속 = { ...e, 켬: b.on };
+    if (b.on && !was) st.권한 = { ...permsOf(st), 명령실행: false, 자기수정: false }; // 켜는 순간 가장 위험한 두 스위치를 자동으로 끈다 (다시 켜려면 경고를 거친다)
+    writeJson(SETTINGS_FILE, st);
+    res.once('finish', () => rebind(b.on ? '0.0.0.0' : '127.0.0.1')); // 이 응답이 나간 뒤에 열고 닫는 주소를 바꾼다
+    return done(200, { access: accessInfo(st, req), permissions: permsOf(st) });
+  }
   if (sub === 'permissions') {
     if (M !== 'PUT' || test) return false;
-    const keys = b && typeof b === 'object' && !Array.isArray(b) ? Object.keys(b) : [];
-    if (!keys.length || !keys.every((k) => PERM_KEYS.includes(k) && typeof b[k] === 'boolean')) return done(400, { error: `바꿀 권한을 true/false 로 보내 주세요. (${PERM_KEYS.join('·')})` });
-    st.권한 = { ...permsOf(st), ...b }; writeJson(SETTINGS_FILE, st);
+    const { ack, ...pb } = b && typeof b === 'object' && !Array.isArray(b) ? b : {}; // ack: 화면이 "외부 접속 중에 위험한 스위치를 켠다"는 경고를 보여 주고 확인받았다는 표시
+    const keys = Object.keys(pb);
+    if (!keys.length || !keys.every((k) => PERM_KEYS.includes(k) && typeof pb[k] === 'boolean')) return done(400, { error: `바꿀 권한을 true/false 로 보내 주세요. (${PERM_KEYS.join('·')})` });
+    if (onOf(st) && (pb.명령실행 === true || pb.자기수정 === true) && ack !== true)
+      return done(409, { needsAck: true, error: '외부 접속이 켜져 있어요. 이때 "명령 실행"·"자기 수정"을 켜면, 접속 토큰과 비밀번호를 아는 사람이 밖에서 비서를 통해 이 PC 를 조종할 수 있어요. 외부 접속을 먼저 끄는 것을 권해요. 그래도 켜려면 경고를 확인해 주세요.' });
+    st.권한 = { ...permsOf(st), ...pb }; writeJson(SETTINGS_FILE, st);
     return done(200, { permissions: permsOf(st) });
   }
   if (!test && M === 'PUT') {
@@ -1836,17 +1859,85 @@ async function approvalApi(req, res, user, p, url) {
   return false;
 }
 
+// ---------- 외부 접속 (9편): 기본은 이 PC 안(127.0.0.1)에서만. 켜면 0.0.0.0 으로 열고, 밖에서 온 요청은 "접속 토큰"이 있어야 로그인 화면도 볼 수 있다 (토큰 + 로그인 두 겹) ----------
+// data/settings.json 의 { 외부접속: { 켬: true|false, 토큰: "<영숫자 32자>" } }. 토큰은 비밀번호처럼 이 파일에만 있고(두뇌는 못 읽음) 화면에는 가려서만 보인다.
+// 밖에서 온 요청인지: cloudflared 같은 터널은 이 PC 안에서 서버에 접속하므로 "접속한 쪽 주소"만으로는 가릴 수 없다. 그래서 셋을 함께 본다 —
+//   ① 접속한 쪽이 이 PC 가 아님  ② Host 가 127.0.0.1·localhost 가 아님  ③ 프록시·터널이 붙이는 머리글(cf-*, x-forwarded-* …)이 있음. 하나라도 걸리면 "밖에서 온 요청"이다
+// (터널 쪽이 머리글을 지우거나 Host 를 바꿔도 ①~③ 중 하나는 남는다. 거꾸로 밖의 사람이 머리글을 더 붙이면 더 "밖"으로 보일 뿐이다)
+const LOCAL_HOSTS = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
+const PROXY_HEADERS = ['cf-connecting-ip', 'cf-ray', 'cf-visitor', 'cdn-loop', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'forwarded'];
+const isLoopback = (a) => a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+const isExternal = (req) => !isLoopback(req.socket.remoteAddress) || !LOCAL_HOSTS.includes(req.headers.host) || PROXY_HEADERS.some((h) => h in req.headers);
+function isHttps(req) { return /^https\b/i.test(String(req.headers['x-forwarded-proto'] || '')) || /"scheme":\s*"https"/.test(String(req.headers['cf-visitor'] || '')); }
+const ACCESS_TOKEN = /^[a-f0-9]{32}$/;
+const ACCESS_COOKIE = 'sancho_access';
+const onOf = (st) => !!(st.외부접속 && st.외부접속.켬 === true && ACCESS_TOKEN.test(st.외부접속.토큰)); // 토큰이 없으면 켜진 것으로 치지 않는다
+function extConf() { // { on, token } — 설정을 못 읽으면 꺼짐(안전한 쪽)
+  try { const st = loadSettings(); return { on: onOf(st), token: st.외부접속 && ACCESS_TOKEN.test(st.외부접속.토큰) ? st.외부접속.토큰 : '' }; } catch { return { on: false, token: '' }; }
+}
+const accessCookieValue = (token) => sha('access:' + token); // 쿠키에는 토큰 자체가 아니라 그 해시를 둔다 (토큰을 새로 만들면 예전 쿠키는 저절로 못 쓰게 된다)
+const accessCookie = (token, maxAge, secure) => `${ACCESS_COOKIE}=${token ? accessCookieValue(token) : ''}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+const GATE_HTML = `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>접속 토큰</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f6f8;color:#1b1f24;font:16px/1.5 "Malgun Gothic",system-ui,sans-serif}form{width:min(360px,90vw);padding:28px;background:#fff;border:1px solid #e4e7eb;border-radius:14px}
+input,button{display:block;width:100%;box-sizing:border-box;margin-top:12px;padding:12px;font-size:16px;border-radius:10px}input{border:1px solid #d0d5dd}button{border:0;background:#2f6fed;color:#fff;font-weight:600}.e{min-height:1.4em;margin-top:8px;color:#d92d20;font-size:14px}</style>
+<form id="f"><b>접속 토큰이 필요합니다</b><input id="t" type="password" autocomplete="off" placeholder="접속 토큰" required><button>확인</button><div class="e" id="e" role="alert"></div></form>
+<script>f.onsubmit=async(ev)=>{ev.preventDefault();e.textContent='';const r=await fetch('/_access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t.value.trim()})}).catch(()=>null);
+if(r&&r.ok)location.replace('/');else e.textContent=r&&r.status===429?'너무 많이 틀렸어요. 잠시 뒤에 다시 해 주세요.':'토큰이 맞지 않아요.'}</script></html>`;
+// 밖에서 온 요청의 첫 관문: 접속 토큰(쿠키)이 맞으면 false(지나가도 됨), 아니면 여기서 막거나 처리하고 true.
+// 토큰을 가져오는 길은 둘: ① 입력 칸(POST /_access) ② 주소 뒤 ?t=토큰 (맞으면 쿠키로 바꾸고 주소에서 바로 지운다). 토큰을 틀리면 같은 사람(IP)은 11번째부터 10분 잠금
+async function accessGate(req, res, url, conf) {
+  const key = 'gate:' + String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress);
+  const given = (/(?:^|;\s*)sancho_access=([a-f0-9]{64})/.exec(req.headers.cookie || '') || [])[1];
+  if (conf.token && given && safeEq(given, accessCookieValue(conf.token))) return false;
+  const quiet = { 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' };
+  const left = lockedLeftMs(key);
+  if (left) { send(res, 429, { error: `접속 토큰을 너무 많이 틀렸습니다. ${Math.ceil(left / 60000)}분 뒤에 다시 시도하세요.` }, quiet); return true; }
+  const tryToken = (t) => { const ok = typeof t === 'string' && conf.token && safeEq(sha('t:' + t.trim()), sha('t:' + conf.token)); if (ok) fails.delete(key); else recordFail(key); return ok; };
+  if (req.method === 'POST' && url.pathname === '/_access') {
+    let b; try { b = await readBody(req); } catch { send(res, 400, { error: '요청이 올바르지 않습니다.' }, quiet); return true; }
+    if (!tryToken(b && b.token)) { send(res, 403, { error: '접속 토큰이 맞지 않습니다.' }, quiet); return true; }
+    send(res, 200, { ok: true }, { ...quiet, 'Set-Cookie': accessCookie(conf.token, SESSION_MS / 1000, isHttps(req)) }); return true;
+  }
+  if (req.method === 'GET' && url.searchParams.has('t')) {
+    if (tryToken(url.searchParams.get('t'))) {
+      url.searchParams.delete('t');
+      res.writeHead(302, { Location: url.pathname + url.search, 'Cache-Control': 'no-store', ...quiet, 'Set-Cookie': accessCookie(conf.token, SESSION_MS / 1000, isHttps(req)) }); res.end(); return true;
+    }
+  }
+  if (req.method !== 'GET' || url.pathname.startsWith('/api/')) { send(res, 403, { error: '접속 토큰이 필요합니다.' }, quiet); return true; }
+  res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...quiet }); res.end(GATE_HTML); return true;
+}
+// 열어 둔 터널 주소: node tunnel.js 가 data/tunnel.json 에 적어 둔다. 그 터널이 살아 있을 때만 알려 준다
+function tunnelUrl() {
+  const t = readJson(path.join(DATA_DIR, 'tunnel.json'), null);
+  if (!t || !/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(String(t.url || ''))) return '';
+  try { process.kill(t.pid, 0); return t.url; } catch (e) { return e.code === 'EPERM' ? t.url : ''; }
+}
+const accessInfo = (st, req) => ({ on: onOf(st), hasToken: !!(st.외부접속 && ACCESS_TOKEN.test(st.외부접속.토큰)), tunnel: tunnelUrl(), fromOutside: isExternal(req) }); // 토큰 값은 절대 안 담는다
+function rebind(host) { // 열고 닫는 주소를 바꾼다. 열려 있던 연결(실시간 연결 포함)은 닫히고 화면이 알아서 다시 연결한다
+  if (host === listenHost) return;
+  server.close(() => { listenHost = host; server.listen(PORT, host, () => console.log(`외부 접속 ${host === '0.0.0.0' ? '켜짐 (0.0.0.0)' : '꺼짐 (127.0.0.1)'}: http://${host}:${PORT}`)); });
+  server.closeAllConnections();
+}
+
 // ---------- 요청 처리 ----------
 async function handle(req, res) {
-  // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다
-  const okHosts = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
-  if (!okHosts.includes(req.headers.host)) return send(res, 403, '허용되지 않은 주소입니다.');
-  // 다른 웹사이트가 내 브라우저를 거쳐 보내는 요청(계정 만들기·로그인·채팅)을 막는다. 브라우저는 이런 요청에 Origin 을 붙인다
+  // 다른 사이트가 우리 서버 주소를 가장해 접근하는 것을 막는다. 외부 접속이 꺼져 있으면 밖에서 온 요청은 (토큰이 있어도) 모두 막힌다
+  const ext = isExternal(req), conf = ext ? extConf() : null;
+  if (ext && !conf.on) return send(res, 403, '허용되지 않은 주소입니다.');
+  // 다른 웹사이트가 내 브라우저를 거쳐 보내는 요청(계정 만들기·로그인·채팅)을 막는다. 브라우저는 이런 요청에 Origin 을 붙인다 (밖에서 온 요청은 자기 Host 와 같은 Origin 만)
   const origin = req.headers.origin;
-  if (req.method !== 'GET' && origin && !okHosts.some((h) => origin === `http://${h}`)) return send(res, 403, { error: '다른 사이트에서 온 요청은 받지 않습니다.' });
+  const okOrigins = ext ? [`https://${req.headers.host}`, `http://${req.headers.host}`] : LOCAL_HOSTS.map((h) => `http://${h}`);
+  if (req.method !== 'GET' && origin && !okOrigins.includes(origin)) return send(res, 403, { error: '다른 사이트에서 온 요청은 받지 않습니다.' });
 
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  if (ext) {
+    if (await accessGate(req, res, url, conf)) return; // 접속 토큰이 없으면 여기서 끝: 로그인 화면도 안 보인다
+    // 위험한 일은 이 PC 에서만: 토큰과 비밀번호가 새도 밖에서는 권한(명령 실행·자기 수정)을 켜거나 서버를 다시 켜거나 이 PC 의 프로그램으로 파일을 열 수 없다
+    if (req.method !== 'GET' && /^\/api\/(settings|restart|files\/open)(\/|$)/.test(p)) return send(res, 403, { error: '이 일은 이 PC 에서만 할 수 있어요. 밖에서 들어온 접속으로는 설정·서버 다시 시작·파일 열기를 할 수 없어요.' });
+  }
   const user = currentUser(req);
 
   // 건강 검사 (8편): 감시자가 "서버가 정말 멀쩡한가"를 볼 때 쓴다. 로그인 없이, 비밀 정보 없이. 데이터 폴더와 users.json 이 읽히지 않으면 503
@@ -1872,7 +1963,7 @@ async function handle(req, res) {
       const u = { id: crypto.randomUUID(), name, username, dept: '', role: 'admin', password: hashPassword(password), createdAt: new Date().toISOString() };
       writeJson(USERS_FILE, [u]);
       ensureUserDir(u);
-      return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000) });
+      return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000, isHttps(req)) });
     }
     if (req.method === 'POST' && p === '/api/auth/login') {
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
@@ -1883,12 +1974,12 @@ async function handle(req, res) {
       const ok = verifyPassword(String(b.password || ''), u ? u.password : DUMMY_HASH) && !!u;
       if (!ok) { recordFail(username); return send(res, 401, { error: '아이디 또는 비밀번호가 맞지 않습니다.' }); }
       fails.delete(username);
-      return send(res, 200, { ok: true, mustChange: !!u.mustChange }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000) });
+      return send(res, 200, { ok: true, mustChange: !!u.mustChange }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000, isHttps(req)) });
     }
     if (req.method === 'POST' && p === '/api/auth/logout') {
       const t = getToken(req);
       if (t && sessions[sha(t)]) { delete sessions[sha(t)]; writeJson(SESSIONS_FILE, sessions); }
-      return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader('', 0) });
+      return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader('', 0, isHttps(req)) });
     }
     // 읽기 전용 공유 링크의 자료: 로그인 없이 열린다. 길고 무작위인 토큰을 아는 사람만, 그 프로젝트의 공정표를(금액·메모 빼고) 읽을 수만 있다
     const sm = p.match(/^\/api\/share\/([A-Za-z0-9_-]{20,64})$/);
@@ -2005,7 +2096,7 @@ async function handle(req, res) {
 
     const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|phone|run))?)?$/);
     if (qm && await scheduleApi(req, res, qm[1], qm[2], user)) return;
-    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions)(?:\/(test))?)?$/);
+    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions|access)(?:\/(test|token))?)?$/);
     if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
     const mm = p.match(/^\/api\/mail\/(organize|draft|status)$/);
     if (mm && await mailApi(req, res, mm[1], user)) return;
@@ -2100,8 +2191,9 @@ server.on('error', (e) => { // 포트가 이미 쓰이면(이미 켜진 Sancho �
   if (e.code === 'EADDRINUSE') { console.error(`포트 ${PORT} 를 이미 다른 프로그램이 쓰고 있어요. 이미 켜진 Sancho 가 있는지 확인해 주세요.`); process.exit(11); }
   throw e;
 });
-server.listen(PORT, HOST, () => {
-  console.log(`Sancho 서버 실행 중: http://${HOST}:${PORT}`);
+listenHost = extConf().on ? '0.0.0.0' : '127.0.0.1'; // 설정에서 "외부 접속"을 켜 둔 채 꺼졌다 켜졌으면 그대로 0.0.0.0 으로
+server.listen(PORT, listenHost, () => {
+  console.log(`Sancho 서버 실행 중: http://${listenHost}:${PORT}${listenHost === '0.0.0.0' ? ' (외부 접속 켜짐 — 밖에서 온 요청은 접속 토큰이 필요해요)' : ''}`);
   try { ensureChannels(); } catch (e) { console.error('메신저 채널을 만들지 못했어요:', e.message); }
   setInterval(sweepStreams, Number(process.env.SANCHO_PING_MS) || 25_000).unref(); // 메신저 실시간 연결: 로그아웃한 연결을 닫고 "살아 있음" 신호
   // 지난번에 도는 도중에 서버(컴퓨터)가 꺼진 예약: 결과 없이 끝났음을 알린다. 그 회차는 다시 돌리지 않는다(마지막실행이 이미 적혀 있다)

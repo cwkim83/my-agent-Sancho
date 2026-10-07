@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>나의 AI 비서 Sancho</title>
-<link rel="manifest" href="/manifest.webmanifest">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 <meta name="theme-color" content="#ffffff">
@@ -932,33 +932,82 @@
     ['자기수정', '자기 수정 (비서가 이 앱의 코드를 고침)', '🛠 수정', '비서가 이 앱의 코드(화면·서버)를 직접 고칠 수 있어요. 답이 끝나면 서버가 검사(문법·selftest, 몇 분)해서 통과하면 저장(커밋)하고 서버를 다시 켜요. 실패하면 바뀐 것을 모두 되돌리고 채팅에 이유를 보여 줘요. start.bat·검사 핵심 파일은 못 고쳐요. 켜져 있는 동안 비서에게 "명령 실행"은 주어지지 않아요. 서버를 start.bat 으로 켰고 앱 폴더에 저장 안 한 변경이 없을 때만 동작해요.',
       '자기 수정을 켤까요?\n\n비서가 이 앱의 코드를 직접 고칠 수 있게 돼요. 답이 끝나면 서버가 검사해서 통과하면 저장하고 서버를 다시 켜고(그동안 진행 중인 다른 답변·예약 실행은 끊겨요), 실패하면 모두 되돌려요.\nstart.bat·검사 핵심 파일은 못 고쳐요. 켜져 있는 동안 비서에게 "명령 실행"은 주어지지 않아요.'],
   ];
-  let perm = {};
+  let perm = {}, access = { on: false, hasToken: false, tunnel: '', fromOutside: false }; // access: 외부 접속 상태 (토큰 값은 안 온다)
   async function loadPerm() { // 켜진 권한을 받아 입력창 왼쪽 표시를 그린다 (못 받으면 마지막 값 그대로)
     if (myRole !== 'admin') { if ($('permBadge')) $('permBadge').hidden = true; return; } // 일반 사용자에게는 권한 스위치도 그 표시도 없다
-    try { const r = await api('/api/settings'); if (r.ok) perm = (await r.json()).permissions || {}; } catch {}
+    try { const r = await api('/api/settings'); if (r.ok) { const j = await r.json(); perm = j.permissions || {}; access = j.access || access; } } catch {}
     const el = $('permBadge'); if (!el) return;
-    const on = PERMS.filter(([k]) => perm[k]), names = on.map((p) => p[1]).join(', ');
-    el.innerHTML = on.length ? on.map(([k, , chip]) => `<span class="${k === '명령실행' || k === '자기수정' ? 'warn' : ''}">${esc(chip)}</span>`).join('') : '<span class="lock">🔒</span>';
-    el.title = on.length ? `지금 켜진 권한: ${names}` : '권한이 모두 꺼져 있어요 (설정 → 권한에서 켤 수 있어요)';
+    const on = PERMS.filter(([k]) => perm[k]), names = [...(access.on ? ['외부 접속'] : []), ...on.map((p) => p[1])].join(', ');
+    const chips = (access.on ? '<span class="warn">🌐 외부</span>' : '') + on.map(([k, , chip]) => `<span class="${k === '명령실행' || k === '자기수정' ? 'warn' : ''}">${esc(chip)}</span>`).join('');
+    el.innerHTML = chips || '<span class="lock">🔒</span>';
+    el.title = names ? `지금 켜진 것: ${names}` : '권한이 모두 꺼져 있어요 (설정 → 권한에서 켤 수 있어요)';
     el.setAttribute('aria-label', el.title);
   }
   async function showPerm() { // 설정 화면의 권한 스위치: 켜고 끄면 바로 저장
     await loadPerm();
     const msg = (t, err) => { const m = $('permMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
+    if (access.fromOutside) msg('밖에서 접속 중이라 권한은 이 PC 에서만 바꿀 수 있어요.');
     document.querySelectorAll('input[data-perm]').forEach((c) => {
-      c.checked = !!perm[c.dataset.perm]; c.disabled = false;
+      c.checked = !!perm[c.dataset.perm]; c.disabled = access.fromOutside;
       c.onchange = async () => {
-        const k = c.dataset.perm, on = c.checked, p = PERMS.find((x) => x[0] === k);
+        const k = c.dataset.perm, on = c.checked, p = PERMS.find((x) => x[0] === k), danger = k === '명령실행' || k === '자기수정';
         if (on && p[4] && !confirm(p[4])) { c.checked = false; return; }
+        // 외부 접속이 켜진 채로 위험한 스위치를 켜려면 한 번 더 경고한다 (서버도 이 확인(ack) 없이는 거절한다)
+        const ack = on && danger && access.on;
+        if (ack && !confirm(`⚠ 외부 접속이 켜져 있어요!\n\n지금 "${p[1]}" 을(를) 켜면, 접속 토큰과 비밀번호를 아는 사람이 밖에서 비서를 통해 이 PC 를 조종할 수 있어요.\n외부 접속을 먼저 끄는 것을 권해요.\n\n그래도 켤까요?`)) { c.checked = false; return; }
         c.disabled = true;
         try {
-          const r = await api('/api/settings/permissions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: on }) }), j = await r.json().catch(() => ({}));
+          const r = await api('/api/settings/permissions', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ack ? { [k]: on, ack: true } : { [k]: on }) }), j = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(j.error || '저장하지 못했어요.');
-          perm = j.permissions; msg(`✓ "${p[1]}" 을(를) ${on ? '켰어요' : '껐어요'}. 다음 말부터 적용돼요.`);
+          perm = j.permissions; msg(`✓ "${p[1]}" 을(를) ${on ? '켰어요' : '껐어요'}. 다음 말부터 적용돼요.`); loadPerm();
         } catch (e) { if (e.message !== 'login') msg(`⚠ ${e.message}`, true); c.checked = !on; }
-        c.disabled = false;
+        c.disabled = access.fromOutside;
       };
     });
+  }
+
+  // ---------- 외부 접속 (설정): 기본 꺼짐. 켜면 서버가 0.0.0.0 으로 열리고, 밖에서 온 요청은 접속 토큰(+로그인)이 있어야 한다 ----------
+  // 토큰 값은 화면에 오지 않는다: 칸에는 ●●● 만 있고, [복사]·[보기] 를 누를 때만 서버(이 PC 에서만)에서 받아 클립보드로/잠깐만 보여 준다
+  async function showAccess() {
+    const say = (t, err) => { const m = $('extMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
+    const draw = () => {
+      if (!$('extOn')) return;
+      const a = access, out = a.fromOutside;
+      $('extOn').checked = a.on; $('extOn').disabled = out || (!a.hasToken && !a.on);
+      $('extState').textContent = out ? '지금 밖에서 접속 중이라 이 PC 에서만 바꿀 수 있어요.' : a.on ? '켜짐 — 서버가 0.0.0.0 으로 열려 있어요. 밖에서 온 요청은 접속 토큰 + 로그인이 필요해요.' : a.hasToken ? '꺼짐 — 이 PC(127.0.0.1) 안에서만 열려 있어요.' : '꺼짐 — 먼저 아래에서 접속 토큰을 만들어 주세요.';
+      $('extTok').value = a.hasToken ? '●'.repeat(20) : ''; $('extTok').placeholder = '아직 없음';
+      $('extShow').disabled = $('extCopy').disabled = !a.hasToken || out; $('extNew').disabled = out;
+      $('extTunnel').innerHTML = a.tunnel ? `터널 주소: <code>${esc(a.tunnel)}</code> <small>(토큰은 위에서 따로 복사해 전해 주세요)</small>` : '터널: 꺼져 있어요. 켜려면 이 PC 에서 <code>node tunnel.js</code>';
+    };
+    await loadPerm(); draw();
+    const fetchToken = async () => { const r = await api('/api/settings/access/token'), j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || '토큰을 받지 못했어요.'); return j.token; };
+    $('extOn').onchange = async () => {
+      const on = $('extOn').checked;
+      if (on && !confirm('외부 접속을 켤까요?\n\n• 서버가 이 PC 밖(같은 와이파이·인터넷 터널)에서도 열려요. 밖에서 온 요청은 접속 토큰이 있어야 로그인 화면도 볼 수 있고, 로그인도 해야 써요.\n• 켜는 순간 "명령 실행"과 "자기 수정"은 자동으로 꺼져요. (다시 켜려면 경고를 한 번 더 봐요)\n• 밖에서는 설정·서버 다시 시작을 바꿀 수 없어요. 이 PC 에서만 할 수 있어요.\n• 같은 와이파이로 바로(http) 접속하면 암호화되지 않아요. 인터넷에서는 https 터널(Cloudflare)만 쓰세요.\n\n토큰이 새면 꼭 새로 만들고, 안 쓸 때는 꺼 두세요.')) { $('extOn').checked = false; return; }
+      $('extOn').disabled = true;
+      try {
+        const r = await api('/api/settings/access', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) }), j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || '바꾸지 못했어요.');
+        access = j.access; perm = j.permissions;
+        say(on ? '✓ 외부 접속을 켰어요. "명령 실행"·"자기 수정"은 자동으로 껐어요.' : '✓ 외부 접속을 껐어요. 이제 이 PC 안에서만 열려요.');
+        document.querySelectorAll('input[data-perm]').forEach((c) => { c.checked = !!perm[c.dataset.perm]; });
+        loadPerm();
+      } catch (e) { if (e.message !== 'login') say(`⚠ ${e.message === 'Failed to fetch' ? '서버에 연결할 수 없습니다.' : e.message}`, true); $('extOn').checked = !on; }
+      draw();
+    };
+    $('extNew').onclick = async () => {
+      if (access.hasToken && !confirm('새 접속 토큰을 만들까요?\n\n지금 쓰는 토큰은 바로 못 쓰게 돼요. 이미 들어온 기기도 새 토큰을 다시 넣어야 해요.')) return;
+      try { const r = await api('/api/settings/access/token', { method: 'POST' }), j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || '만들지 못했어요.'); access = j.access; say('✓ 새 접속 토큰을 만들었어요. [복사]로 가져가세요. (화면에는 보이지 않아요)'); draw(); }
+      catch (e) { if (e.message !== 'login') say(`⚠ ${e.message}`, true); }
+    };
+    $('extCopy').onclick = async () => {
+      try { await navigator.clipboard.writeText(await fetchToken()); say('✓ 접속 토큰을 클립보드에 복사했어요. 붙여 넣은 뒤에는 클립보드를 다른 글로 덮어 주세요.'); }
+      catch (e) { if (e.message !== 'login') say(`⚠ ${e.name === 'NotAllowedError' ? '복사하지 못했어요. [보기]로 확인해 주세요.' : e.message}`, true); }
+    };
+    $('extShow').onclick = async () => { // 10초만 보여 주고 다시 가린다
+      try { const t = await fetchToken(); $('extTok').value = t; setTimeout(draw, 10000); say('10초 뒤에 다시 가려져요. 주변에 화면을 보는 사람이 없는지 확인하세요.'); }
+      catch (e) { if (e.message !== 'login') say(`⚠ ${e.message}`, true); }
+    };
   }
 
   // ---------- 설정 ----------
@@ -973,6 +1022,7 @@
     if (t === '사용자') return showUsers();
     $('seedBtn').onclick = () => seed(false);
     showPerm();
+    showAccess();
     showTelegram();
     $('restartBtn').onclick = restartServer;
     loadSelfmodLog();
@@ -1021,6 +1071,19 @@
           ${PERMS.map(([k, title, , desc]) => `<div class="permrow ${k === '명령실행' || k === '자기수정' ? 'danger' : ''}"><label class="sw"><input type="checkbox" data-perm="${k}" aria-label="${esc(title)}" disabled><span></span></label>
             <div class="st"><b>${esc(title)}</b><small>${esc(desc)}</small></div></div>`).join('')}
           <div id="permMsg" role="status" aria-live="polite"></div></div>
+        <div class="card"><h3>외부 접속 <small>(기본은 꺼짐 — 이 PC 안에서만)</small></h3>
+          <p>휴대폰 등 <b>밖에서</b> 쓰려면 켭니다. 서버가 모든 주소(0.0.0.0)로 열리고, 밖에서 온 요청은 <b>접속 토큰</b>이 있어야 로그인 화면조차 볼 수 없어요 (토큰 + 로그인 두 겹). 켜는 순간 <b>"명령 실행"과 "자기 수정"은 자동으로 꺼지고</b>, 다시 켜려면 경고를 거쳐요. 밖에서는 설정·서버 다시 시작·파일 열기를 할 수 없어요.</p>
+          <div class="permrow danger"><label class="sw"><input type="checkbox" id="extOn" aria-label="외부 접속" disabled><span></span></label>
+            <div class="st"><b>외부 접속 허용</b><small id="extState">불러오는 중…</small></div></div>
+          <div class="tgform"><label>접속 토큰 <small>(화면에는 가려서만 보여요)</small><input id="extTok" type="text" readonly autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"></label>
+            <div class="tgbtns"><button class="btn ghost" id="extCopy" disabled>복사</button><button class="btn ghost" id="extShow" disabled>10초 보기</button><button class="btn ghost" id="extNew" disabled>새로 만들기</button></div>
+            <div id="extTunnel" style="margin-top:12px;font-size:14px;color:var(--sub)"></div>
+            <div id="extMsg" role="status" aria-live="polite" style="margin-top:6px;font-size:14px"></div></div>
+          <aside class="tghelp" style="margin-top:12px"><h4>인터넷 터널(Cloudflare) 켜는 방법</h4>
+            <ol><li>위에서 접속 토큰을 만들고 <b>외부 접속 허용</b>을 켭니다.</li>
+              <li>이 PC 의 터미널에서 <code>node tunnel.js</code> (안에서 <code>cloudflared tunnel --url http://127.0.0.1:8790</code> 을 켜요. 이 PC 에 다른 터널 설정 <code>~/.cloudflared/config.yml</code> 이 있어도 영향받지 않게 빈 설정을 같이 지정해요). 나온 <code>https://….trycloudflare.com</code> 주소가 위에 보여요. 주소는 켤 때마다 바뀌어요.</li>
+              <li>휴대폰 브라우저에서 그 주소를 열고, 토큰을 붙여 넣은 뒤 아이디·비밀번호로 로그인합니다.</li>
+              <li>다 쓰면 터미널에서 Ctrl+C (또는 <code>node tunnel.js stop</code>) 로 터널을 끄고, 외부 접속도 끄세요.</li></ol></aside></div>
         <div class="card"><h3>서버 다시 시작</h3>
           <p>먼저 서버가 직접 <b>문법 검사와 selftest</b> 를 돌려 보고(몇 분 걸려요), <b>모두 통과해야만</b> 껐다 켭니다. 하나라도 실패하면 켜 둔 채 그대로 두고 이유를 보여 줘요. 서버를 <code>start.bat</code> 으로 켰을 때만 쓸 수 있어요. 진행 중인 답변·예약 실행은 끊깁니다.</p>
           <button class="btn" id="restartBtn">서버 다시 시작</button><div id="restartMsg" role="status" aria-live="polite"></div></div>
