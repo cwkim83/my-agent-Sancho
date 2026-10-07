@@ -2336,7 +2336,7 @@ async function runApprovals(ck, { CM, CS, CC }) { // ck 첫 관리자(테스트�
   const fin = await dec(ck, { action: 'final', comment: '전결 처리' });
   check('승인자의 전결: 완료 · 서명이 전결(테스트)로 남음 · 차례 없음(step null) · 완료 시각 · 더는 내 차례가 아님',
     fin.status === 200 && fin.d.status === '완료' && fin.d.step === null && fin.d.log[2].type === 'final' && fin.d.log[2].name === '테스트' && fin.d.log[2].role === 'approve' && fin.d.log[2].comment === '전결 처리' && !!fin.d.completedAt && fin.d.myTurn === false && await todo(ck) === 0);
-  check('앞선 서명(상신·이서연 승인)은 완료 뒤에도 한 글자도 안 바뀜', JSON.stringify(fin.d.log.slice(0, 2)) === before);
+  check('앞선 서명(상신·이서연 승인)은 완료 뒤에도 한 글자도 안 바뀜(파일 그대로) · 화면에 보내는 서명에는 사람의 고유 번호(uid)가 빠짐', JSON.stringify(rawDoc(a.d.id).log.slice(0, 2)) === before &&rawDoc(a.d.id).log.every((l) => typeof l.uid === 'string') && fin.d.log.every((l) => !('uid' in l)) && fin.d.line.every((l) => !('uid' in l)) && !('drafterUid' in fin.d));
   const afterLog = JSON.stringify(rawDoc(a.d.id).log);
   check('완료된 문서는 기안자가 서명 기록까지 고쳐 보내도 409, 결재도 409 — 서명 기록 그대로', (await put(CM, a.d.id, { title: '바꿈', log: [] })).status === 409 && (await dec(ck, { action: 'reject', comment: 'x' })).status === 409 && JSON.stringify(rawDoc(a.d.id).log) === afterLog);
 
@@ -2491,7 +2491,7 @@ async function runOkr(ck) {
   const items0 = [obj('co1', '전사', '', 'a', []), obj('dp1', '부서', 'co1', 'b', []), obj('pe1', '개인', 'dp1', 'c', []), obj('co2', '전사', '', 'd', [], '2026-Q3')];
   check('상위 목표 후보: 같은 분기에서 더 높은 수준만(부서 → 전사, 개인 → 전사·부서, 전사 → 없음)', okr.parentChoices(items0, '부서', '2026-Q4').map((o) => o.id).join() === 'co1' && okr.parentChoices(items0, '개인', '2026-Q4').map((o) => o.id).join() === 'co1,dp1' && okr.parentChoices(items0, '전사', '2026-Q4').length === 0);
   check('분기 목록은 자료에 있는 분기와 오늘의 분기를 오래된 순으로, 숫자는 보기 좋게(4,200,000 · 1.8 · 0.1+0.2=0.3 · 60%)', okr.quarters([obj('a', '부서', '', 'x', [], '2026-Q2'), { id: 'z', quarter: '엉뚱' }], T).join() === '2026-Q2,2026-Q4'
-    && okr.fmt(4200000) === '4,200,000' && okr.fmt(1.8) === '1.8' && okr.fmt(0.1 + 0.2) === '0.3' && okr.fmt('x') === '' && okr.pct(0.6) === '60%' && okr.pct(null) === '-' && okr.pct(0.3875) === '39%');
+    && okr.fmt(4200000) === '4,200,000' && okr.fmt(1.8) === '1.8' && okr.fmt(0.1 + 0.2) === '0.3' && okr.fmt('x') === '' && okr.pct(0.6) === '60%' && okr.pct(null) === '-' && okr.pct(0.3875) === '38%');
 
   // ---- 화면
   const page = await call('GET', '/m/okr.html', ck), pageText = await page.text();
@@ -2875,6 +2875,156 @@ async function runAudit6() {
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
+// 7편 점검: 결재 순서 · 승인된 문서의 금액 · 서명은 결재자 본인의 승인으로만(일반 사용자 계정 기준) · OKR·공수 합계의 경계값.
+// 시험 전용 서버(임시 폴더·포트 8797)와 시험 전용 계정(qa7-…, 비밀번호는 점검할 때마다 새로 만든 무작위 글자)으로만 한다. 실제 사용자·실제 비밀번호는 쓰지 않는다.
+async function runAudit7() {
+  const d7 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test7-')), B7 = 'http://127.0.0.1:8797';
+  const QPW = `qa7-${crypto.randomBytes(8).toString('hex')}`, TMP = `qa7-tmp-${crypto.randomBytes(8).toString('hex')}`;
+  const s7 = startServer(8797, d7, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js') });
+  await s7.ready;
+  const req = (m, u, c, b) => fetch(B7 + u, { method: m, headers: { 'Content-Type': 'application/json', ...(c ? { Cookie: c } : {}) }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const J = (r) => r.json().catch(() => ({}));
+  const act = async (m, u, c, b) => { const r = await req(m, u, c, b), j = await J(r); return { status: r.status, d: j.item, err: j.error, j }; };
+  const create = (c, o) => act('POST', '/api/approvals', c, o), put = (c, id, o) => act('PUT', `/api/approvals/${id}`, c, o);
+  const submit = (c, id) => act('POST', `/api/approvals/${id}/submit`, c, {}), dec = (c, id, action, comment = '') => act('POST', `/api/approvals/${id}/decide`, c, { action, comment });
+  const todo = async (c) => (await J(await req('GET', '/api/approvals/summary', c))).todo;
+  const raw = (id) => JSON.parse(fs.readFileSync(path.join(d7, 'db', 'approvals.json'), 'utf8')).find((x) => x.id === id);
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const day = (n) => { const t = new Date(); t.setDate(t.getDate() + n); return t.toLocaleDateString('sv-SE'); };
+
+  // 시험용 계정: 관리자 1 · 일반 사용자 5 (A 기안자 · B 검토1 · C 검토2 · D 승인자 · E 결재선 밖)
+  const adm = cookieOf(await req('POST', '/api/auth/setup', null, { name: '점검관리자', username: 'qa7-admin', password: QPW }));
+  const mk = async (username, name, dept) => {
+    await req('POST', '/api/users', adm, { name, username, password: TMP, dept, role: 'user' });
+    const c = cookieOf(await req('POST', '/api/auth/login', null, { username, password: TMP }));
+    await req('POST', '/api/auth/password', c, { current: TMP, next: QPW }); return c;
+  };
+  const U = { A: await mk('qa7-a', '점검기안자', '점검1팀'), B: await mk('qa7-b', '점검검토1', '점검1팀'), C: await mk('qa7-c', '점검검토2', '점검2팀'), D: await mk('qa7-d', '점검승인자', '점검2팀'), E: await mk('qa7-e', '점검외부인', '점검3팀') };
+  const meAll = await Promise.all(Object.values(U).map(async (c) => J(await req('GET', '/api/me', c))));
+  check('7편 점검 준비: 시험 전용 서버에 시험용 계정 6개(관리자 1 · 일반 사용자 A~E)가 점검할 때마다 새로 만든 시험 전용 비밀번호로 만들어지고 로그인됨', meAll.every((m) => m.role === 'user' && m.mustChange === false && m.username.startsWith('qa7-')) && (await req('GET', '/api/me', adm)).status === 200);
+  const base = { title: '7편 점검 구매 요청', form: '구매 요청', body: '점검용 본문', amount: 1000000 };
+  const mkDoc = async (o = {}) => { const d = (await create(U.A, { ...base, reviewers: ['qa7-b', 'qa7-c'], approver: 'qa7-d', ...o })).d; await submit(U.A, d.id); return d.id; };
+
+  // ---- ① 결재는 순서대로만
+  const id1 = await mkDoc();
+  const early = [await dec(U.C, id1, 'approve'), await dec(U.D, id1, 'approve'), await dec(U.D, id1, 'final'), await dec(U.A, id1, 'approve'), await dec(adm, id1, 'approve'), await dec(U.E, id1, 'approve')];
+  check('7편 ① 순서: 첫 검토자(B) 차례에 둘째 검토자(C)·승인자(D)의 승인·전결, 기안자(A)의 승인은 403, 결재선 밖 관리자·사용자(E)는 404 — 서명이 하나도 안 생김',
+    early.map((r) => r.status).join() === '403,403,403,403,404,404' && raw(id1).log.length === 1 && raw(id1).step === 0);
+  const turns = async () => [await todo(U.B), await todo(U.C), await todo(U.D)].join();
+  const t0 = await turns(), b1 = await dec(U.B, id1, 'approve'), t1 = await turns(), again = [await dec(U.B, id1, 'approve'), await dec(U.D, id1, 'final')], c1 = await dec(U.C, id1, 'approve'), t2 = await turns(), d1 = await dec(U.D, id1, 'final'), t3 = await turns();
+  check('7편 ① 순서: "결재할 문서"는 지금 차례인 한 사람에게만(B → C → D 로 넘어감), 이미 승인한 B 의 두 번째 승인과 차례 전 D 의 전결은 403, 끝나면 아무에게도 없음',
+    t0 === '1,0,0' && b1.status === 200 && t1 === '0,1,0' && again.every((r) => r.status === 403) && c1.status === 200 && t2 === '0,0,1' && d1.status === 200 && d1.d.status === '완료' && t3 === '0,0,0');
+  const L1 = raw(id1).log;
+  check('7편 ① 순서: 서명 기록이 결재선 순서 그대로(상신 A → 검토 B → 검토 C → 전결 D), 시각도 그 순서',
+    L1.map((l) => `${l.type}:${l.by}:${l.role}`).join() === 'submit:qa7-a:draft,approve:qa7-b:review,approve:qa7-c:review,final:qa7-d:approve' && L1.every((l, i) => i === 0 || l.at >= L1[i - 1].at));
+  const id2 = await mkDoc();
+  await dec(U.B, id2, 'approve'); await dec(U.C, id2, 'reject', '단가 재확인');
+  const re2 = await submit(U.A, id2), skip2 = [await dec(U.C, id2, 'approve'), await dec(U.D, id2, 'approve')];
+  check('7편 ① 순서: 반려 뒤 다시 올리면(2회차) 처음 검토자(B)부터 다시 — 1회차에 승인한 B 의 서명은 넘어오지 않고, C·D 가 먼저 하려 하면 403', re2.status === 200 && re2.d.round === 2 && re2.d.step === 0 && skip2.every((r) => r.status === 403) && await todo(U.B) === 1);
+  for (const c of [U.B, U.C, U.D]) await dec(c, id2, 'approve');
+  check('7편 ① 순서: 2회차를 순서대로 끝내면 완료, 1회차 기록(B 승인·C 반려)은 그대로 남음', raw(id2).status === '완료' && raw(id2).log.filter((l) => l.round === 1).map((l) => `${l.type}:${l.by}`).join() === 'submit:qa7-a,approve:qa7-b,reject:qa7-c'
+    && raw(id2).log.filter((l) => l.round === 2).map((l) => `${l.type}:${l.by}`).join() === 'submit:qa7-a,approve:qa7-b,approve:qa7-c,approve:qa7-d');
+
+  // ---- ② 승인된 문서의 금액은 기안자도 못 바꿈
+  const snap = JSON.stringify(raw(id1));
+  const tries = [await put(U.A, id1, { amount: 9999999 }), await put(U.A, id1, { amount: 9999999, status: '반려' }), await put(U.A, id1, { status: '작성중' }), await submit(U.A, id1), await act('DELETE', `/api/approvals/${id1}`, U.A),
+    await put(U.D, id1, { amount: 1 }), await put(adm, id1, { amount: 1 }), await act('PUT', `/api/db/approvals/${id1}`, U.A, { ...raw(id1), amount: 1 }), await act('PUT', `/api/db/approvals/${id1}`, adm, { amount: 1 }),
+    { status: (await fetch(`${B7}/api/approvals/${id1}/files?name=x.txt`, { method: 'POST', headers: { Cookie: U.A }, body: 'x' })).status }];
+  check('7편 ② 금액: 완료된 문서는 기안자가 금액을 바꾸려 해도(상태를 반려·작성중으로 끼워 보내도) 409, 다시 올리기·지우기·첨부도 409, 승인자·관리자는 403/404, 일반 자료 주소로도 404 — 파일이 한 글자도 안 바뀜',
+    tries.map((r) => r.status).join() === '409,409,409,409,409,403,404,404,404,409' && JSON.stringify(raw(id1)) === snap && raw(id1).amount === 1000000);
+  const id3 = await mkDoc();
+  await dec(U.B, id3, 'approve');
+  check('7편 ② 금액: 결재 중(검토자 한 명이 승인한 뒤)에도 기안자는 금액을 못 바꿈(409)', (await put(U.A, id3, { amount: 5 })).status === 409 && raw(id3).amount === 1000000);
+  await dec(U.C, id3, 'reject', '금액 확인 필요');
+  const ch3 = await put(U.A, id3, { amount: 1200000 }), re3 = await submit(U.A, id3);
+  check('7편 ② 금액: 반려된 문서만 고칠 수 있고, 금액을 바꿔 다시 올리면 새 회차로 모두가 다시 승인해야 함(앞 회차 승인은 새 금액에 쓰이지 않음)', ch3.status === 200 && re3.status === 200 && re3.d.round === 2 && re3.d.step === 0 && await todo(U.B) === 1 && await todo(U.D) === 0);
+  fs.writeFileSync(path.join(d7, 'users', 'qa7-a', 'approval-draft.json'), JSON.stringify({ id: id1, no: raw(id1).no, title: '바꿔치기 시도', amount: 1, status: '완료', body: 'x' }));
+  const cid = (await J(await req('POST', '/api/chats', U.A))).id; await (await req('POST', `/api/chats/${cid}/messages`, U.A, { content: '안녕' })).text();
+  const mineA = (await J(await req('GET', '/api/approvals', U.A))).items;
+  check('7편 ② 금액: 비서의 초안 파일에 완료된 문서의 id·번호·금액을 적어도 새 작성중 기안만 생기고, 완료된 문서는 그대로', JSON.stringify(raw(id1)) === snap && mineA.some((x) => x.title === '바꿔치기 시도' && x.status === '작성중' && x.id !== id1 && x.no !== raw(id1).no && x.log.length === 0));
+
+  // ---- ③ 서명은 결재자 본인의 승인으로만 (일반 사용자 계정 기준)
+  const id4 = await mkDoc();
+  const forge = await act('POST', `/api/approvals/${id4}/decide`, U.B, { action: 'approve', comment: '확인', by: 'qa7-d', name: '점검승인자', dept: '점검2팀', role: 'approve', type: 'final', round: 1, at: '2000-01-01T00:00:00.000Z', step: 3 });
+  const lg = raw(id4).log.at(-1);
+  check('7편 ③ 서명: 검토자 B 가 결재 요청에 다른 사람(D)의 이름·종류(전결)·시각·단계를 적어 보내도, 서명은 B 본인의 이름·지금 시각·검토 승인으로만 남고 문서는 한 칸만 나아감',
+    forge.status === 200 && lg.by === 'qa7-b' && lg.name === '점검검토1' && lg.type === 'approve' && lg.role === 'review' && lg.at > '2020' && raw(id4).step === 1 && raw(id4).status === '진행');
+  const self = [await create(U.A, { ...base, approver: 'qa7-a' }), await create(U.B, { ...base, reviewers: ['qa7-c'], approver: 'qa7-b' })];
+  const selfDraft = (await create(U.A, { ...base, approver: 'qa7-d' })).d, selfPut = await put(U.A, selfDraft.id, { approver: 'qa7-a' });
+  check('7편 ③ 서명: 일반 사용자는 자기 문서의 승인자를 자기로 정할 수 없음(400 — 혼자 올리고 혼자 승인해 끝내는 길을 막음), 고칠 때도 400',
+    self.every((r) => r.status === 400) && selfPut.status === 400 && raw(selfDraft.id).approver === 'qa7-d');
+  const admSelf = (await create(adm, { ...base, title: '관리자 직접 기안', approver: 'qa7-admin' })).d, admSub = await submit(adm, admSelf.id), admOk = await dec(adm, admSelf.id, 'approve');
+  check('7편 ③ 서명: 관리자(대표)는 자기 문서를 직접 승인할 수 있음(설계대로)', admSub.status === 200 && admOk.status === 200 && admOk.d.status === '완료');
+  const id5 = await mkDoc({ reviewers: ['qa7-c'] });
+  const users7 = JSON.parse(fs.readFileSync(path.join(d7, 'users.json'), 'utf8'));
+  fs.writeFileSync(path.join(d7, 'users.json'), JSON.stringify(users7.filter((u) => u.username !== 'qa7-c'))); // C 의 계정을 지운 것처럼
+  const oldC = U.C;
+  await req('POST', '/api/users', adm, { name: '새로온사람', username: 'qa7-c', password: TMP, dept: '점검9팀', role: 'user' });
+  const newC = cookieOf(await req('POST', '/api/auth/login', null, { username: 'qa7-c', password: TMP })); await req('POST', '/api/auth/password', newC, { current: TMP, next: QPW });
+  const nc = [await req('GET', `/api/approvals/${id5}`, newC), await req('GET', `/api/approvals/${id1}`, newC)], ncDec = await dec(newC, id5, 'approve');
+  check('7편 ③ 서명: 지운 계정(C)과 같은 아이디로 새로 만든 다른 사람은 C 의 결재 차례를 이어받지 못하고(결재 404·"결재할 문서" 0) C 가 결재했던 문서도 보지 못함 — 서명은 그 아이디의 옛 주인 본인만',
+    (await req('GET', '/api/me', oldC)).status === 401 && nc.every((r) => r.status === 404) && ncDec.status === 404 && await todo(newC) === 0 && raw(id5).log.length === 1 && (await J(await req('GET', '/api/approvals', newC))).items.length === 0);
+  const deny = async (c) => { const id = (await J(await req('POST', '/api/chats', c))).id, tt = await (await req('POST', `/api/chats/${id}/messages`, c, { content: '/perm' })).text(); return [...tt.matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join(''); };
+  const pa = await deny(U.A);
+  check('7편 ③ 서명: 일반 사용자의 비서도 결재 파일·첨부를 읽지도 쓰지도 못함(거절 목록), 명령 실행 도구도 없음 — 서명을 파일로 꾸밀 길이 없음 (대문자로 바꾼 경로 DB/APPROVALS.JSON 도 막히는 것은 진짜 claude 로 따로 확인)',
+    ['Read', 'Edit', 'Write'].every((t) => pa.includes(`${t}(./db/approvals.json)`) && pa.includes(`${t}(./결재파일/**)`)) && /shell=NN/.test(pa));
+  const all = JSON.parse(fs.readFileSync(path.join(d7, 'db', 'approvals.json'), 'utf8'));
+  const okSeq = all.every((d) => { const cur = d.log.filter((l) => l.round === d.round && l.type !== 'submit'); return cur.every((l, i) => d.line[i] && l.by === d.line[i].username && l.role === d.line[i].role) && (d.status !== '진행' || cur.length === d.step); });
+  check('7편 ③ 서명: 점검이 끝난 모든 문서에서, 지금 회차의 서명은 결재선의 앞에서부터 그 자리의 사람·역할과 정확히 일치하고, 진행 중인 문서의 단계 = 서명 수', all.length >= 7 && okSeq);
+
+  // ---- ④ OKR 경계값
+  const okr = require('./public/m/okr-calc.js');
+  const K = (start, target, current, weight = 1, due) => ({ metric: 'k', start, target, current, weight, ...(due ? { due } : {}) });
+  const O = (id, level, parentId, krs, q = '2026-Q4') => ({ id, level, parentId, title: id, quarter: q, krs });
+  check('7편 ④ OKR 진척 글자: 99.6% 처럼 아직 다 안 된 것은 100% 로 올려 보이지 않음(내림: 99%) · 100% 는 정확히 다 됐을 때만 · 0.4% 는 0% · -0 은 "0%"',
+    okr.pct(0.996) === '99%' && okr.pct(0.9999) === '99%' && okr.pct(1) === '100%' && okr.pct(0.004) === '0%' && okr.pct(-0) === '0%' && okr.pct(0.5) === '50%' && okr.pct(0.29) === '29%' && okr.pct(0.57) === '57%');
+  const over = okr.build([O('x', '부서', '', [K(0, 3, 2.99, 1, '2026-10-20')])], '2026-10-21', '2026-Q4')[0];
+  check('7편 ④ OKR: 기한이 지난 KR 이 99.7% 면 "위험"이고 글자도 99%(100% 와 위험이 같이 보이지 않음), 목표값에 딱 닿으면 100%·순조', over.krs[0].status === '위험' && okr.pct(over.krs[0].rate) === '99%'
+    && okr.build([O('x', '부서', '', [K(0, 3, 3, 1, '2026-10-20')])], '2026-10-21', '2026-Q4')[0].status === '순조');
+  check('7편 ④ OKR 달성률 경계: 목표값 그대로 100% · 넘으면 100%(올림·내림 지표 모두) · 시작값 그대로 0% · 반대로 가면 0% · 음수 범위(-10→10, 현재 0 = 50%)·큰 수(10억)·소수(3→1, 1.8 = 60%) · 시작=목표는 계산 안 함',
+    okr.krRate(K(0, 100, 100)) === 1 && okr.krRate(K(0, 100, 101)) === 1 && okr.krRate(K(3, 1, 0.2)) === 1 && okr.krRate(K(3, 1, 3)) === 0 && okr.krRate(K(3, 1, 3.5)) === 0 && okr.krRate(K(0, 100, -1)) === 0
+    && near(okr.krRate(K(-10, 10, 0)), 0.5) && near(okr.krRate(K(10, -10, 0)), 0.5) && near(okr.krRate(K(0, 1e9, 2.5e8)), 0.25) && okr.krRate(K(3, 1, 1.8)) === 0.6 && okr.krRate(K(5, 5, 5)) === null);
+  const wsum = (ws, rs) => okr.build([O('x', '부서', '', ws.map((w, i) => K(0, 1, rs[i], w)))], '2026-10-07', '2026-Q4')[0].progress;
+  check('7편 ④ OKR 가중 평균 경계: 소수 가중치(0.1·0.2·0.7, 앞 둘만 달성 → 정확히 30%) · 셋이 같은 1/3 → 100% · 큰 가중치와 0 이 섞여도 비율대로 · 가중치가 모두 0 이면 계산 안 함(null)',
+    wsum([0.1, 0.2, 0.7], [1, 1, 0]) === 0.3 && wsum([1, 1, 1], [1, 1, 1]) === 1 && wsum([1e6, 0, 1e6], [1, 1, 0]) === 0.5 && wsum([0, 0], [1, 1]) === null && wsum([33.3, 33.3, 33.4], [1, 1, 1]) === 1);
+  const S = okr.statusOf;
+  check('7편 ④ OKR 색 경계(부동소수점 찌꺼기에 안 흔들림): 뒤처짐 0.8−0.7 = 0.1 순조 · 0.8−0.55 = 0.25 주의 · 0.8−0.5499 위험 · 0.35−0.1 = 0.25 주의 · 기한 당일은 아직 안 지남',
+    S(0.7, 0.8) === '순조' && S(0.55, 0.8) === '주의' && S(0.5499, 0.8) === '위험' && S(0.1, 0.35) === '주의'
+    && okr.build([O('x', '부서', '', [K(0, 1, 0.95, 1, '2026-10-21')])], '2026-10-21', '2026-Q4')[0].krs[0].status === '순조');
+  check('7편 ④ OKR 분기 경계: 윤년 1분기(2028, 91일)·평년(2027, 90일)·3분기 92일 · 첫날 1/전체 · 끝날 100% · 다음 날도 100%',
+    okr.periodOf('2028-Q1').end === '2028-03-31' && near(okr.elapsed('2028-01-01', '2028-03-31', '2028-01-01'), 1 / 91) && near(okr.elapsed('2027-01-01', '2027-03-31', '2027-03-31'), 1) && near(okr.elapsed('2026-07-01', '2026-09-30', '2026-08-15'), 46 / 92) && okr.elapsed('2026-10-01', '2026-12-31', '2027-01-01') === 1);
+  const chain = okr.build([O('c', '전사', '', []), O('d1', '부서', 'c', [K(0, 1, 1)]), O('d2', '부서', 'c', []), O('p1', '개인', 'd2', [K(0, 1, 0.5)]), O('p2', '개인', 'd2', [K(0, 1, 0)])], '2026-10-07', '2026-Q4')[0];
+  check('7편 ④ OKR 상위 평균: 전사 ← 부서 둘(100% · 개인 둘의 평균 25%) = 62.5%, 3단계로 올라가며 값이 그대로 전해짐', near(chain.children[1].progress, 0.25) && near(chain.progress, 0.625) && okr.pct(chain.progress) === '62%');
+
+  // ---- ⑤ 공수 경계값
+  const mdc = require('./public/m/manday-calc.js');
+  check('7편 ⑤ 공수 M/D 반올림(1 M/D = 8시간, 소수 둘째 자리, 0.5 는 올림이 늘 같게): 0.25h 0.03 · 1h 0.13 · 3h 0.38 · 5h 0.63 · 7h 0.88 · 13h 1.63 · 23.75h 2.97 · 24h 3',
+    [[0.25, 0.03], [0.5, 0.06], [0.75, 0.09], [1, 0.13], [3, 0.38], [5, 0.63], [7, 0.88], [8, 1], [13, 1.63], [23.75, 2.97], [24, 3]].every(([h, m]) => mdc.md(h) === m));
+  const many = Array.from({ length: 32 }, (_, i) => ({ owner: 'x', date: '2026-10-06', projectId: 'p', hours: 0.25, id: String(i) }));
+  check('7편 ⑤ 공수 합계: 0.25시간 32줄 = 정확히 8시간 = 1 M/D (조각을 더해도 찌꺼기 없음)', mdc.total(many).hours === 8 && mdc.md(mdc.total(many).hours) === 1 && mdc.projectTotal(many, 'p').mandays === 1);
+  const edges = [['2026-10-31', 1], ['2026-11-01', 2], ['2026-12-31', 3], ['2027-01-01', 4], ['2028-02-29', 5]].map(([date, hours]) => ({ owner: 'x', date, projectId: 'p', hours }));
+  check('7편 ⑤ 공수 달 경계: 10/31·11/1·12/31·1/1·윤일(2028-02-29)이 각자 자기 달로 묶이고 오래된 순', mdc.monthRows(edges).map((m) => `${m.month}:${m.hours}`).join() === '2026-10:1,2026-11:2,2026-12:3,2027-01:4,2028-02:5');
+  const rp = (o, asOf) => mdc.rowProblem({ date: '2028-02-29', task: 't', hours: 8, ...o }, asOf);
+  check('7편 ⑤ 공수 날짜·시간 경계: 윤일(2028-02-29)은 됨·평년 2/29 는 안 됨 · 0.25 단위만(0.3·23.8 안 됨, 23.75 됨) · 24 는 되고 24.25 는 안 됨 · 1월 1일에 "12/31" 을 올해로 적으면 작년으로 보정',
+    rp({}, '2028-03-01') === '' && rp({ date: '2027-02-29' }, '2027-03-01') !== '' && rp({ hours: 0.3 }, '2028-03-01') !== '' && rp({ hours: 23.8 }, '2028-03-01') !== '' && rp({ hours: 23.75 }, '2028-03-01') === '' && rp({ hours: 24 }, '2028-03-01') === '' && rp({ hours: 24.25 }, '2028-03-01') !== ''
+    && mdc.fixYear('2027-12-31', '2027-01-01') === '2026-12-31' && mdc.fixYear('2027-01-02', '2027-01-01') === '2027-01-02');
+  const prj = await req('PUT', '/api/db/projects/qa7-p', adm, { name: '점검 프로젝트', client: '', status: '진행중' });
+  const sv = (c, rows) => act('POST', '/api/mandays', c, { rows: rows.map((r) => ({ projectId: 'qa7-p', task: '점검', overtime: false, ...r })) });
+  const e1 = await sv(U.A, [{ date: day(-1), hours: 12 }, { date: day(-1), hours: 12, task: '점검2' }]), e2 = await sv(U.A, [{ date: day(-1), hours: 0.25, task: '점검3' }]), e3 = await sv(U.B, [{ date: day(-1), hours: 24 }]), e4 = await sv(U.A, [{ date: day(-2), hours: 24 }]);
+  check('7편 ⑤ 공수 하루 24시간 경계: 한 사람의 같은 날 12+12 = 24 는 저장 · 그 날 0.25 더하면 400(저장된 24시간이라고 알림) · 다른 사람·다른 날은 따로 셈', prj.status === 200 && e1.status === 200 && e1.j.saved === 2 && e2.status === 400 && /24시간/.test(e2.err) && e3.status === 200 && e4.status === 200);
+  const e5 = await sv(U.A, [{ date: day(-3), hours: 20 }, { date: day(-3), hours: 5, task: '점검2' }]);
+  check('7편 ⑤ 공수: 한 번에 넣는 줄끼리 합쳐 24시간을 넘어도 400 이고 아무것도 저장 안 됨 — 이유에 "저장된"과 "이번에 넣는" 시간을 나눠 알려 줌', e5.status === 400 && /이번/.test(e5.err) && (await J(await req('GET', '/api/mandays', U.A))).items.every((x) => x.date !== day(-3)));
+  const dates = [await sv(U.E, [{ date: day(1), hours: 1 }]), await sv(U.E, [{ date: day(2), hours: 1 }]), await sv(U.E, [{ date: day(-400), hours: 1 }]), await sv(U.E, [{ date: day(-401), hours: 1 }])];
+  check('7편 ⑤ 공수 날짜 범위 경계: 내일까지 됨·모레는 400 · 400일 전까지 됨·401일 전은 400', dates.map((r) => r.status).join() === '200,400,200,400');
+  const pt = await J(await req('GET', '/api/mandays/project/qa7-p', U.D)); // (옛 C 의 로그인은 계정을 지워서 풀렸다)
+  check('7편 ⑤ 공수 프로젝트 합계(WBS 투입 공수): 24 + 24 + 24(B) + 1 + 1 = 74h · 9.25 M/D · 3명 — 모든 사람의 합', pt.hours === 74 && pt.mandays === 9.25 && pt.people === 3 && pt.records === 6);
+
+  s7.kill();
+  const leaked = filesUnder(d7).filter((f) => { try { return fs.readFileSync(f, 'utf8').includes(QPW) || fs.readFileSync(f, 'utf8').includes(TMP); } catch { return false; } });
+  check('7편 점검 정리: 시험 전용 비밀번호는 점검 폴더의 어떤 파일에도 평문으로 남지 않음', leaked.length === 0);
+  try { fs.rmSync(d7, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
+}
+
 function startServer(port, dataDir, env) {
   const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
     env: { ...env, SANCHO_PORT: String(port), SANCHO_DATA: dataDir }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -3019,6 +3169,7 @@ srv.ready.then(async () => {
     await runRestart();
     await runMigrate();
     await runAudit6();
+    await runAudit7();
     runGit();
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
     check('서버 로그에 비밀번호 평문이 없음', !srv.log.includes(PW));

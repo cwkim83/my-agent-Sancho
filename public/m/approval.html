@@ -360,7 +360,7 @@
       ${edit.reviewers.map((r, i) => `<div class="arrow">↓</div><div class="lrow"><span class="tag">검토 ${i + 1}</span><select data-rv="${i}" aria-label="검토자 ${i + 1}">${opts(others, r, '사람을 고르세요')}</select>
         <button class="mini" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="위로">↑</button><button class="mini" data-dn="${i}" ${i === edit.reviewers.length - 1 ? 'disabled' : ''} aria-label="아래로">↓</button><button class="mini" data-del="${i}" aria-label="빼기">✕</button></div>`).join('')}
       <div style="margin:4px 0 4px 58px"><button class="mini" id="addRev" ${edit.reviewers.length >= 5 ? 'disabled' : ''}>＋ 검토자 추가</button></div>
-      <div class="arrow">↓</div><div class="lrow"><span class="tag ap">승인</span><select id="fApprover" aria-label="승인자">${opts(people, edit.approver, '사람을 고르세요')}</select></div>`;
+      <div class="arrow">↓</div><div class="lrow"><span class="tag ap">승인</span><select id="fApprover" aria-label="승인자">${opts(me.role === 'admin' ? people : others, edit.approver, '사람을 고르세요')}</select></div>`;
     const box = $('lineBox'), pick = () => { box.querySelectorAll('[data-rv]').forEach((s) => (edit.reviewers[Number(s.dataset.rv)] = s.value)); edit.approver = $('fApprover').value; };
     box.querySelectorAll('[data-rv]').forEach((s) => (s.onchange = pick));
     $('fApprover').onchange = pick;

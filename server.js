@@ -1524,15 +1524,17 @@ async function mandayApi(req, res, user, p, url) {
     if (M === 'POST') { // 저장: 사람이 확인한 줄들. 모두 맞아야 하나도 안 빠지고 저장된다 (하나라도 틀리면 아무것도 안 쓴다)
       const projects = mandayProjects(), r = manday.cleanRows(b.rows, { projects, today: manday.today() });
       if (r.error) return bad(r.error);
-      const names = Object.fromEntries(projects.map((x) => [x.id, mStr(x.name, 40)])), have = new Set(mine.map(mandayKey)), perDay = new Map(), made = [];
-      for (const x of mine) if (typeof x.date === 'string' && Number.isFinite(x.hours)) perDay.set(x.date, (perDay.get(x.date) || 0) + x.hours);
+      const names = Object.fromEntries(projects.map((x) => [x.id, mStr(x.name, 40)])), have = new Set(mine.map(mandayKey)), saved = new Map(), batch = new Map(), made = [];
+      const h2 = (x) => Math.round(x * 100) / 100;
+      for (const x of mine) if (typeof x.date === 'string' && Number.isFinite(x.hours)) saved.set(x.date, h2((saved.get(x.date) || 0) + x.hours));
       let skipped = 0;
       for (const row of r.rows) {
         if (have.has(mandayKey(row))) { skipped += 1; continue; }
         have.add(mandayKey(row));
-        const day = Math.round(((perDay.get(row.date) || 0) + row.hours) * 100) / 100;
-        if (day > 24) return bad(`${row.date} 은 하루 24시간을 넘어요. (이 날 이미 ${Math.round((perDay.get(row.date) || 0) * 100) / 100}시간이 기록돼 있어요)`);
-        perDay.set(row.date, day);
+        // 7편 점검: 예전 안내는 이번에 함께 넣는 줄의 시간까지 "이 날 이미 기록돼 있어요"라고 말했다 → 저장된 시간과 이번에 넣는 시간을 나눠 알린다
+        const s = saved.get(row.date) || 0, b = h2((batch.get(row.date) || 0) + row.hours);
+        if (h2(s + b) > 24) return bad(`${row.date} 은 하루 24시간을 넘어요. (저장된 ${s}시간 + 이번에 넣는 ${b}시간 = ${h2(s + b)}시간)`);
+        batch.set(row.date, b);
         made.push({ id: eventId('md'), owner: user.username, ownerName: user.name, date: row.date, projectId: row.projectId, projectName: row.projectId ? names[row.projectId] || '' : '', task: row.task, hours: row.hours, overtime: row.overtime, src: row.src, createdAt: nowIso() });
       }
       if (made.length) { items.push(...made); writeJson(dbFile('mandays'), items); }
@@ -1567,14 +1569,22 @@ const APPR_REAL = fs.realpathSync(APPR_DIR);
 const apprFileDir = (id) => path.join(APPR_DIR, id);
 const loadApprovals = () => loadCollection('approvals');
 const userByName = (users, n) => users.find((x) => x.username === n);
-const personOf = (x, role) => ({ username: x.username, name: x.name, dept: x.dept || '', role });
-const apprSeen = (d, u) => d.drafter === u.username || (d.status !== '작성중' && Array.isArray(d.line) && d.line.some((l) => l.username === u.username));
-const apprTurn = (d, u) => d.status === '진행' && Array.isArray(d.line) && !!d.line[d.step] && d.line[d.step].username === u.username; // 지금 내가 결재할 차례
+// 7편 점검: 아이디 글자만 보면, 지운 계정과 같은 아이디로 새로 만든 다른 사람이 옛 사람의 결재 차례를 이어받아 서명하고 옛 문서도 봤다.
+// → 상신할 때 결재선에 그 사람의 고유 번호(uid = users.json 의 id, 바뀌지 않음)를 함께 굳혀 두고, 차례·보기·기안자 확인은 그 번호로 한다 (번호가 없는 예전 문서만 아이디로)
+const personOf = (x, role) => ({ username: x.username, name: x.name, dept: x.dept || '', role, uid: x.id });
+const samePerson = (l, u) => (l.uid ? l.uid === u.id : l.username === u.username);
+const isDrafter = (d, u) => (d.drafterUid ? d.drafterUid === u.id : d.drafter === u.username);
+const apprSeen = (d, u) => isDrafter(d, u) || (d.status !== '작성중' && Array.isArray(d.line) && d.line.some((l) => samePerson(l, u)));
+const apprTurn = (d, u) => d.status === '진행' && Array.isArray(d.line) && !!d.line[d.step] && samePerson(d.line[d.step], u); // 지금 내가 결재할 차례
+// 7편 점검: 일반 사용자가 자기 문서의 승인자를 자기로 정해 혼자 올리고 혼자 승인해 끝낼 수 있었다 → 자기 문서를 직접 승인하는 것은 관리자(대표)만
+const selfApproveBad = (approver, d, users) => { if (!approver || approver !== d.drafter) return false; const me = users.find((x) => (d.drafterUid ? x.id === d.drafterUid : x.username === d.drafter)); return !isAdmin(me); };
+const SELF_APPROVE_MSG = '일반 사용자는 자기 문서의 승인자가 될 수 없어요. 다른 사람을 승인자로 골라 주세요. (자기 문서를 직접 승인하는 것은 관리자만 할 수 있어요)';
+const noUid = ({ uid, ...x }) => x; // 화면에는 고유 번호를 보내지 않는다
 function apprView(d, u, users) { // 화면에 보내는 모습: 문서 + 결재 후보(plan, 이름 풀이) + "나는 지금 무엇을 할 수 있나" 표시
   const plan = [...(d.reviewers || []).map((n) => [n, 'review']), ...(d.approver ? [[d.approver, 'approve']] : [])]
-    .map(([n, role]) => { const x = userByName(users, n); return x ? personOf(x, role) : { username: n, name: n, dept: '', role }; });
-  const turn = apprTurn(d, u), mine = d.drafter === u.username;
-  return { ...d, plan, mine, myTurn: turn, myRole: turn ? d.line[d.step].role : null, canEdit: mine && (d.status === '작성중' || d.status === '반려'), canDelete: mine && d.status === '작성중' };
+    .map(([n, role]) => { const x = userByName(users, n); return x ? noUid(personOf(x, role)) : { username: n, name: n, dept: '', role }; });
+  const turn = apprTurn(d, u), mine = isDrafter(d, u), { drafterUid, ...rest } = d;
+  return { ...rest, line: (d.line || []).map(noUid), log: (d.log || []).map(noUid), plan, mine, myTurn: turn, myRole: turn ? d.line[d.step].role : null, canEdit: mine && (d.status === '작성중' || d.status === '반려'), canDelete: mine && d.status === '작성중' };
 }
 // 본문 b 에서 고칠 수 있는 칸만 골라 검사한다 (본문에 없는 칸은 건드리지 않는다). → { f: 검사를 통과한 칸들 } 또는 { error }
 // d: 지금 문서(새 문서면 기본값을 채운 것). 결재 후보는 문서에 이미 있는 값과 합쳐서 본다
@@ -1592,7 +1602,8 @@ function apprFields(b, d, users) {
     const reviewers = 'reviewers' in b ? b.reviewers : d.reviewers, approver = 'approver' in b ? b.approver : d.approver;
     if (!Array.isArray(reviewers) || reviewers.length > APPR_MAX.reviewers) return err(`검토자는 ${APPR_MAX.reviewers}명까지 고를 수 있어요.`);
     if (typeof approver !== 'string' || ![...reviewers, ...(approver ? [approver] : [])].every((n) => typeof n === 'string' && userByName(users, n))) return err('결재선에 없는 사람이 있어요. 사용자 목록에서 골라 주세요.');
-    if (reviewers.includes(d.drafter)) return err('기안자 본인은 검토자가 될 수 없어요. (승인자로는 정할 수 있어요)');
+    if (reviewers.includes(d.drafter)) return err('기안자 본인은 검토자가 될 수 없어요.');
+    if (selfApproveBad(approver, d, users)) return err(SELF_APPROVE_MSG);
     if (new Set([...reviewers, ...(approver ? [approver] : [])]).size !== reviewers.length + (approver ? 1 : 0)) return err('같은 사람을 결재선에 두 번 넣을 수 없어요.');
     f.reviewers = [...reviewers]; f.approver = approver;
   }
@@ -1613,7 +1624,7 @@ function createApproval(items, user, b, users, needTitle) {
   const now = new Date(), pre = `기안-${now.getFullYear()}-`;
   const n = items.reduce((m, x) => Math.max(m, x && typeof x.no === 'string' && x.no.startsWith(pre) ? Number(x.no.slice(pre.length)) || 0 : 0), 0) + 1; // 문서번호: 그 해의 다음 번호
   const d = { id: `ap${crypto.randomBytes(4).toString('hex')}`, no: `${pre}${String(n).padStart(4, '0')}`, title: '', form: APPR_FORMS[0], body: '', amount: 0, attachments: [],
-    drafter: user.username, drafterName: user.name, drafterDept: user.dept || '', reviewers: [], approver: '', status: '작성중', line: [], step: null, round: 0, log: [], createdAt: nowIso(), updatedAt: nowIso() };
+    drafter: user.username, drafterUid: user.id, drafterName: user.name, drafterDept: user.dept || '', reviewers: [], approver: '', status: '작성중', line: [], step: null, round: 0, log: [], createdAt: nowIso(), updatedAt: nowIso() };
   const r = apprFields(b, d, users);
   if (r.error) return r;
   Object.assign(d, r.f);
@@ -1660,7 +1671,7 @@ async function approvalApi(req, res, user, p, url) {
   }
   const i = items.findIndex((x) => x && x.id === id), d = items[i];
   if (!d || !apprSeen(d, user)) return done(404, { error: '없는 문서예요.' }); // 볼 수 없는 문서도 똑같이 "없음"
-  const mine = d.drafter === user.username, editable = d.status === '작성중' || d.status === '반려', save = () => writeJson(dbFile('approvals'), items);
+  const mine = isDrafter(d, user), editable = d.status === '작성중' || d.status === '반려', save = () => writeJson(dbFile('approvals'), items);
   const view = () => done(200, { item: apprView(d, user, users) });
 
   if (!sub) {
@@ -1688,11 +1699,12 @@ async function approvalApi(req, res, user, p, url) {
     if (!d.title) return bad('제목을 적어 주세요.');
     if (!d.body) return bad('본문을 적어 주세요.');
     if (!d.approver) return bad('승인자를 골라 주세요.');
+    if (selfApproveBad(d.approver, d, users)) return bad(SELF_APPROVE_MSG); // 저장한 뒤에 관리자에서 일반 사용자로 바뀌었을 수도 있어서 올릴 때 한 번 더 본다
     const line = [...d.reviewers.map((n) => [n, 'review']), [d.approver, 'approve']].map(([n, role]) => { const x = userByName(users, n); return x && personOf(x, role); });
     if (line.some((x) => !x)) return bad('결재선에 없는 사람이 있어요. 결재선을 다시 골라 주세요.');
     const at = nowIso(); d.round = (d.round || 0) + 1;
     Object.assign(d, { line, step: 0, status: '진행', updatedAt: at });
-    d.log.push({ round: d.round, type: 'submit', by: user.username, name: user.name, dept: user.dept || '', role: 'draft', comment: '', at });
+    d.log.push({ round: d.round, type: 'submit', by: user.username, uid: user.id, name: user.name, dept: user.dept || '', role: 'draft', comment: '', at });
     save();
     return view();
   }
@@ -1700,14 +1712,14 @@ async function approvalApi(req, res, user, p, url) {
   if (sub === 'decide' && M === 'POST') { // 승인·반려·전결 — 지금 차례인 그 사람 본인만. 이름·시각은 로그인(세션)에서 서버가 정한다 (본문에 이름을 적어 보내도 쓰지 않는다)
     if (d.status !== '진행' || !Array.isArray(d.line) || !d.line[d.step]) return done(409, { error: '지금 결재할 수 있는 문서가 아니에요.' });
     const cur = d.line[d.step];
-    if (cur.username !== user.username) return done(403, { error: '지금은 당신이 결재할 차례가 아니에요.' });
+    if (!samePerson(cur, user)) return done(403, { error: '지금은 당신이 결재할 차례가 아니에요.' });
     const action = b.action, comment = cleanText(b.comment);
     if (!['approve', 'reject', 'final'].includes(action)) return bad('결재 방법은 승인(approve)·반려(reject)·전결(final) 중 하나예요.');
     if (action === 'final' && cur.role !== 'approve') return bad('전결은 승인자만 할 수 있어요.');
     if (comment.length > APPR_MAX.comment) return bad(`의견은 ${APPR_MAX.comment}자까지 쓸 수 있어요.`);
     if (action === 'reject' && !comment) return bad('반려할 때는 의견을 적어 주세요.');
     const at = nowIso();
-    d.log.push({ round: d.round, type: action, by: user.username, name: user.name, dept: user.dept || '', role: cur.role, comment, at });
+    d.log.push({ round: d.round, type: action, by: user.username, uid: user.id, name: user.name, dept: user.dept || '', role: cur.role, comment, at });
     if (action === 'reject') Object.assign(d, { status: '반려', step: null }); // 기안자에게 돌아간다 (고쳐서 다시 올릴 수 있다)
     else if (cur.role === 'review') d.step += 1; // 검토 승인 → 다음 사람 (마지막은 승인자)
     else Object.assign(d, { status: '완료', step: null, completedAt: at });

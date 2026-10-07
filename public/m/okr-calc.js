@@ -157,7 +157,9 @@
 
   // 숫자를 보기 좋게 (1.8 → "1.8", 4200000 → "4,200,000", 0.1+0.2 → "0.3")
   const fmt = (n) => (isNum(n) ? Number(r6(n)).toLocaleString('ko-KR', { maximumFractionDigits: 6 }) : '');
-  const pct = (p) => (p === null || p === undefined ? '-' : `${Math.round(p * 100)}%`);
+  // 진척 글자는 내림 — 7편 점검: 반올림하면 99.6% 가 "100%" 로 보여, 기한 지난 KR 은 "100%" 인데 "위험"으로 보였다. 100% 는 정말 다 됐을 때만.
+  // 0.29×100 = 28.999… 같은 찌꺼기 때문에 아주 작은 수를 더한 뒤 내린다 (-0 은 0)
+  const pct = (p) => (p === null || p === undefined ? '-' : `${Math.max(0, Math.floor(p * 100 + 1e-9))}%`);
 
   const api = { LEVELS, RANK, SLACK, isDate, today, periodOf, quarterOf, quarterLabel, elapsed, krProblem, krRate, startOf, weightOf, statusOf, objProblem, build, parentChoices, problems, quarters, fmt, pct };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.okr = api;
