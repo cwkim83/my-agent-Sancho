@@ -80,6 +80,25 @@
   .primary { padding: 7px 18px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-weight: 600; }
   .danger { padding: 7px 14px; border: 1px solid #fecdca; border-radius: 8px; background: #fff; color: var(--red); }
   .danger:hover { background: #fee4e2; }
+
+  /* 휴대폰: 옆으로 밀지 않고 한 화면에. 월 = 날짜 칸에 점·색 줄만 (날짜를 누르면 그 주 목록으로), 주 = 세로 목록 */
+  .addbtn { display: none; }
+  @media (max-width: 640px) {
+    .bar { padding: 8px 10px; gap: 6px; }
+    .bar h2 { font-size: 16px; margin: 0 4px; }
+    .addbtn { display: block; border-color: var(--blue); color: var(--blue); font-weight: 700; }
+    #view { padding: 8px 10px 12px; }
+    .month { min-width: 0; grid-template-rows: none !important; grid-auto-rows: minmax(58px, 1fr); }
+    .cell { align-items: stretch; padding: 3px 2px; }
+    .dn { flex-direction: column; justify-content: flex-start; gap: 1px; min-height: 0; }
+    .dots { min-height: 7px; }
+    .ev { height: 0; padding: 0; border: 0; border-top: 4px solid; border-radius: 2px; background: none; font-size: 0; pointer-events: none; } /* 일정은 종류별 색 줄로 (줄 색 = 종류의 글자색, 내용은 주 목록에서) */
+    .more { padding: 0; font-size: 10px; white-space: nowrap; text-align: center; align-self: center; pointer-events: none; }
+    .week { flex: none; min-width: 0; min-height: 0; grid-template-columns: 1fr; } /* 날짜 칸이 내용만큼 늘어나고, 화면이 모자라면 #view 가 통째로 스크롤 */
+    .wcol { padding: 10px 12px; overflow: visible; }
+    .wev { padding: 8px 10px; }
+    input, select, textarea { font-size: 16px; } /* 15px 이하면 아이폰이 입력할 때 화면을 확대한다 */
+  }
 </style>
 </head>
 <body>
@@ -89,6 +108,7 @@
     <button class="btn" id="next" aria-label="다음">›</button>
     <h2 id="title"></h2>
     <div class="seg"><button data-view="month">월</button><button data-view="week">주</button></div>
+    <button class="btn addbtn" id="add" aria-label="일정 추가">＋ 추가</button>
     <span class="sp"></span>
     <button class="btn ask" id="ask">✳ 비서에게 시키기</button>
   </div>
@@ -196,8 +216,14 @@
     if (ev) return openDlg(events.find((x) => x && String(x.id) === ev.dataset.id));
     const more = e.target.closest('[data-more]'); // "+n개 더" → 그 날이 든 주 보기
     if (more) { mode = 'week'; cursor = more.dataset.more; return render(); }
-    const cell = e.target.closest('[data-day]'); // 빈 칸 → 일정 추가
-    if (cell) openDlg(null, cell.dataset.day);
+    const cell = e.target.closest('[data-day]'); // 빈 칸 → 일정 추가 (폰의 월 보기에서는 그 날이 든 주 목록으로)
+    if (!cell) return;
+    if (mode === 'month' && matchMedia('(max-width: 640px)').matches) { mode = 'week'; cursor = cell.dataset.day; return render(); }
+    openDlg(null, cell.dataset.day);
+  };
+  $('add').onclick = () => { // 폰에서는 빈 칸을 누르면 주 목록으로 가므로 추가 단추가 따로 있다: 보고 있는 주에 오늘이 있으면 오늘, 아니면 그 주의 날짜
+    const today = cal.ymd(new Date());
+    openDlg(null, mode === 'week' && !cal.weekDays(cursor).includes(today) ? cursor : today);
   };
   document.querySelectorAll('.seg button').forEach((b) => (b.onclick = () => { mode = b.dataset.view; render(); }));
   $('prev').onclick = () => { cursor = mode === 'month' ? cal.addMonths(cursor, -1) : cal.addDays(cursor, -7); render(); };

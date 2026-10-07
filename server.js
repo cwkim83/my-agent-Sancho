@@ -22,7 +22,7 @@ const MAX_FAILS = 10; // 10번까지는 틀려도 되고, 11번째 틀리면 잠
 const LOCK_MS = 10 * 60 * 1000; // 10분
 const COOKIE = 'sancho_session';
 const PROTECTED_PAGES = new Set(['/index.html']); // 로그인해야 볼 수 있는 화면
-const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -133,7 +133,8 @@ function serveFile(res, urlPath) {
   }
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, '없는 페이지입니다.');
-    res.writeHead(200, { 'Content-Type': (TYPES[path.extname(file)] || 'application/octet-stream') + '; charset=utf-8', 'Cache-Control': 'no-store' });
+    const type = TYPES[path.extname(file)] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': /^image\/(png|x-icon)$/.test(type) ? type : type + '; charset=utf-8', 'Cache-Control': 'no-store' }); // 그림 파일에는 글자 인코딩을 붙이지 않는다
     res.end(data);
   });
 }

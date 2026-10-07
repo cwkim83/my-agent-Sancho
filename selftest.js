@@ -159,6 +159,7 @@ async function run() {
   await runSeed(ck);
   await runDash(ck);
   await runCal(ck);
+  await runPhone(ck);
   await runProjects(ck);
   await runWbs(ck);
   runSkills();
@@ -410,6 +411,35 @@ async function runDash(ck) {
   check('대시보드: 마감일 모양이 틀린 할 일("10/7")은 7일 안 마감에 안 셈', typeof js === 'object' && js.dueSoon.length === 0);
   check('대시보드: 알림 파일에 숫자·글자가 섞여도 안 읽은 알림은 진짜 항목만 셈', typeof js === 'object' && js.unread === 2);
   check('D-day 글자: 지남·오늘·D-n', dday('2026-10-05', at(9)) === '1일 지남' && dday('2026-10-06', at(23, 59)) === '오늘' && dday('2026-10-09', at(9)) === 'D-3' && dday('엉터리', at(9)) === '');
+}
+
+// 휴대폰·PWA (9편 첫 단계): 홈 화면에 추가할 수 있는 manifest·아이콘, 좁은 폭에서 접히는 메뉴와 한 칸씩 보이는 채팅·대시보드·일정
+async function runPhone(ck) {
+  const get = (u, cookie) => fetch(BASE + u, cookie ? { headers: { Cookie: cookie } } : {});
+  // manifest 와 아이콘은 로그인 전(로그인 화면에서 홈 화면에 추가할 때)에도 받아져야 한다
+  const mr = await get('/manifest.webmanifest');
+  let m = {}; try { m = await mr.json(); } catch { /* 아래 검사가 실패로 알려 준다 */ }
+  check('manifest: 로그인 없이 200·manifest+json, 이름 "Sancho"·주소창 없이(standalone)·시작 주소 /', mr.status === 200 && (mr.headers.get('content-type') || '').includes('application/manifest+json')
+    && m.name === 'Sancho' && m.short_name === 'Sancho' && m.display === 'standalone' && m.start_url === '/');
+  const icons = Array.isArray(m.icons) ? m.icons : [];
+  const sizesOf = (r) => icons.filter((i) => i.purpose === r).map((i) => i.sizes).sort().join();
+  check('manifest: 아이콘 192·512 가 일반(any)·마스크(maskable) 둘 다 있음', sizesOf('any') === '192x192,512x512' && sizesOf('maskable') === '192x192,512x512' && icons.every((i) => i.type === 'image/png'));
+  let okIcons = icons.length > 0;
+  for (const i of icons) { // 적힌 주소마다: 로그인 없이 200 · image/png(글자 인코딩 안 붙음) · PNG 머리글자의 가로·세로가 적힌 크기와 같음
+    const r = await get(i.src), b = Buffer.from(await r.arrayBuffer()), n = Number(i.sizes.split('x')[0]);
+    okIcons = okIcons && r.status === 200 && r.headers.get('content-type') === 'image/png' && b.slice(0, 8).toString('hex') === '89504e470d0a1a0a' && b.readUInt32BE(16) === n && b.readUInt32BE(20) === n;
+  }
+  check('아이콘 파일: manifest 에 적힌 주소가 모두 로그인 없이 받아지고 진짜 PNG 이며 가로·세로가 적힌 크기(192·512)와 같음', okIcons);
+  const mainHtml = await (await get('/', ck)).text(), loginHtml = await (await get('/')).text();
+  const pwa = (h) => ['<link rel="manifest" href="/manifest.webmanifest">', 'rel="apple-touch-icon"', 'name="theme-color"', 'width=device-width'].every((w) => h.includes(w));
+  check('메인 화면과 로그인 화면이 manifest·홈 화면 아이콘·테마 색·폰 폭(viewport)을 선언함', pwa(mainHtml) && pwa(loginHtml));
+  const tabs = [...mainHtml.matchAll(/<button type="button" role="tab" data-tab="(\w+)"/g)].map((x) => x[1]);
+  check('휴대폰 메인 화면: 아래 탭 3개(채팅·대시보드·일정)와 ☰ 메뉴 뒤 어두운 막', tabs.join() === 'chat,dash,cal' && mainHtml.includes('id="scrim"') && mainHtml.includes('id="menuBtn"'));
+  check('휴대폰 메인 화면: 폭 800px 이하에서 메뉴는 접히고(.menu), 채팅·대시보드는 data-v 로 한 칸씩 보임',
+    mainHtml.includes('@media (max-width: 800px)') && mainHtml.includes('body.menu nav') && mainHtml.includes('.home[data-v="chat"] .dash { display: none; }') && mainHtml.includes('.home[data-v="dash"] #chat { display: none; }'));
+  check('휴대폰 메인 화면: 넓은 화면에서는 아래 탭을 숨김(기본 display:none)', mainHtml.includes('.tabbar, .scrim { display: none; }'));
+  const calHtml = await (await get('/m/calendar.html', ck)).text();
+  check('휴대폰 일정 화면: 폭 640px 이하에서 옆으로 안 밀리게(월 칸 min-width 0)·세로 주 목록·"＋ 추가" 단추', calHtml.includes('@media (max-width: 640px)') && calHtml.includes('.month { min-width: 0;') && calHtml.includes('id="add"'));
 }
 
 // 달력 계산·일정 창 검사 (public/m/cal.js) + 달력 화면 파일

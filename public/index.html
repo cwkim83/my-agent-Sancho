@@ -2,12 +2,21 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>나의 AI 비서 Sancho</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sancho">
 <style>
   :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
+  @supports (height: 100dvh) { html, body { height: 100dvh; } } /* 폰 브라우저의 주소창이 접히고 펴져도 화면 높이가 맞게 */
+  button, a { touch-action: manipulation; } /* 두 번 눌러 확대되며 한 박자 늦는 것을 없앤다 */
   body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
     font: 15px/1.55 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
   button { font: inherit; cursor: pointer; }
@@ -17,6 +26,7 @@
     background: #fff; border-bottom: 1px solid var(--line); position: relative; z-index: 10; }
   header .brand { font-weight: 700; font-size: 17px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   header .brand span { color: var(--blue); }
+  header .brand .bn { color: inherit; }
   header .space { flex: 1; }
   .icon-btn { display: none; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 18px; }
   .chip { flex: none; white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border: 1px solid var(--line);
@@ -297,32 +307,57 @@
   .uform .show input { width: auto; margin: 0; }
   #userMsg { margin-top: 10px; font-size: 14px; min-height: 1.5em; } #userMsg.err { color: #b42318; }
 
-  /* 휴대폰 */
+  /* 아래 탭(채팅·대시보드·일정)과 메뉴 뒤의 어두운 막: 폰에서만 보인다 */
+  .tabbar, .scrim { display: none; }
+  .tabbar { flex: none; background: #fff; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  .tabbar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 0 6px; border: 0; background: none; color: var(--sub); font-size: 12px; line-height: 1.25; }
+  .tabbar button i { font-style: normal; font-size: 20px; filter: grayscale(1); opacity: .65; }
+  .tabbar button.on { color: var(--blue); font-weight: 700; }
+  .tabbar button.on i { filter: none; opacity: 1; }
+  .scrim { position: absolute; inset: 0; z-index: 4; background: rgba(16, 24, 40, .35); }
+
+  /* 휴대폰 (폭 800px 이하): 왼쪽 메뉴는 ☰ 로 접히고, 채팅·대시보드·일정은 아래 탭으로 한 칸씩 */
   @media (max-width: 800px) {
+    body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
     header { gap: 6px; padding: 0 10px; }
-    header .brand { font-size: 13px; }
-    .bell { width: 34px; height: 34px; }
+    header .brand { font-size: 15px; }
+    header .brand .bn { display: none; } /* 좁으면 "Sancho" 만 */
+    .bell { width: 38px; height: 38px; }
     .chip { gap: 6px; font-size: 13px; }
+    #whoName { display: inline-block; max-width: 7em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+    .icon-btn { display: block; width: 40px; height: 40px; }
     .tgbox { grid-template-columns: 1fr; }
-    .icon-btn { display: block; }
-    nav { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; transform: translateX(-100%); transition: transform .2s; box-shadow: 4px 0 20px rgba(0,0,0,.1); }
-    body.menu nav { transform: none; }
-    .chatlist { position: absolute; z-index: 4; top: 0; bottom: 0; left: 0; width: min(280px, 85%); transform: translateX(-100%); transition: transform .2s; box-shadow: 4px 0 20px rgba(0,0,0,.1); }
-    #chat.listopen .chatlist { transform: none; }
+    nav { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: min(260px, 82%); transform: translateX(-100%); transition: transform .2s; }
+    nav a { padding: 12px; } /* 손가락으로 누르기 좋게 */
+    body.menu nav { transform: none; box-shadow: 4px 0 20px rgba(0,0,0,.1); } /* 그림자는 열렸을 때만 (접힌 메뉴의 그림자가 화면 가장자리로 새지 않게) */
+    body.menu .scrim { display: block; } /* 메뉴 밖을 누르면 닫힘 */
+    .tabbar { display: flex; }
+    .chatlist { position: absolute; z-index: 4; top: 0; bottom: 0; left: 0; width: min(280px, 85%); transform: translateX(-100%); transition: transform .2s; }
+    #chat.listopen .chatlist { transform: none; box-shadow: 4px 0 20px rgba(0,0,0,.1); }
+    #chat.listopen .pane::before { content: ''; position: absolute; inset: 0; z-index: 3; background: rgba(16, 24, 40, .35); } /* 목록 밖을 누르면 닫힘 */
     #chat { position: relative; }
     .pane-top { display: block; }
-    .dash { grid-template-columns: 1fr; max-height: 42vh; overflow-y: auto; }
+    /* 대시보드와 채팅은 한 칸씩: 위에 둘 다 쌓지 않고, 아래 탭으로 고른 것만 보인다 */
+    .home[data-v="chat"] .dash { display: none; }
+    .home[data-v="dash"] #chat { display: none; }
+    .home[data-v="dash"] .dash { flex: 1; min-height: 0; max-height: none; align-content: start; overflow-y: auto; }
+    .dash { grid-template-columns: 1fr; padding: 12px; }
     .lists { grid-template-columns: 1fr; }
     .lcard { max-height: none; }
+    #msgs { padding: 14px 10px; }
     .bubble { max-width: 92%; }
+    .composer { padding: 8px 10px 10px; }
+    .quick { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } /* 빠른 지시는 한 줄로 옆으로 밀어서 (스크롤바는 안 보이게) */
+    .quick button { flex: none; }
     .hint { display: none; }
+    textarea, .tgform input, .uform input, .uform select { font-size: 16px; } /* 15px 이하면 아이폰이 입력할 때 화면을 확대해 버린다 */
   }
 </style>
 </head>
 <body>
   <header>
     <button class="icon-btn" id="menuBtn" aria-label="메뉴">☰</button>
-    <div class="brand">나의 AI 비서 <span>Sancho</span></div>
+    <div class="brand"><span class="bn">나의 AI 비서 </span><span>Sancho</span></div>
     <div class="space"></div>
     <button class="bell" id="bell" title="알림" aria-label="알림" aria-haspopup="dialog" aria-expanded="false">🔔<span class="badge" id="bellN" hidden></span></button>
     <button class="chip" id="who" title="누르면 로그아웃"><span id="whoName"></span><small>로그아웃</small></button>
@@ -354,7 +389,13 @@
   </div>
   <div class="body">
     <nav id="nav"></nav>
+    <div class="scrim" id="scrim"></div>
     <main id="main"></main>
+  </div>
+  <div class="tabbar" id="tabbar" role="tablist" aria-label="화면 바꾸기"><!-- 폰(폭 800px 이하)에서만 보임 -->
+    <button type="button" role="tab" data-tab="chat"><i>💬</i>채팅</button>
+    <button type="button" role="tab" data-tab="dash"><i>📊</i>대시보드</button>
+    <button type="button" role="tab" data-tab="cal"><i>📅</i>일정</button>
   </div>
 
 <script src="/m/db.js"></script>
@@ -433,9 +474,28 @@
     else if (current === '공수') showManday();
     else if (current === '설정') showSettings(arg);
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
+    syncTabs();
   }
   window.addEventListener('hashchange', route);
   $('menuBtn').onclick = () => document.body.classList.toggle('menu');
+  $('scrim').onclick = () => document.body.classList.remove('menu');
+
+  // ---------- 휴대폰 아래 탭 (채팅 · 대시보드 · 일정) ----------
+  // 폭이 800px 이하면 채팅과 대시보드를 한 칸씩 보여 준다 (CSS 가 .home 의 data-v 를 보고 고른다). 넓은 화면에서는 둘 다 보이므로 data-v 는 상관없다
+  let homeView = 'chat'; // 'chat' | 'dash' — 처음엔 비서와 바로 말할 수 있게 채팅
+  function syncTabs() {
+    const on = current === '일정' ? 'cal' : current === '대시보드' ? homeView : ''; // 다른 메뉴(프로젝트 등)에 있으면 어느 탭도 켜지 않는다
+    document.querySelectorAll('#tabbar [data-tab]').forEach((b) => { b.classList.toggle('on', b.dataset.tab === on); b.setAttribute('aria-selected', String(b.dataset.tab === on)); });
+    const h = $('home'); if (h) h.dataset.v = homeView;
+  }
+  function goTab(t) {
+    if (t === 'cal') { location.hash = '#일정'; return; }
+    homeView = t;
+    if (current !== '대시보드') { location.hash = '#대시보드'; return; } // 다른 화면에서 오면 대시보드 화면부터 그린다 (route 가 syncTabs 를 부른다)
+    syncTabs();
+    if (t === 'chat') scrollDown(true); // 가려져 있던 동안 맨 아래 위치를 잃는다
+  }
+  $('tabbar').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) goTab(b.dataset.tab); };
 
   // ---------- AI 채팅 ----------
   let chats = [], chatId = null, busy = false, aborter = null;
@@ -470,19 +530,20 @@
     const frame = document.querySelector('iframe.frame');
     if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow || !e.data || e.data.type !== 'ask') return;
     pendingAsk = String(e.data.text || '');
+    homeView = 'chat'; // 폰에서도 글이 채워진 입력창이 바로 보이게
     location.hash = '#대시보드';
   });
 
   function showChat() {
     $('main').innerHTML = `
-      <div class="home">
+      <div class="home" id="home" data-v="${homeView}">
       <div class="dash" id="dashBand"></div>
       <section id="chat">
         <aside class="chatlist"><button class="new" id="newChat">＋ 새 대화</button><div id="list"></div>
           <div class="sched"><h3>예약 <span id="schN"></span></h3><div id="sch"></div></div>
           <div class="memory"><h3>기억 <span id="memN"></span></h3><div id="mem"></div></div></aside>
         <div class="pane">
-          <div class="pane-top"><button id="listBtn">☰ 대화 목록</button></div>
+          <div class="pane-top"><button id="listBtn">📂 대화 목록</button></div>
           <div id="msgs"><div class="wrap" id="thread"></div></div>
           <div class="composer">
             <div class="quick">${QUICK.map(([label, text]) => `<button data-text="${esc(text || label)}">${esc(label)}</button>`).join('')}</div>
@@ -497,6 +558,7 @@
     startDash();
     $('newChat').onclick = () => { if (!busy) openChat(null); $('chat').classList.remove('listopen'); };
     $('listBtn').onclick = () => $('chat').classList.toggle('listopen');
+    document.querySelector('#chat .pane').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('chat').classList.remove('listopen'); }); // 서랍이 열려 있을 때 어두운 바깥(.pane 자신)을 누르면 닫힘
     $('send').onclick = () => (busy ? aborter.abort() : send());
     const ta = $('input');
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; });
@@ -754,7 +816,7 @@
         <div class="lcard"><h3>최근 대화</h3>${list(chats.slice(0, 3).map((c) =>
           `<li data-chat="${safe(c.id)}"><span class="k">${when(c.updatedAt)}</span><span class="tt">${safe(c.title)}</span></li>`), '아직 대화가 없어요.')}</div>
       </div>`;
-    el.querySelectorAll('[data-chat]').forEach((li) => (li.onclick = () => { if (!busy) openChat(li.dataset.chat); }));
+    el.querySelectorAll('[data-chat]').forEach((li) => (li.onclick = () => { if (!busy) { openChat(li.dataset.chat); goTab('chat'); } })); // 폰에서는 눌러 연 대화가 바로 보이게 채팅 칸으로
   }
 
   // ---------- 🔔 알림 (data/db/notices.json): 위쪽 단추(안 읽은 수 배지) → 목록 → 누르면 결과 전체 ----------

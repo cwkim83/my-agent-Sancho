@@ -2,8 +2,15 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>나의 AI 비서 Sancho</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sancho">
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -14,7 +21,7 @@
   h1 span { color: #2f6fed; }
   .sub { margin: 8px 0 24px; text-align: center; color: #667085; font-size: 14px; }
   label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: #344054; }
-  input { width: 100%; padding: 11px 12px; font-size: 15px; border: 1px solid #d0d5dd; border-radius: 10px; outline: none; }
+  input { width: 100%; padding: 11px 12px; font-size: 16px; border: 1px solid #d0d5dd; border-radius: 10px; outline: none; } /* 16px 미만이면 아이폰이 입력할 때 화면을 확대한다 */
   input:focus { border-color: #2f6fed; box-shadow: 0 0 0 3px rgba(47, 111, 237, .15); }
   button { width: 100%; margin-top: 22px; padding: 12px; font-size: 15px; font-weight: 600; color: #fff;
     background: #2f6fed; border: 0; border-radius: 10px; cursor: pointer; }
