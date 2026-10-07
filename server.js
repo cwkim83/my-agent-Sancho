@@ -939,6 +939,35 @@ async function sendTelegram(text) { // { ok: true } | { ok: false, error: 쉬운
 // 폰 화면에 읽기 좋게: 마크다운 기호(굵게·제목·표 구분줄)를 걷어 내고 N자까지만
 const plainSummary = (t, max) => { const s = t.replace(/\*\*/g, '').replace(/^#{1,4}\s+/gm, '').replace(/^[\s|:-]*-{3,}[\s|:-]*$/gm, '').replace(/\n{3,}/g, '\n\n').trim(); return s.length > max ? `${s.slice(0, max)}…` : s; };
 
+// ---------- 외부 목소리 (TTS, 선택): data/settings.json 의 { tts: { apiKey, voice } } ----------
+// 키는 비밀번호와 같다: 이 파일에만 있고(두뇌는 못 읽음) 화면에는 "****" 로만 보낸다. 로그·오류 글에도 안 남긴다. OpenAI 호환 음성 API(POST /v1/audio/speech)를 부른다.
+// 읽을 글이 그 서비스로 나가므로(회사 밖 전송) 키를 넣은 주인이 쓰는 것만 허용한다: 관리자만 /api/tts 를 쓸 수 있다. 화면은 이게 실패하면 브라우저 목소리로 읽는다
+const TTS_API = (process.env.SANCHO_TTS_API || 'https://api.openai.com').replace(/\/$/, ''); // 점검에서만 가짜 서버 주소로 바꾼다
+const TTS_MODEL = process.env.SANCHO_TTS_MODEL || 'gpt-4o-mini-tts';
+const TTS_MAX_CHARS = 2000, TTS_KEY_RE = /^[\x21-\x7e]{8,300}$/, TTS_VOICE_RE = /^[A-Za-z0-9_-]{1,40}$/;
+function ttsConf() { // { key, voice } | null
+  try { const t = loadSettings().tts || {}; return typeof t.apiKey === 'string' && TTS_KEY_RE.test(t.apiKey) ? { key: t.apiKey, voice: TTS_VOICE_RE.test(String(t.voice)) ? t.voice : 'alloy' } : null; } catch { return null; }
+}
+const explainTts = (status) => (status === 401 || status === 403 ? '외부 목소리 키가 맞지 않아요. 설정 › 목소리에서 키를 확인해 주세요.' : status === 429 ? '외부 목소리 서비스가 너무 자주 불러서 잠시 막았어요.' : `외부 목소리 서비스가 거절했어요. (${status})`);
+async function ttsApi(req, res, user) { // POST /api/tts { text } → audio/mpeg. 관리자만
+  if (!isAdmin(user)) return send(res, 403, { error: '외부 목소리는 관리자만 쓸 수 있어요.' });
+  let b; try { b = await readBody(req, 20_000); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+  const text = b && typeof b.text === 'string' ? b.text.trim() : '';
+  if (!text) return send(res, 400, { error: '읽을 글이 비어 있어요.' });
+  if (text.length > TTS_MAX_CHARS) return send(res, 413, { error: `한 번에 ${TTS_MAX_CHARS}자까지만 읽어요.` });
+  const c = ttsConf();
+  if (!c) return send(res, 400, { error: '외부 목소리 키가 없어요. 설정 › 목소리에서 넣어 주세요.' });
+  try {
+    const r = await fetch(`${TTS_API}/v1/audio/speech`, { method: 'POST', headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: TTS_MODEL, voice: c.voice, input: text, response_format: 'mp3' }), signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) return send(res, 502, { error: explainTts(r.status) }); // 키·읽을 글은 오류 글에 넣지 않는다
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > 10_000_000) return send(res, 502, { error: '외부 목소리가 올바른 소리를 주지 않았어요.' });
+    res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': buf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    return res.end(buf);
+  } catch (e) { return send(res, 502, { error: e.name === 'TimeoutError' ? '외부 목소리가 20초 안에 답하지 않았어요.' : '외부 목소리 서비스에 연결하지 못했어요.' }); }
+}
+
 // /api/settings[/telegram[/test]|/permissions] — 설정 화면이 쓴다. 처리했으면 true
 //   GET /api/settings → { telegram: { token: "****"|"", chatId: "****"|"" }, permissions: { 연결된앱, 명령실행, 홈폴더 } }  (텔레그램 값 자체는 절대 안 보낸다)
 //   PUT /api/settings/telegram { token?, chatId? } (비운 칸은 그대로 둠) · DELETE → 지움 · POST /test → 시험 메시지 한 통
@@ -963,7 +992,7 @@ async function settingsApi(req, res, sub, test, user) {
   // 여기부터는 await 없이: 읽기→고치기→쓰기를 한 번에
   let st; try { st = loadSettings(); } catch { return done(500, { error: 'data/settings.json 이 올바른 JSON 이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
   const t = st.telegram && typeof st.telegram === 'object' ? st.telegram : {};
-  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st), access: accessInfo(st, req), connector: connectorInfo() }) : false;
+  if (!sub) return M === 'GET' ? done(200, { telegram: { token: t.botToken ? '****' : '', chatId: t.chatId ? '****' : '' }, permissions: permsOf(st), access: accessInfo(st, req), connector: connectorInfo(), tts: { configured: !!ttsConf(), voice: ttsConf() ? ttsConf().voice : '' } }) : false;
   if (sub === 'access') { // 외부 접속 (9편): GET access/token → 토큰 보기(이 PC 에서만) · POST access/token → 새 토큰 · PUT access { on } → 켜기·끄기
     const e = st.외부접속 && typeof st.외부접속 === 'object' ? st.외부접속 : {};
     if (test === 'token') {
@@ -982,6 +1011,18 @@ async function settingsApi(req, res, sub, test, user) {
     writeJson(SETTINGS_FILE, st);
     res.once('finish', () => rebind(b.on ? '0.0.0.0' : '127.0.0.1')); // 이 응답이 나간 뒤에 열고 닫는 주소를 바꾼다
     return done(200, { access: accessInfo(st, req), permissions: permsOf(st) });
+  }
+  if (sub === 'tts') { // 외부 목소리 키 (9편): PUT { apiKey?, voice? } (비운 칸은 그대로) · DELETE → 지움. 키 값은 절대 안 돌려준다
+    const e = st.tts && typeof st.tts === 'object' ? st.tts : {};
+    if (M === 'DELETE') { delete st.tts; writeJson(SETTINGS_FILE, st); return done(200, { ok: true }); }
+    if (M !== 'PUT') return false;
+    const key = b && typeof b.apiKey === 'string' ? b.apiKey.trim() : '', voice = b && typeof b.voice === 'string' ? b.voice.trim() : '';
+    if (!key && !voice) return done(400, { error: '바꿀 값을 입력해 주세요.' });
+    if (key && !TTS_KEY_RE.test(key)) return done(400, { error: '키 모양이 맞지 않아요. 공백 없이 붙여 넣어 주세요.' });
+    if (voice && !TTS_VOICE_RE.test(voice)) return done(400, { error: '목소리 이름은 영문·숫자·_·- 로 40자까지예요. (예: alloy)' });
+    st.tts = { apiKey: key || e.apiKey || '', voice: voice || e.voice || 'alloy' };
+    writeJson(SETTINGS_FILE, st);
+    return done(200, { ok: true, tts: { configured: !!ttsConf(), voice: st.tts.voice } });
   }
   if (sub === 'permissions') {
     if (M !== 'PUT' || test) return false;
@@ -2152,7 +2193,9 @@ async function handle(req, res) {
 
     const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|phone|run))?)?$/);
     if (qm && await scheduleApi(req, res, qm[1], qm[2], user)) return;
-    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions|access|connector)(?:\/(test|token|address|log))?)?$/);
+    if (p === '/api/voice/config' && req.method === 'GET') return send(res, 200, { externalTts: isAdmin(user) && !!ttsConf() }); // 화면이 "외부 목소리를 먼저 쓸지" 알아보는 데 (키 값은 안 온다)
+    if (p === '/api/tts' && req.method === 'POST') return ttsApi(req, res, user);
+    const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions|access|connector|tts)(?:\/(test|token|address|log))?)?$/);
     if (gm && await settingsApi(req, res, gm[1], gm[2], user)) return;
     const mm = p.match(/^\/api\/mail\/(organize|draft|status)$/);
     if (mm && await mailApi(req, res, mm[1], user)) return;

@@ -307,6 +307,29 @@
   .uform .show input { width: auto; margin: 0; }
   #userMsg { margin-top: 10px; font-size: 14px; min-height: 1.5em; } #userMsg.err { color: #b42318; }
 
+  /* 목소리: 🎤 단추 · 위쪽 표시(말하는 동안 출렁임 / 듣는 중 / 호출 대기 / 안내) */
+  .micbtn { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: #f2f4f7; font-size: 19px; line-height: 1; }
+  .micbtn:hover:not(:disabled) { background: var(--blue-bg); }
+  .micbtn:disabled { opacity: .4; cursor: default; }
+  .micbtn.on { background: #fee4e2; animation: micpulse 1.2s ease-in-out infinite; }
+  @keyframes micpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 45, 32, .35); } 50% { box-shadow: 0 0 0 7px rgba(217, 45, 32, 0); } }
+  .quick .spk[aria-pressed="true"] { border-color: var(--blue); background: var(--blue-bg); color: var(--blue); }
+  .voice { flex: none; display: flex; align-items: center; gap: 8px; max-width: 46vw; padding: 5px 12px; border: 0; border-radius: 999px; background: var(--blue-bg); color: var(--blue); font-size: 13px; white-space: nowrap; cursor: default; }
+  .voice .bars { display: flex; align-items: center; gap: 3px; height: 18px; }
+  .voice .bars i { width: 4px; height: 18px; border-radius: 2px; background: currentColor; transform: scaleY(.3); transition: transform .2s; }
+  .voice span { overflow: hidden; text-overflow: ellipsis; }
+  .voice[data-state="speaking"] { cursor: pointer; }
+  .voice[data-state="speaking"] .bars i, .voice[data-state="listening"] .bars i { animation: wave .9s ease-in-out infinite; } /* 말하는 동안 출렁인다 */
+  .voice[data-state="listening"] { background: #fee4e2; color: #b42318; cursor: pointer; }
+  .voice[data-state="listening"] .bars i { animation-duration: 1.5s; }
+  .voice[data-state="awaiting"] { background: #ecfdf3; color: #067647; }
+  .voice[data-state="awaiting"] .bars i { transform: scaleY(.7); }
+  .voice[data-state="error"] { background: #fef3f2; color: #b42318; }
+  .voice .bars i:nth-child(1) { animation-delay: 0s; } .voice .bars i:nth-child(2) { animation-delay: .15s; } .voice .bars i:nth-child(3) { animation-delay: .3s; }
+  .voice .bars i:nth-child(4) { animation-delay: .1s; } .voice .bars i:nth-child(5) { animation-delay: .25s; }
+  @keyframes wave { 0%, 100% { transform: scaleY(.25); } 50% { transform: scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .voice .bars i, .micbtn.on { animation: none !important; } .voice[data-state="speaking"] .bars i, .voice[data-state="listening"] .bars i { transform: scaleY(.8); } } /* 움직임을 줄이는 설정이면 출렁이지 않고 막대만 보인다 */
+
   /* 아래 탭(채팅·대시보드·일정)과 메뉴 뒤의 어두운 막: 폰에서만 보인다 */
   .tabbar, .scrim { display: none; }
   .tabbar { flex: none; background: #fff; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
@@ -327,6 +350,7 @@
     #whoName { display: inline-block; max-width: 7em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
     .icon-btn { display: block; width: 40px; height: 40px; }
     .tgbox { grid-template-columns: 1fr; }
+    .voice { position: fixed; z-index: 20; top: 62px; left: 50%; max-width: 92vw; transform: translateX(-50%); box-shadow: 0 6px 18px rgba(16, 24, 40, .2); } /* 좁은 화면에서는 위쪽 막 아래에 떠서 보인다 */
     nav { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: min(260px, 82%); transform: translateX(-100%); transition: transform .2s; }
     nav a { padding: 12px; } /* 손가락으로 누르기 좋게 */
     body.menu nav { transform: none; box-shadow: 4px 0 20px rgba(0,0,0,.1); } /* 그림자는 열렸을 때만 (접힌 메뉴의 그림자가 화면 가장자리로 새지 않게) */
@@ -347,6 +371,7 @@
     #msgs { padding: 14px 10px; }
     .bubble { max-width: 92%; }
     .composer { padding: 8px 10px 10px; }
+    .box { gap: 6px; padding: 6px; } .plus, .micbtn, #send { width: 36px; height: 36px; } /* 🎤 가 늘어난 만큼 입력칸 자리를 만든다 */
     .quick { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } /* 빠른 지시는 한 줄로 옆으로 밀어서 (스크롤바는 안 보이게) */
     .quick button { flex: none; }
     .hint { display: none; }
@@ -359,6 +384,7 @@
     <button class="icon-btn" id="menuBtn" aria-label="메뉴">☰</button>
     <div class="brand"><span class="bn">나의 AI 비서 </span><span>Sancho</span></div>
     <div class="space"></div>
+    <button class="voice" id="voiceBar" data-state="" role="status" aria-live="polite" hidden><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="voiceTxt"></span></button>
     <button class="bell" id="bell" title="알림" aria-label="알림" aria-haspopup="dialog" aria-expanded="false">🔔<span class="badge" id="bellN" hidden></span></button>
     <button class="chip" id="who" title="누르면 로그아웃"><span id="whoName"></span><small>로그아웃</small></button>
   </header>
@@ -402,6 +428,7 @@
 <script src="/m/cal.js"></script>
 <script src="/m/dash.js"></script>
 <script src="/m/inbox.js"></script>
+<script src="/m/voice.js"></script>
 <script>
   const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
   const ADMIN_ONLY = ['설정']; // 일반 사용자에게는 메뉴에도 안 보이고, 주소로 들어와도 대시보드로 보낸다 (서버도 막는다)
@@ -546,15 +573,15 @@
           <div class="pane-top"><button id="listBtn">📂 대화 목록</button></div>
           <div id="msgs"><div class="wrap" id="thread"></div></div>
           <div class="composer">
-            <div class="quick">${QUICK.map(([label, text]) => `<button data-text="${esc(text || label)}">${esc(label)}</button>`).join('')}</div>
+            <div class="quick">${QUICK.map(([label, text]) => `<button data-text="${esc(text || label)}">${esc(label)}</button>`).join('')}<button type="button" class="spk" id="spk" aria-pressed="false"></button></div>
             <div class="tray" id="tray" hidden></div>
-            <div class="box"><button class="plus" id="plus" type="button" title="파일 첨부 (끌어다 놓거나 Ctrl+V 로 붙여넣어도 돼요)" aria-label="파일 첨부">＋</button><input type="file" id="fileIn" multiple hidden><div class="perm" id="permBadge"></div><textarea id="input" rows="1" placeholder="무엇을 도와드릴까요?"></textarea><button id="send" aria-label="보내기">➤</button></div>
+            <div class="box"><button class="plus" id="plus" type="button" title="파일 첨부 (끌어다 놓거나 Ctrl+V 로 붙여넣어도 돼요)" aria-label="파일 첨부">＋</button><button class="micbtn" id="mic" type="button" aria-label="말해서 보내기">🎤</button><input type="file" id="fileIn" multiple hidden><div class="perm" id="permBadge"></div><textarea id="input" rows="1" placeholder="무엇을 도와드릴까요?"></textarea><button id="send" aria-label="보내기">➤</button></div>
             <div class="hint">Enter 로 보내기 · Shift+Enter 로 줄바꿈 · 파일은 ＋ · 끌어다 놓기 · Ctrl+V</div>
           </div>
         </div>
       </section>
       </div>`;
-    document.querySelectorAll('.quick button').forEach((b) => (b.onclick = () => fillInput(b.dataset.text)));
+    document.querySelectorAll('.quick button[data-text]').forEach((b) => (b.onclick = () => fillInput(b.dataset.text)));
     startDash();
     $('newChat').onclick = () => { if (!busy) openChat(null); $('chat').classList.remove('listopen'); };
     $('listBtn').onclick = () => $('chat').classList.toggle('listopen');
@@ -570,7 +597,10 @@
     loadPerm();
     loadMemory();
     loadSched();
-    loadList().then(() => (chatId ? openChat(chatId) : renderThread([])));
+    $('mic').onclick = micToggle; $('spk').onclick = toggleSpeak; syncVoiceUi();
+    loadList().then(() => (chatId ? openChat(chatId) : renderThread([]))).then(() => { // 다른 화면에서 "산초야"로 부른 말은 채팅 화면이 다 그려진 뒤에 보낸다
+      if (pendingVoice) { const t = pendingVoice; pendingVoice = null; setInput(t); speakNext = true; send(); }
+    });
     if (pendingAsk) { fillInput(pendingAsk); pendingAsk = null; } // 다른 화면(일정)에서 "비서에게 시키기"로 넘어온 글
   }
 
@@ -714,6 +744,7 @@
   }
 
   async function send() {
+    const byVoice = speakNext; speakNext = false; // 말로 물어본 질문의 답은 읽어 준다
     const ta = $('input'), text = ta.value.trim();
     if (busy) return;
     if (pend.some((p) => p.state === 'up')) { alert('파일을 올리는 중이에요. 다 올라간 뒤에 보내 주세요.'); return; }
@@ -723,6 +754,7 @@
       try { chatId = (await (await api('/api/chats', { method: 'POST' })).json()).id; }
       catch { alert('서버에 연결할 수 없습니다. 서버(start.bat)가 켜져 있는지 확인해 주세요.'); return; }
     }
+    stopSpeaking(); // 지난 답을 읽고 있었다면 멈춘다
     ta.value = ''; ta.style.height = 'auto';
     if ($('thread').querySelector('.empty')) $('thread').innerHTML = '';
     $('thread').insertAdjacentHTML('beforeend', bubble('user', attsHtml(atts) + esc(text || '첨부한 파일을 읽어 줘.')) + bubble('assistant', '<span class="typing">…</span>', 'md'));
@@ -730,7 +762,7 @@
     pend = []; renderTray();
     scrollDown(true);
     aborter = new AbortController(); setBusy(true);
-    let got = '', cards = '', willRestart = false;
+    let got = '', cards = '', willRestart = false, stopped = false;
     try {
       const r = await api(`/api/chats/${chatId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text, attachments: atts.map((a) => a.file) }), signal: aborter.signal });
@@ -753,10 +785,12 @@
       if (cards) { out.insertAdjacentHTML('beforeend', cards); scrollDown(true); }
       if (willRestart) { setBusy(false); aborter = null; await waitRestart((t) => { out.insertAdjacentHTML('beforeend', `<p class="typing">${esc(t)}</p>`); scrollDown(true); }); return; }
     } catch (e) {
+      if (e.name === 'AbortError') stopped = true;
       if (e.name !== 'AbortError' && e.message !== 'login' && e.message !== 'rejected') out.innerHTML = md(got) + '<p class="typing">(연결이 끊어졌습니다.)</p>';
     }
     if (!got && !out.querySelector('p') && !out.querySelector('.warnline')) out.innerHTML = '<span class="typing">(중지했습니다.)</span>';
     setBusy(false); aborter = null;
+    if (got && !stopped && (byVoice || V.speak)) speakReply(got); // 답 읽어 주기 (사람이 중지한 답은 읽지 않는다)
     loadList(); loadMemory(); // 비서가 방금 기억을 적었을 수 있다
     loadPerm(); // 다른 곳(설정 화면·다른 탭)에서 바뀐 권한이 입력창 왼쪽 표시에 남지 않게
     if ($('input')) $('input').focus();
@@ -1064,6 +1098,7 @@
     showPerm();
     showAccess();
     showConnector();
+    showVoice();
     showTelegram();
     $('restartBtn').onclick = restartServer;
     loadSelfmodLog();
@@ -1133,6 +1168,22 @@
             <div id="cnState" style="margin-top:12px;font-size:14px;color:var(--sub)"></div>
             <div id="cnMsg" role="status" aria-live="polite" style="margin-top:6px;font-size:14px"></div></div>
           <h4 style="margin:16px 0 6px;font-size:14px">이용 기록 <small style="font-weight:400;color:var(--sub)">(최근 10건 · 시각·도구 이름·성공 여부만)</small></h4><div id="cnLog">불러오는 중…</div></div>
+        <div class="card"><h3>목소리 <small>(말로 보내기 · "산초야" 호출 · 답 읽어 주기)</small></h3>
+          <p>채팅 입력창의 <b>🎤</b> 를 누르고 한국어로 말하면, 말이 끊긴 뒤 받아 적은 글을 자동으로 보내요. 비서의 답은 한국어 목소리로 읽어 줄 수 있고, 말하는 동안 화면 위쪽 표시가 출렁여요.</p>
+          <p style="color:#b42318">⚠ 음성 인식은 브라우저(크롬=구글, 엣지=마이크로소프트)가 말소리를 그 회사 서버로 보내 글로 바꾸는 방식이에요. 말한 내용이 회사 밖으로 나갈 수 있어요. <b>호출 대기는 켜 두는 동안 마이크가 계속 듣고 그 소리를 서버로 보내요.</b> 그래서 기본은 꺼짐이고, 켜면 위쪽에 "👂 호출 대기" 표시가 떠 있어요.</p>
+          <div class="permrow danger"><label class="sw"><input type="checkbox" id="vcWake" aria-label="산초야 호출 대기"><span></span></label>
+            <div class="st"><b>산초야 호출 대기</b><small>켜면 마이크가 항상 듣고 있다가 "산초야"로 시작하는 말만 받아요. 음성 인식이 이름을 다르게 적어도(산초·산쵸·잔초 …) 비슷한 소리는 받고, "산초야"만 말하고 쉬면 "네, 말씀하세요" 하고 다음 말을 받아요. 마이크가 시작되지 않으면 몇 번 다시 시도해요. 이 브라우저(이 기기의 마이크)에서만 켜져요.</small></div></div>
+          <div class="permrow"><label class="sw"><input type="checkbox" id="vcSpeak" aria-label="답 읽어 주기"><span></span></label>
+            <div class="st"><b>답 읽어 주기</b><small>비서의 답을 한국어 목소리로 읽어 줘요. 🎤·"산초야"로 물어본 질문의 답은 이 스위치가 꺼져 있어도 읽어 줘요. 채팅 화면의 "🔊 답 읽기" 단추로도 켜고 꺼요.</small></div></div>
+          <div id="vcInfo" style="margin:10px 0;color:var(--sub);font-size:13px"></div>
+          <div class="tgbtns"><button class="btn ghost" id="vcTest">브라우저 목소리 시험</button></div>
+          <h4 style="margin:18px 0 6px;font-size:14px">외부 목소리(TTS) <small style="font-weight:400;color:var(--sub)">(선택)</small></h4>
+          <p>키를 넣으면 답을 읽을 때 <b>외부 목소리를 먼저</b> 쓰고, 안 되면 브라우저 목소리로 읽어요. OpenAI 호환 음성 API 키예요. <b>읽을 글이 그 서비스로 나가요(회사 밖).</b> 관리자만 써요. 키는 이 컴퓨터의 <code>data/settings.json</code> 에만 저장되고 화면에는 <b>****</b> 로만 보여요.</p>
+          <div class="tgform"><div id="ttsState" style="margin-bottom:10px;color:var(--sub);font-size:13px">불러오는 중…</div>
+            <label>키<input id="ttsKey" class="mask" type="text" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"></label>
+            <label>목소리 이름 <small style="font-weight:400;color:var(--sub)">(비우면 alloy)</small><input id="ttsVoice" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            <div class="tgbtns"><button class="btn" id="ttsSave">저장</button><button class="btn ghost" id="ttsTest">시험 재생</button><button class="btn ghost" id="ttsClear">키 지우기</button></div>
+            <div id="ttsMsg" role="status" aria-live="polite" style="margin-top:8px;font-size:14px"></div></div></div>
         <div class="card"><h3>서버 다시 시작</h3>
           <p>먼저 서버가 직접 <b>문법 검사와 selftest</b> 를 돌려 보고(몇 분 걸려요), <b>모두 통과해야만</b> 껐다 켭니다. 하나라도 실패하면 켜 둔 채 그대로 두고 이유를 보여 줘요. 서버를 <code>start.bat</code> 으로 켰을 때만 쓸 수 있어요. 진행 중인 답변·예약 실행은 끊깁니다.</p>
           <button class="btn" id="restartBtn">서버 다시 시작</button><div id="restartMsg" role="status" aria-live="polite"></div></div>
@@ -1256,6 +1307,194 @@
     btn.disabled = false;
   }
 
+  // ---------- 목소리 (9편): 🎤 말해서 보내기 · "산초야" 호출 대기 · 답 읽어 주기 · 위쪽 출렁이는 표시 ----------
+  // 음성 인식은 브라우저(크롬·엣지)가 말소리를 구글·마이크로소프트 서버로 보내 글로 바꾸는 방식이라 회사 밖으로 나갈 수 있다 → 처음 쓸 때 안내하고, 호출 대기는 기본 꺼짐.
+  // 호출 대기·답 읽기 설정은 이 기기의 마이크·스피커에 관한 것이라 이 브라우저(localStorage)에만 저장한다. 호출어 판별·읽기용 글 다듬기는 public/m/voice.js (selftest 가 검사)
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition, SYN = window.speechSynthesis || null;
+  const LS = { get: (k) => { try { return localStorage.getItem('sancho.voice.' + k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem('sancho.voice.' + k, v); } catch { /* 저장하지 못해도 이번 화면에서는 동작한다 */ } } };
+  const V = { wake: LS.get('wake') === '1', speak: LS.get('speak') === '1', told: LS.get('told') === '1', ext: false }; // ext: 외부 목소리(TTS) 키가 있어 먼저 쓸지
+  const VOICE_ERR = { 'not-allowed': '마이크 사용이 막혀 있어요. 주소창 왼쪽 자물쇠에서 마이크를 허용해 주세요.', 'service-not-allowed': '마이크 사용이 막혀 있어요. 주소창 왼쪽 자물쇠에서 마이크를 허용해 주세요.',
+    'audio-capture': '마이크를 찾지 못했어요. 마이크가 연결돼 있는지 확인해 주세요.', 'no-speech': '말소리가 들리지 않았어요. 다시 눌러 말해 보세요.', network: '음성 인식 서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.', 'language-not-supported': '한국어 음성 인식을 쓸 수 없어요.' };
+  let micRec = null, speakNext = false, pendingVoice = null, speaking = false, spk = 0, audio = null, vTimer = null;
+
+  const baseState = () => (V.wake && SR ? 'wake' : '');
+  function setVoice(state, text, ms) { // 위쪽 표시: '' 숨김 · wake 호출 대기 · listening 듣는 중(출렁) · awaiting 부름 받음 · speaking 말하는 중(출렁) · error 안내(몇 초 뒤 사라짐)
+    const el = $('voiceBar'); if (!el) return;
+    clearTimeout(vTimer);
+    el.dataset.state = state; el.hidden = !state; $('voiceTxt').textContent = text || '';
+    el.title = state === 'speaking' ? '눌러서 읽기를 멈춰요' : state === 'listening' ? '눌러서 듣기를 취소해요' : '';
+    if (ms) vTimer = setTimeout(idleVoice, ms);
+  }
+  const idleVoice = () => { if (speaking) return setVoice('speaking', '말하는 중'); if (micRec) return setVoice('listening', '듣는 중… 말하세요'); setVoice(baseState(), baseState() ? '👂 산초야 호출 대기' : ''); };
+  const setInput = (text) => { const t = $('input'); if (t) { t.value = text; t.dispatchEvent(new Event('input')); } }; // 입력창에 글만 넣는다 (포커스를 가져오지 않아 폰 키보드가 안 뜬다)
+  $('voiceBar').onclick = () => { if (speaking) stopSpeaking(); else if (micRec) { try { micRec.abort(); } catch { /* 이미 끝남 */ } } };
+
+  function voiceConsent() { // 처음 한 번: 말소리가 브라우저 회사 서버로 간다는 안내
+    if (V.told) return true;
+    if (!confirm('음성 인식은 브라우저(크롬·엣지)가 말소리를 구글·마이크로소프트 서버로 보내 글로 바꾸는 방식이에요.\n말한 내용이 회사 밖으로 나갈 수 있어요.\n\n민감한 이야기는 글로 입력하세요. 계속할까요?')) return false;
+    V.told = true; LS.set('told', '1'); return true;
+  }
+
+  // ----- 🎤 누르고 말하기: 말이 끊기면 인식기가 끝나고, 그때 받아 적은 글을 자동으로 보낸다
+  function micToggle() {
+    if (!SR) return setVoice('error', '이 브라우저는 음성 인식을 지원하지 않아요 (크롬·엣지에서 쓰세요)', 5000);
+    if (micRec) { try { micRec.abort(); } catch { /* 이미 끝남 */ } return; } // 듣는 중에 다시 누르면 취소
+    if (busy) return setVoice('error', '비서가 답하는 중이에요. 끝난 뒤에 말해 주세요.', 4000);
+    if (!voiceConsent()) return;
+    stopSpeaking(); wakeHold(1); // 읽던 것을 멈추고, 호출 대기는 잠깐 쉰다 (마이크는 한 번에 하나)
+    const r = new SR(); micRec = r; r.lang = 'ko-KR'; r.continuous = false; r.interimResults = true; r.maxAlternatives = 1;
+    let fin = '', err = '';
+    r.onstart = () => { if ($('mic')) $('mic').classList.add('on'); setVoice('listening', '듣는 중… 말하세요'); };
+    r.onresult = (e) => { let live = ''; for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript; if (e.results[i].isFinal) fin += t; else live += t; } setInput(fin + live); }; // 말하는 대로 입력창에 보인다
+    r.onerror = (e) => { err = e.error; };
+    r.onend = () => {
+      micRec = null; if ($('mic')) $('mic').classList.remove('on'); wakeHold(-1);
+      if (fin.trim()) { setInput(fin.trim()); idleVoice(); speakNext = true; send(); return; } // 말이 끊겼다 → 자동으로 보낸다
+      setInput('');
+      if (VOICE_ERR[err]) setVoice('error', VOICE_ERR[err], 6000); else if (err && err !== 'aborted') setVoice('error', `음성 인식이 멈췄어요 (${err})`, 6000); else idleVoice();
+    };
+    try { r.start(); } catch { micRec = null; wakeHold(-1); setVoice('error', '마이크를 시작하지 못했어요. 잠시 뒤 다시 눌러 주세요.', 5000); }
+  }
+
+  // ----- "산초야" 호출 대기: 마이크가 계속 듣고 있다가 호출어로 시작하는 말만 받는다
+  const WK = { rec: null, hold: 0, fails: 0, t: null, err: '', started: 0, awaiting: false, awaitT: null };
+  const wakeHold = (d) => { WK.hold = Math.max(0, WK.hold + d); if (WK.hold > 0) wakeStop(); else wakeStart(); }; // 읽는 동안·🎤 쓰는 동안 잠깐 쉰다 (내 목소리를 내가 듣고 "산초야"로 알아듣지 않게)
+  function wakeStop() { clearTimeout(WK.t); if (WK.rec) { const r = WK.rec; WK.rec = null; try { r.abort(); } catch { /* 이미 끝남 */ } } }
+  function wakeGiveUp(msg) { V.wake = false; LS.set('wake', '0'); wakeStop(); WK.awaiting = false; setVoice('error', msg, 8000); syncVoiceUi(); }
+  function wakeStart() {
+    clearTimeout(WK.t);
+    if (!V.wake || !SR || WK.rec || WK.hold) return;
+    const retry = () => { WK.fails++; if (WK.fails > 6) return wakeGiveUp('마이크를 시작하지 못했어요. 설정에서 "산초야 호출 대기"를 다시 켜 주세요.'); WK.t = setTimeout(wakeStart, Math.min(1000 * 2 ** (WK.fails - 1), 15000)); }; // 시작이 막히면 1·2·4·8초… 쉬며 다시 시도, 여섯 번 넘게 안 되면 그만둔다
+    const r = new SR(); WK.rec = r; WK.err = ''; r.lang = 'ko-KR'; r.continuous = true; r.interimResults = false;
+    r.onstart = () => { WK.fails = 0; WK.started = Date.now(); idleVoice(); };
+    r.onresult = (e) => { if (WK.rec !== r) return; for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) wakeHeard(e.results[i][0].transcript); };
+    r.onerror = (e) => { if (WK.rec === r) WK.err = e.error; };
+    r.onend = () => {
+      if (WK.rec !== r) return; WK.rec = null;
+      if (!V.wake || WK.hold) return;
+      if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(WK.err)) return wakeGiveUp(VOICE_ERR[WK.err]); // 허용을 안 했거나 마이크가 없으면 다시 해 봐야 소용없다
+      if (Date.now() - WK.started >= 3000) { WK.fails = 0; WK.t = setTimeout(wakeStart, 300); return; } // 크롬은 조용하면 스스로 끊는다 → 몇 초 돌았으면 바로 다시 켠다
+      retry(); // 켜자마자 끊김(마이크를 다른 프로그램이 쓰는 중 등)
+    };
+    try { WK.started = Date.now(); r.start(); } catch { WK.rec = null; retry(); } // 이미 켜져 있다는 오류 등으로 시작이 막혀도 다시 시도
+  }
+  function wakeHeard(text) {
+    const t = String(text || '').trim();
+    if (!t || speaking || micRec) return;
+    if (WK.awaiting) { WK.awaiting = false; clearTimeout(WK.awaitT); idleVoice(); return voiceCommand(t); } // "산초야"만 말하고 쉬었으면 다음 말이 명령
+    const w = vlib.wake(t);
+    if (!w.ok) return; // 호출어로 시작하지 않은 말은 그냥 버린다 (비서는 저장도 전송도 하지 않는다)
+    if (w.rest) return voiceCommand(w.rest);
+    WK.awaiting = true; setVoice('awaiting', '네, 말씀하세요'); clearTimeout(WK.awaitT);
+    WK.awaitT = setTimeout(() => { WK.awaiting = false; idleVoice(); }, 8000);
+  }
+  function voiceCommand(text) {
+    if (busy) return setVoice('error', '답하는 중이라 못 들었어요', 3000);
+    if ($('input')) { if (homeView !== 'chat') goTab('chat'); setInput(text); speakNext = true; send(); }
+    else { pendingVoice = text; homeView = 'chat'; location.hash = '#대시보드'; } // 다른 화면에 있었다면 채팅 화면으로 가서 보낸다
+  }
+
+  // ----- 답 읽어 주기: 외부 목소리 키가 있으면 먼저, 안 되면 브라우저 목소리(한국어). 읽는 동안 위쪽 표시가 출렁인다
+  function stopSpeaking() {
+    spk++; try { if (SYN) SYN.cancel(); } catch { /* 없음 */ }
+    if (audio) { audio.pause(); audio = null; }
+    if (speaking) { speaking = false; wakeHold(-1); idleVoice(); }
+  }
+  async function playBlob(blob, my) { // 소리 하나를 끝까지 재생 (그 사이 멈췄으면 true). 재생이 막히거나 깨지면 던진다
+    const url = URL.createObjectURL(blob), a = new Audio(url); audio = a;
+    try {
+      await a.play();
+      await new Promise((ok, no) => { a.onended = ok; a.onerror = () => no(new Error('audio')); a.onpause = () => { if (my !== spk) ok(); }; });
+    } finally { URL.revokeObjectURL(url); if (audio === a) audio = null; }
+  }
+  async function playExternal(text, my) {
+    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    if (!r.ok) return false; // 키가 틀리거나 서비스가 안 되면 브라우저 목소리로
+    const blob = await r.blob();
+    if (my !== spk) return true;
+    await playBlob(blob, my); return true;
+  }
+  function playBrowser(text, my) {
+    return new Promise((ok) => {
+      if (!SYN) return ok(false);
+      const parts = vlib.chunks(text), ko = (SYN.getVoices ? SYN.getVoices() : []).find((v) => /^ko/i.test(v.lang)); let i = 0;
+      const next = () => {
+        if (my !== spk) return ok(true);
+        if (i >= parts.length) return ok(true);
+        const u = new SpeechSynthesisUtterance(parts[i++]); u.lang = 'ko-KR'; if (ko) u.voice = ko;
+        let started = false;
+        u.onstart = () => { started = true; };
+        u.onend = next;
+        u.onerror = (e) => ok(e.error === 'canceled' || e.error === 'interrupted' ? my !== spk : false);
+        SYN.speak(u);
+        setTimeout(() => { if (!started && my === spk && !SYN.speaking) { try { SYN.cancel(); } catch { /* 없음 */ } ok(false); } }, 4000); // 목소리가 없어서 아무 소리도 안 나면 기다리지 않는다
+      };
+      SYN.cancel(); next();
+    });
+  }
+  async function speakReply(md, opt = {}) {
+    const text = vlib.speechText(md, 1500); if (!text) return;
+    stopSpeaking();
+    const my = ++spk; speaking = true; wakeHold(1); setVoice('speaking', '말하는 중');
+    let ok = false;
+    if (V.ext && !opt.browserOnly) { try { ok = await playExternal(text, my); } catch { ok = false; } } // 외부 목소리가 있으면 먼저
+    if (!ok && my === spk) ok = await playBrowser(text, my); // 실패하면 브라우저 목소리로
+    if (my !== spk) return; // 그 사이 멈췄거나 다른 읽기가 이어받았다
+    speaking = false; wakeHold(-1);
+    if (ok) idleVoice(); else setVoice('error', '소리로 읽지 못했어요. 이 브라우저에 한국어 목소리가 없거나 소리 출력이 막혀 있을 수 있어요.', 7000);
+  }
+  function toggleSpeak() {
+    V.speak = !V.speak; LS.set('speak', V.speak ? '1' : '0');
+    if (V.speak && !SYN && !V.ext) setVoice('error', '이 브라우저는 소리 내어 읽기를 지원하지 않아요.', 5000);
+    if (!V.speak) stopSpeaking();
+    syncVoiceUi();
+  }
+  async function loadVoiceConfig() { try { V.ext = !!(await (await api('/api/voice/config')).json()).externalTts; } catch { /* 못 읽으면 브라우저 목소리 */ } }
+  function syncVoiceUi() { // 🎤·🔊 단추와 설정 스위치를 지금 상태에 맞춘다
+    const m = $('mic'); if (m) { m.disabled = !SR; m.title = SR ? '눌러서 말하세요 (한국어). 말이 끊기면 자동으로 보내요. 듣는 중에 다시 누르면 취소' : '이 브라우저는 음성 인식을 지원하지 않아요 (크롬·엣지에서 쓰세요)'; }
+    const s = $('spk'); if (s) { s.textContent = V.speak ? '🔊 답 읽기 켜짐' : '🔇 답 읽기 꺼짐'; s.setAttribute('aria-pressed', String(V.speak)); }
+    if ($('vcWake')) { $('vcWake').checked = V.wake; $('vcWake').disabled = !SR; }
+    if ($('vcSpeak')) $('vcSpeak').checked = V.speak;
+    if (!speaking && !micRec) idleVoice();
+  }
+  function voiceBoot() { // 로그인 뒤 한 번: 외부 목소리가 있는지 알아보고, 호출 대기를 켜 둔 기기면 듣기 시작
+    loadVoiceConfig(); syncVoiceUi();
+    if (SYN && SYN.addEventListener) SYN.addEventListener('voiceschanged', () => { if ($('vcInfo')) showVoiceInfo(); }); // 목소리 목록은 늦게 채워진다
+    if (V.wake && SR) wakeStart();
+  }
+
+  // ---------- 설정 › 목소리 ----------
+  const koVoices = () => (SYN && SYN.getVoices ? SYN.getVoices().filter((v) => /^ko/i.test(v.lang)).length : 0);
+  function showVoiceInfo() { const el = $('vcInfo'); if (el) el.textContent = `이 브라우저: 음성 인식 ${SR ? '✓' : '✗ (크롬·엣지에서 쓰세요)'} · 소리 내어 읽기 ${SYN ? '✓' : '✗'} · 한국어 목소리 ${koVoices()}개`; }
+  async function showVoice() {
+    const say = (t, err) => { const m = $('ttsMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
+    showVoiceInfo(); syncVoiceUi();
+    $('vcWake').onchange = () => {
+      const on = $('vcWake').checked;
+      if (on && !(voiceConsent() && confirm('"산초야 호출 대기"를 켤까요?\n\n• 켜 두는 동안 이 기기의 마이크가 계속 듣고, 그 소리는 브라우저 회사(크롬=구글, 엣지=마이크로소프트) 서버로 보내져 글로 바뀌어요.\n• "산초야"로 시작하지 않은 말은 비서가 버리지만, 인식 서버에는 이미 갔어요.\n• 위쪽에 "👂 호출 대기" 표시가 떠 있고, 여기서 끄면 바로 멈춰요.\n\n조용한 곳에서, 필요할 때만 켜세요.'))) { $('vcWake').checked = false; return; }
+      V.wake = on; LS.set('wake', on ? '1' : '0');
+      if (on) { WK.fails = 0; wakeStart(); } else { wakeStop(); WK.awaiting = false; clearTimeout(WK.awaitT); }
+      syncVoiceUi();
+    };
+    $('vcSpeak').onchange = () => { V.speak = $('vcSpeak').checked; LS.set('speak', V.speak ? '1' : '0'); if (!V.speak) stopSpeaking(); syncVoiceUi(); };
+    $('vcTest').onclick = () => speakReply('안녕하세요, 산초예요. 지금 브라우저 목소리로 읽고 있어요. 위쪽 표시가 출렁이면 잘 되는 거예요.', { browserOnly: true });
+    const loadTts = async () => { try { const t = (await (await api('/api/settings')).json()).tts || {}; $('ttsState').textContent = `지금: 외부 목소리 키 ${t.configured ? '✓ 저장됨 (****)' : '없음 → 브라우저 목소리만 써요'}${t.configured ? ` · 목소리 ${t.voice}` : ''}`; $('ttsKey').placeholder = t.configured ? '**** (바꾸려면 새로 붙여 넣기)' : 'sk-… (OpenAI 호환 음성 API 키)'; $('ttsVoice').placeholder = t.voice || 'alloy'; } catch (e) { if (e.message !== 'login' && $('ttsState')) $('ttsState').textContent = '⚠ 설정을 읽지 못했어요.'; } };
+    loadTts();
+    const call = async (method, body) => { try { const r = await api('/api/settings/tts', { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { ok: r.ok, error: (await r.json().catch(() => ({}))).error || '처리하지 못했어요.' }; } catch (e) { return { ok: false, error: e.message === 'login' ? '' : '서버에 연결할 수 없습니다.' }; } };
+    $('ttsSave').onclick = async () => { const r = await call('PUT', { apiKey: $('ttsKey').value.trim(), voice: $('ttsVoice').value.trim() }); if (r.ok) { $('ttsKey').value = ''; $('ttsVoice').value = ''; say('✓ 저장했어요. 이어서 [시험 재생]을 눌러 보세요.'); await loadVoiceConfig(); loadTts(); } else say(`⚠ ${r.error}`, true); };
+    $('ttsClear').onclick = async () => { if (!confirm('외부 목소리 키를 지울까요? 지우면 브라우저 목소리로만 읽어요.')) return; const r = await call('DELETE'); if (r.ok) { say('✓ 지웠어요.'); await loadVoiceConfig(); loadTts(); } else say(`⚠ ${r.error}`, true); };
+    $('ttsTest').onclick = async () => {
+      if ($('ttsKey').value.trim() || $('ttsVoice').value.trim()) return say('입력한 값이 아직 저장되지 않았어요. [저장]을 먼저 눌러 주세요.', true);
+      say('외부 목소리를 불러오는 중…'); stopSpeaking(); const my = ++spk;
+      try {
+        const r = await api('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '안녕하세요, 산초예요. 외부 목소리로 읽고 있어요.' }) });
+        if (!r.ok) return say(`⚠ ${(await r.json().catch(() => ({}))).error || '실패했어요.'}`, true);
+        speaking = true; wakeHold(1); setVoice('speaking', '말하는 중'); say('✓ 외부 목소리로 재생해요.');
+        try { await playBlob(await r.blob(), my); } finally { if (my === spk) { speaking = false; wakeHold(-1); idleVoice(); } }
+      } catch (e) { if (e.message !== 'login') say(`⚠ 재생하지 못했어요 (${e.name === 'NotAllowedError' ? '브라우저가 소리 재생을 막았어요' : e.message}).`, true); }
+    };
+  }
+
   // ---------- 시작 ----------
   $('who').onclick = async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.replace('/'); };
   // 임시 비밀번호로 처음 들어왔으면 이 창을 먼저 띄우고, 바꾸기 전에는 아무 화면도 열지 않는다 (서버도 막는다)
@@ -1278,7 +1517,7 @@
     .then((u) => {
       me = u.name; myRole = u.role; $('whoName').textContent = u.dept ? `${u.name} · ${u.dept}` : u.name; $('who').title = `${u.role === 'admin' ? '관리자' : '일반 사용자'} · 누르면 로그아웃`;
       if (u.mustChange) return askNewPassword();
-      loadNotices(); db.watch('notices', loadNotices); route();
+      loadNotices(); db.watch('notices', loadNotices); route(); voiceBoot();
     })
     .catch(() => location.replace('/'));
 </script>

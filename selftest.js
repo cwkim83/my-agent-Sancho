@@ -3683,6 +3683,87 @@ async function runConnector() {
   try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
 }
 
+// 목소리 (9편 넷째 단계): 🎤 말해서 보내기 · "산초야" 호출 대기(비슷한 소리 허용) · 답 읽어 주기(외부 목소리 먼저, 실패하면 브라우저 목소리) · 위쪽 출렁이는 표시.
+// 마이크·스피커는 브라우저의 일이라 여기서는 (1) 호출어 판별·읽기용 글 다듬기(public/m/voice.js) (2) 외부 목소리 설정·재생(가짜 외부 서버로) (3) 화면에 그 장치들이 있는지를 검사한다. 전용 서버(포트 8805)·가짜 외부 목소리(8804)
+async function runVoice() {
+  const http = require('http'), P = 8805, B = `http://127.0.0.1:${P}`, d = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test-vc-'));
+  const MP3 = Buffer.from('ID3-가짜-mp3-소리-바이트'), seen = [];
+  const fake = http.createServer((req, res) => { // 가짜 외부 목소리(OpenAI 호환): 받은 것을 seen 에 모으고, 키에 BADKEY 가 있으면 401, DOWN 이 있으면 500
+    let raw = ''; req.on('data', (c) => (raw += c)).on('end', () => {
+      const auth = req.headers.authorization || '', body = raw ? JSON.parse(raw) : {}; seen.push({ url: req.url, method: req.method, auth, body });
+      if (auth.includes('BADKEY')) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'Incorrect API key ' + auth } })); }
+      if (auth.includes('DOWN')) { res.writeHead(500); return res.end('boom'); }
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg' }); res.end(MP3);
+    });
+  });
+  await new Promise((ok) => fake.listen(8804, '127.0.0.1', ok));
+  const s = startServer(P, d, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), SANCHO_TTS_API: 'http://127.0.0.1:8804' }); await s.ready;
+  const setup = await fetch(B + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '목소리', username: 'voiceadmin', password: PW }) });
+  const L = { 'Content-Type': 'application/json', Cookie: cookieOf(setup) };
+  const loc = (u, method = 'GET', body, h = L) => fetch(B + u, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+  const st = () => { try { return JSON.parse(fs.readFileSync(path.join(d, 'settings.json'), 'utf8')); } catch { return {}; } };
+
+  // ① 순수 계산 파일 (화면이 쓰는 그 파일을 그대로 불러다 검사)
+  check('voice.js 는 로그인한 사람에게만(로그인 전 401)', (await fetch(B + '/m/voice.js')).status === 401 && (await loc('/m/voice.js')).status === 200);
+  const box = { window: {} }; vm.createContext(box); vm.runInContext(await (await loc('/m/voice.js')).text(), box);
+  const vl = box.window.vlib;
+  const YES = [['산초야 오늘 일정 알려줘', '오늘 일정 알려줘'], ['산초 야 오늘 일정', '오늘 일정'], ['산쵸야, 메일 확인해 줘', '메일 확인해 줘'], ['잔초야 안녕', '안녕'], ['산초 오늘 날씨', '오늘 날씨'], ['산조야 도와줘', '도와줘'], ['샨초야 시작해', '시작해'], ['산초야', ''],
+    ['산초야!', ''], ['  산초야~ 브리핑', '브리핑'], ['산초가 일정 알려줘', '일정 알려줘'], ['산초 아침 브리핑', '아침 브리핑'], ['산추야 불 꺼줘', '불 꺼줘'], ['상초야 안녕', '안녕'], ['Sancho 일정', '일정'], ['산초아 오늘 일정', '오늘 일정']];
+  const NO = ['안녕하세요', '오늘 일정 알려줘', '산책 갈래', '사진 찍어 줘', '저기 산초야 안녕', '', '   ', '산에 가자', '전초야', '난초야 물 줘', '반초야', '선초야 안녕', '산이 높다', '초야에 묻혀'];
+  check(`호출어: "산초야"로 시작하는 말과 비슷한 소리(산초·산쵸·잔초·산조야·샨초야·산추야·상초야·"산초 야" …)는 받고 호출어를 뺀 나머지만 돌려줌 (${YES.length}가지)`, YES.every(([t, rest]) => { const r = vl.wake(t); return r.ok === true && r.rest === rest; }));
+  check(`호출어: "산초야"로 시작하지 않는 말·소리가 한 글자 다른 말(산책·난초야·반초야·선초야·전초야)·중간에 낀 호출어는 안 받음 (${NO.length}가지)`, NO.every((t) => vl.wake(t).ok === false));
+  const md = '## 제목\n\n**오늘** 일정은 [여기](https://x.y/z) 입니다. 주소는 https://example.com/a 예요.\n\n```js\nconsole.log(1)\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- 첫째 항목\n- 둘째 항목\n1. 셋째\n\n⏺ 내용 검색 중\n🔧 자기 수정 검사 중\n> 인용문이에요\n`코드` 는 읽어요.\n마지막 문장입니다.';
+  check('읽기용 글: 코드·표·링크 주소·도구 진행 줄·마크다운 기호를 빼고 말하는 글만 남김, 코드뿐인 답은 빈 글(읽지 않음)', vl.speechText(md) === '제목\n오늘 일정은 여기 입니다. 주소는 예요.\n첫째 항목\n둘째 항목\n셋째\n인용문이에요\n코드 는 읽어요.\n마지막 문장입니다.' && vl.speechText('```\nonly code\n```') === '');
+  const longT = '가나다라마바사 아자차카타파하 오늘은 날씨가 좋습니다. '.repeat(120), cut = vl.speechText(longT, 300), ch = vl.chunks(longT.slice(0, 900), 170), ch2 = vl.chunks('쉼표없는매우긴문장'.repeat(60), 170);
+  check('읽기용 글: 최대 글자를 넘으면 문장 끝에서 자르고, 브라우저 목소리용 조각은 170자를 안 넘으며 글이 빠지지 않음(아주 긴 한 문장도 자름)', cut.length <= 300 && cut.endsWith('.') && ch.length > 3 && ch.every((x) => x.length <= 170) && ch.join('').replace(/\s/g, '') === longT.slice(0, 900).replace(/\s/g, '') && ch2.length > 1 && ch2.every((x) => x.length <= 170));
+
+  // ② 화면: 장치가 다 있는가
+  const html = await (await loc('/')).text();
+  check('화면: 🎤 단추·한국어(ko-KR) 음성 인식·말이 끊기면 자동 전송 흐름이 있음', ['id="mic"', 'webkitSpeechRecognition', "r.lang = 'ko-KR'", 'r.continuous = false', 'r.interimResults = true', '말이 끊겼다 → 자동으로 보낸다'].every((w) => html.includes(w)));
+  check('화면: 설정 "산초야 호출 대기"(기본 꺼짐·마이크가 서버로 소리를 보낸다는 경고)·비슷한 소리 판별(vlib.wake)·시작이 막히면 다시 시도(쉬며 6번까지)·호출어로 시작하지 않은 말은 버림',
+    ['id="vcWake"', '산초야 호출 대기', 'vlib.wake(t)', 'WK.fails > 6', 'Math.min(1000 * 2 ** (WK.fails - 1), 15000)', '시작이 막히면'].every((w) => html.includes(w)) && html.includes("LS.get('wake') === '1'") && html.includes('호출 대기는 켜 두는 동안 마이크가 계속 듣고'));
+  check('화면: 답 읽기 — 한국어 브라우저 목소리(speechSynthesis·ko-KR), 외부 목소리가 있으면 먼저 쓰고 실패하면 브라우저 목소리로, 읽는 동안 호출 대기는 쉼(내 목소리를 호출로 안 알아듣게)',
+    ['speechSynthesis', 'SpeechSynthesisUtterance', "u.lang = 'ko-KR'"].every((w) => html.includes(w)) && /playExternal\(text, my\)[\s\S]{0,260}playBrowser\(text, my\)/.test(html) && html.includes('wakeHold(1); setVoice(\'speaking\''));
+  check('화면: 위쪽 표시(#voiceBar)가 말하는·듣는 동안 출렁이고(@keyframes wave) 움직임을 줄이는 설정(prefers-reduced-motion)이면 멈춤, 눌러서 읽기를 멈출 수 있음',
+    ['id="voiceBar"', '@keyframes wave', 'data-state="speaking"', 'prefers-reduced-motion: reduce', "if (speaking) stopSpeaking()"].every((w) => html.includes(w)) && /<script src="\/m\/voice\.js"><\/script>/.test(html));
+  check('화면: 설정 › 목소리 칸(브라우저 목소리 시험·외부 목소리 키 칸은 가림)이 있고 소리·글이 회사 밖으로 나간다는 경고가 있음', ['id="vcSpeak"', 'id="vcTest"', 'id="ttsKey" class="mask"', 'id="ttsTest"', '읽을 글이 그 서비스로 나가요', '말소리를 그 회사 서버로 보내'].every((w) => html.includes(w)));
+
+  // ③ 외부 목소리 설정·재생 (가짜 외부 서버)
+  check('외부 목소리 키가 없을 때: voice/config 는 false, /api/tts 는 400(키가 없다는 안내)이고 외부로는 아무것도 안 나감', (await (await loc('/api/voice/config')).json()).externalTts === false && (await loc('/api/tts', 'POST', { text: '안녕' })).status === 400 && seen.length === 0
+    && (await (await loc('/api/settings')).json()).tts.configured === false);
+  const KEY = 'sk-test-GOODKEY-1234567890';
+  check('키 저장 검증: 공백이 낀 키·너무 짧은 키·이상한 목소리 이름·빈 요청은 400', (await Promise.all([{ apiKey: 'sk bad key 1234' }, { apiKey: 'short' }, { voice: '../x' }, {}].map((b) => loc('/api/settings/tts', 'PUT', b)))).every((r) => r.status === 400));
+  const put = await loc('/api/settings/tts', 'PUT', { apiKey: KEY, voice: 'nova' }), putText = await put.text();
+  check('키 저장: 200, 응답·설정 목록·화면 파일에는 키가 없고(configured·voice 만), 키는 data/settings.json 에만 저장됨', put.status === 200 && !putText.includes(KEY) && JSON.parse(putText).tts.configured === true && !(await (await loc('/api/settings')).text()).includes(KEY)
+    && !html.includes(KEY) && st().tts.apiKey === KEY && st().tts.voice === 'nova' && (await (await loc('/api/voice/config')).json()).externalTts === true);
+  const say = await loc('/api/tts', 'POST', { text: '  안녕하세요, 산초예요.  ' }), bytes = Buffer.from(await say.arrayBuffer()), sn = seen[seen.length - 1];
+  check('/api/tts: 외부 목소리가 준 소리(audio/mpeg)를 그대로 돌려주고, 외부에는 키(Authorization)·모델·목소리(nova)·읽을 글(앞뒤 공백 뺌)·mp3 만 보냄',
+    say.status === 200 && /audio\/mpeg/.test(say.headers.get('content-type')) && bytes.equals(MP3) && sn.url === '/v1/audio/speech' && sn.method === 'POST' && sn.auth === `Bearer ${KEY}` && sn.body.voice === 'nova' && sn.body.input === '안녕하세요, 산초예요.' && sn.body.response_format === 'mp3' && !!sn.body.model);
+  check('/api/tts 입력 검사: 빈 글·글이 아님·2000자 초과(413)는 외부로 보내지 않고 거절', (await loc('/api/tts', 'POST', { text: '   ' })).status === 400 && (await loc('/api/tts', 'POST', { text: 123 })).status === 400 && (await loc('/api/tts', 'POST', { text: '가'.repeat(2001) })).status === 413
+    && (await loc('/api/tts', 'POST', { text: '가'.repeat(2000) })).status === 200 && seen.every((x) => x.body.input.length <= 2000));
+  check('로그인 전에는 /api/tts 401, 일반 사용자는 403(관리자의 키로 남의 글이 외부로 나가지 않게)·voice/config 도 false', await (async () => {
+    const un = await fetch(B + '/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '안녕' }) });
+    await loc('/api/users', 'POST', { name: '일반', username: 'plainvoice', password: 'temp-pass-1234', role: 'user' });
+    const lg = await fetch(B + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'plainvoice', password: 'temp-pass-1234' }) }), H = { 'Content-Type': 'application/json', Cookie: cookieOf(lg) };
+    await fetch(B + '/api/auth/password', { method: 'POST', headers: H, body: JSON.stringify({ current: 'temp-pass-1234', next: 'new-pass-12345' }) }); // 임시 비밀번호를 바꿔야 다른 일이 열린다
+    const n0 = seen.length, tts = await fetch(B + '/api/tts', { method: 'POST', headers: H, body: JSON.stringify({ text: '안녕' }) }), cfg = await (await fetch(B + '/api/voice/config', { headers: H })).json();
+    return un.status === 401 && tts.status === 403 && cfg.externalTts === false && seen.length === n0;
+  })());
+  await loc('/api/settings/tts', 'PUT', { apiKey: 'sk-test-BADKEY-1234567890' }); const bad = await loc('/api/tts', 'POST', { text: '안녕' }), badText = await bad.text();
+  await loc('/api/settings/tts', 'PUT', { apiKey: 'sk-test-DOWN-123456789' }); const down = await loc('/api/tts', 'POST', { text: '안녕' }), downText = await down.text();
+  await new Promise((ok) => fake.close(ok)); fake.closeAllConnections && fake.closeAllConnections();
+  await loc('/api/settings/tts', 'PUT', { apiKey: 'sk-test-GOODKEY-1234567890' }); const dead = await loc('/api/tts', 'POST', { text: '안녕' }), deadText = await dead.text();
+  check('외부 목소리가 실패하면 쉬운 이유와 함께 502 (키가 틀림 → 키 안내, 서비스 오류 → (500), 서비스가 꺼짐 → 연결 못함) — 화면은 이때 브라우저 목소리로 읽음. 오류 글에 키·읽을 글이 안 섞임',
+    bad.status === 502 && badText.includes('키가 맞지 않아요') && down.status === 502 && downText.includes('(500)') && dead.status === 502 && deadText.includes('연결하지 못했어요')
+    && ![badText, downText, deadText].some((t) => /sk-test|안녕/.test(t)));
+  const del = await loc('/api/settings/tts', 'DELETE');
+  check('키 지우기: 200, 설정에서 사라지고 voice/config 는 다시 false, /api/tts 는 400', del.status === 200 && st().tts === undefined && (await (await loc('/api/voice/config')).json()).externalTts === false && (await loc('/api/tts', 'POST', { text: '안녕' })).status === 400);
+  const leaks = filesUnder(d).filter((f) => /sk-test-(GOOD|BAD|DOWN)/.test(fs.readFileSync(f, 'utf8')));
+  check('키가 서버 로그와 data 의 어느 파일에도 남지 않음(지운 뒤) — 저장된 동안에도 비서가 못 읽는 settings.json 에만 있었음', !/sk-test-/.test(s.log) && leaks.length === 0 && /const PRIVATE_FILES = \[[^\]]*'settings\.json'/.test(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8')));
+  s.kill();
+  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
+}
+
 // claude 프로그램이 아예 없는 PC 를 흉내: PATH 를 빈 폴더로 바꾼 서버를 하나 더 켠다
 async function runNoClaude() {
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-')), UD2 = path.join(dir2, 'users', 'two'); // 곧 만들 관리자 "two" 의 개인 폴더
@@ -3736,6 +3817,7 @@ srv.ready.then(async () => {
   try {
     if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속·커넥터 점검만 빨리 돌릴 때: SELFTEST_ONLY=access (또는 connector) node selftest.js
     else if (process.env.SELFTEST_ONLY === 'connector') await runConnector();
+    else if (process.env.SELFTEST_ONLY === 'voice') await runVoice();
     else {
       await run();
       await runNoClaude();
@@ -3746,6 +3828,7 @@ srv.ready.then(async () => {
       await runEp8();
       await runAccess();
       await runConnector();
+      await runVoice();
       runGit();
     }
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
