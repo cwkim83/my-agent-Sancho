@@ -702,9 +702,10 @@ async function selfmodAfter({ user, content, ok, emit, gap }) {
     if (!files.length) return { restart }; // 고친 게 없으면 할 일도 기록도 없다
     const rec = { id: crypto.randomBytes(4).toString('hex'), at: nowIso(), user: user.username, request: oneLine(content, 200), files: files.slice(0, 40), result: '', reason: '', commit: '' };
     const list = `${files.slice(0, 8).join(', ')}${files.length > 8 ? ` 외 ${files.length - 8}개` : ''}`;
-    const undo = (result, reason) => {
-      const done = guard.revert(APP_ROOT); Object.assign(rec, { result, reason: done ? reason : `${reason} (되돌리기도 실패했어요)` }); selfmodLog(rec);
-      emit(`${gap()}↩ 자기 수정을 되돌렸어요${done ? '' : ' — 되돌리기에 실패했어요. 앱 폴더(git status)를 확인해 주세요'}.\n- 이유: ${reason}\n- 바뀌었던 파일: ${list}`);
+    const undo = (result, reason) => { // 버리기 전에 보존한다 (8편 마무리): 비서가 시도한 것을 rescue/selfmod-<시각> 브랜치에 남겨 나중에 볼 수 있게. 보존에 실패해도 검사 안 된 수정은 버린다
+      const kept = guard.preserve(APP_ROOT, 'selfmod-', `자기 수정 거부(보존): ${oneLine(content, 60)} — ${oneLine(reason, 120)}`, 'Sancho 비서'), done = guard.revert(APP_ROOT);
+      Object.assign(rec, { result, reason: done ? reason : `${reason} (되돌리기도 실패했어요)`, kept: kept || '' }); selfmodLog(rec);
+      emit(`${gap()}↩ 자기 수정을 되돌렸어요${done ? '' : ' — 되돌리기에 실패했어요. 앱 폴더(git status)를 확인해 주세요'}.\n- 이유: ${reason}\n- 바뀌었던 파일: ${list}\n- ${kept ? `되돌린 변경은 "${kept}" 브랜치에 남겨 두었어요` : '되돌린 변경을 따로 남기지 못했어요'}`);
     };
     if (!ok) { undo('되돌림', '비서의 답이 끝까지 가지 못해서(중지·오류·시간 초과) 검사하지 않은 수정은 남기지 않았어요.'); return { restart }; }
     const bad = files.filter(guard.isProtected);

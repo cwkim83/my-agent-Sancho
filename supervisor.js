@@ -1,5 +1,5 @@
 // 감시자 (8편 안전장치). start.bat 이 이 파일을 실행한다. 서버(server.js)를 자식으로 켜고 지켜본다. 비서가 못 고치는 파일 (guard.js 의 IMMUTABLE).
-//  - 켠 뒤 /health 가 30초 동안 계속 통과하고 작업 폴더가 깨끗하면 그 커밋에 git tag last-good 을 붙인다 (원격에는 올리지 않는다)
+//  - 켠 뒤 /health 가 30초 동안 계속 통과하고 작업 폴더가 깨끗하고 감시자가 돌린 관문(문법·selftest)도 통과하면 그 커밋에 git tag last-good 을 붙인다 (원격에는 올리지 않는다)
 //  - 서버가 비정상으로 끝나면: 커밋 안 된 변경은 따로 커밋해 rescue/<시각> 브랜치에 보존 → last-good 으로 git reset --hard → 다시 켠다
 //  - 세 번 연속 실패하면 멈추고 마지막 오류를 보여 준다
 // 서버가 끝날 때의 종료 코드: 0 = 정상 종료(감시도 끝) · 10 = 재시작 요청(되돌리기·실패 횟수 없이 바로 다시 켬) · 11 = 포트 사용 중(되돌리지 않고 멈춤) · 그 밖 = 비정상
@@ -28,27 +28,37 @@ const health = () => new Promise((ok) => {
   r.on('error', () => ok(false)); r.on('timeout', () => { r.destroy(); ok(false); });
 });
 
-// last-good 붙이기: 건강하고, 작업 폴더가 깨끗하고, 불변 파일이 기존 last-good 과 같을 때만
-function bless() {
+// last-good 붙이기: 건강하고, 작업 폴더가 깨끗하고, 불변 파일이 기존 last-good 과 같고,
+// 감시자가 직접 돌린 관문(문법 검사·selftest)을 통과한 커밋에만 (8편 마무리: "점검을 통과한 버전에만").
+// 관문은 비서가 못 고치는 guard.js 로 여기서 다시 돌린다 — server.js(비서가 고칠 수 있는 파일)가 "통과했다"고 하는 말은 믿지 않는다. 몇 분 걸린다
+let blessing = false;
+async function bless() {
+  if (blessing) return;
   if (!guard.isRepo(ROOT)) return log('git 저장소가 아니어서 last-good 을 붙이지 않았어요.');
   if (guard.dirty(ROOT)) return log('작업 폴더에 커밋하지 않은 변경이 있어서 last-good 을 올리지 않았어요. (커밋한 뒤 서버를 다시 켜면 올라가요)');
   const core = guard.coreChanged(ROOT);
   if (core.length) return log(`불변 파일(${core.join(', ')})이 마지막 정상 버전과 달라서 last-good 을 자동으로 올리지 않았어요. 사람이 확인한 뒤 직접 git tag -f last-good 해 주세요.`);
   const now = guard.head(ROOT), cur = guard.git(ROOT, 'rev-parse', '-q', '--verify', 'refs/tags/last-good^{commit}').out.trim();
   if (cur === now) return;
-  if (guard.git(ROOT, 'tag', '-f', 'last-good', 'HEAD').code === 0) log(`last-good → ${now.slice(0, 7)} (30초 동안 건강했어요)`);
+  blessing = true;
+  try {
+    log(`last-good 후보 ${now.slice(0, 7)}: 관문(문법 검사·selftest)을 직접 돌려 봅니다. (몇 분 걸려요)`);
+    const g = await guard.runGate({ root: ROOT });
+    if (!g.ok) return log(`관문을 통과하지 못해서 last-good 을 올리지 않았어요 — ${g.reason}`);
+    if (stopping) return;
+    if (guard.head(ROOT) !== now || guard.dirty(ROOT)) return log('검사하는 동안 코드가 바뀌어서 last-good 을 올리지 않았어요.');
+    if (guard.git(ROOT, 'tag', '-f', 'last-good', now).code === 0) log(`last-good → ${now.slice(0, 7)} (30초 동안 건강 + 관문 통과)`);
+  } finally { blessing = false; }
 }
 
-// 비정상 종료 뒤 되돌리기: 변경은 rescue 브랜치에 보존하고 last-good 으로 돌아간다. → { branch } | null (되돌릴 게 없거나 못 함)
+// 비정상 종료 뒤 되돌리기: 변경은 rescue 브랜치에 보존하고 last-good 으로 돌아간다. 보존하지 못하면 되돌리지 않는다. → { branch } | null (되돌릴 게 없거나 못 함)
 function rollback(tail) {
   if (!guard.isRepo(ROOT)) return null;
   if (!guard.hasTag(ROOT, 'last-good')) { log('last-good 이 아직 없어서 되돌릴 곳이 없어요.'); return null; }
-  const lg = guard.git(ROOT, 'rev-parse', 'last-good^{commit}').out.trim(), isDirty = guard.dirty(ROOT);
-  if (!isDirty && guard.head(ROOT) === lg) return null; // 이미 마지막 정상 버전이다: 코드 문제가 아닐 수 있다 (포트·데이터·환경)
-  const d = new Date(), p2 = (n) => String(n).padStart(2, '0'), stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-  if (isDirty && !guard.commitAll(ROOT, `자동 보존: 서버가 비정상 종료되기 직전의 변경 (${stamp})`, 'Sancho 감시자')) { log('변경을 보존(커밋)하지 못해서 되돌리지 않았어요. (지우지 않으려고)'); return null; }
-  const branch = `rescue/${stamp}`;
-  if (guard.git(ROOT, 'branch', branch, 'HEAD').code !== 0) { log('보존 브랜치를 만들지 못해서 되돌리지 않았어요.'); return null; }
+  const lg = guard.git(ROOT, 'rev-parse', 'last-good^{commit}').out.trim();
+  if (!guard.dirty(ROOT) && guard.head(ROOT) === lg) return null; // 이미 마지막 정상 버전이다: 코드 문제가 아닐 수 있다 (포트·데이터·환경)
+  const branch = guard.preserve(ROOT, '', `자동 보존: 서버가 비정상 종료되기 직전의 코드·변경 (${guard.stampNow()})`, 'Sancho 감시자');
+  if (!branch) { log('변경을 보존하지 못해서 되돌리지 않았어요. (지우지 않으려고)'); return null; }
   if (guard.git(ROOT, 'reset', '--hard', 'last-good').code !== 0) { log('last-good 으로 되돌리지 못했어요.'); return null; }
   log(`last-good(${lg.slice(0, 7)}) 으로 되돌렸어요. 되돌리기 전의 코드·변경은 "${branch}" 브랜치에 보존했어요.`);
   try { fs.writeFileSync(path.join(DATA, '.rollback.json'), JSON.stringify({ at: new Date().toISOString(), branch, error: tail })); } catch { /* 알림만 못 남긴다 */ }

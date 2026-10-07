@@ -945,7 +945,7 @@
       const r = await api('/api/selfmod/log'), list = r.ok ? await r.json() : null;
       if (!Array.isArray(list)) { el.textContent = '기록을 불러오지 못했어요.'; return; }
       el.innerHTML = list.length ? `<div class="utable sm"><table><thead><tr><th>시각</th><th>요청</th><th>결과</th><th>커밋</th></tr></thead><tbody>${list.map((x) =>
-        `<tr><td>${esc(new Date(x.at).toLocaleString('ko-KR'))}</td><td>${esc(x.request || '')}<small>${esc((x.files || []).slice(0, 6).join(', '))}</small></td><td class="${x.commit ? '' : 'bad'}">${esc(x.result || '')}${x.reason ? `<small>${esc(x.reason)}</small>` : ''}</td><td>${x.commit ? `<code>${esc(x.commit)}</code>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
+        `<tr><td>${esc(new Date(x.at).toLocaleString('ko-KR'))}</td><td>${esc(x.request || '')}<small>${esc((x.files || []).slice(0, 6).join(', '))}</small></td><td class="${x.commit ? '' : 'bad'}">${esc(x.result || '')}${x.reason ? `<small>${esc(x.reason)}</small>` : ''}${x.kept ? `<small>보존: ${esc(x.kept)}</small>` : ''}</td><td>${x.commit ? `<code>${esc(x.commit)}</code>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
         : '<p class="sub">아직 기록이 없어요. 권한에서 "자기 수정"을 켜고 채팅으로 앱 고치기를 부탁하면 여기에 남아요.</p>';
     } catch (e) { if (e.message !== 'login') el.textContent = '기록을 불러오지 못했어요.'; }
   }

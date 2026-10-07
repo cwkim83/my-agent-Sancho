@@ -3167,6 +3167,37 @@ async function runEp8() {
   const lk = guard.lock.take('가짜');
   check('한 번에 하나만: 잠금을 잡으면 또 못 잡고, 누가 잡았는지 알려 주고, 풀면 다시 잡힘', lk && !guard.lock.take('다른') && guard.lock.who() === '가짜' && (guard.lock.free(), guard.lock.take('다시')) && (guard.lock.free(), true));
 
+  // 8편 마무리에서 조인 것: 표기를 바꿔도 같은 파일이면 보호 · 어느 폴더에 있든 보호하는 이름 · git 훅 무시 · 버리기 전 보존 · 프로그램 사이 관문 잠금
+  check('보호 판정(마무리): 경로를 다르게 적어도 같은 파일이면 보호 — public/../start.bat · ./START.BAT.(윈도우가 무시하는 끝 점) · public//..//guard.js · \\ 로 쓴 test\\x.js · 앱 폴더 밖(../) · 끝이 / 인 하위 저장소',
+    ['public/../start.bat', './START.BAT.', 'public//..//guard.js', 'test\\x.js', '../x.js', 'vendor/'].every(guard.isProtected));
+  check('보호 판정(마무리): 어느 폴더에 있든 .git·.gitignore·.gitattributes·.gitmodules·CLAUDE.md·CLAUDE.local.md·.claude·.mcp.json 은 보호 (하위 .gitignore 로 파일을 git 에서 숨기거나 지침을 심는 길) — 비슷한 이름은 아님',
+    ['public/m/.gitignore', 'sub/.git/config', 'a/b/.gitattributes', 'x/.gitmodules', 'public/CLAUDE.md', 'public/claude.local.md', 'a/.claude/settings.json', 'a/.mcp.json'].every(guard.isProtected)
+    && !['public/gitignore.txt', 'public/m/claude-note.js', 'public/index.html'].some(guard.isProtected));
+  check('불변 층(마무리): 그 이름들은 어느 폴더에 있든 Edit·Write 거부 규칙이 붙음 (**/이름 · **/이름/**)', guard.ANYWHERE.every((n) => [`Edit(${AX}/**/${n})`, `Write(${AX}/**/${n})`, `Edit(${AX}/**/${n}/**)`].every((r) => deny.includes(r))));
+  const hk = mkApp(); cleanup.push(hk);
+  wr(hk, '.git/hooks/pre-commit', '#!/bin/sh\necho ran > hook-ran.txt\nexit 1\n'); try { fs.chmodSync(path.join(hk, '.git', 'hooks', 'pre-commit'), 0o755); } catch { /* 윈도우는 필요 없음 */ }
+  wr(hk, 'public/index.html', '훅 시험\n');
+  let plainBlocked = false; try { gitIn(hk, 'commit', '-qam', '보통 git'); } catch { plainBlocked = true; }
+  const hookRan = fs.existsSync(path.join(hk, 'hook-ran.txt')); fs.rmSync(path.join(hk, 'hook-ran.txt'), { force: true });
+  const shaH = guard.commitAll(hk, '자기 수정: 훅 시험');
+  check('git 훅(마무리): 저장소에 심어 둔 pre-commit 훅은 보통 git 에서는 돌지만(여기서는 커밋을 막음), 서버·감시자가 하는 커밋에서는 돌지 않음', plainBlocked && hookRan && !!shaH && !fs.existsSync(path.join(hk, 'hook-ran.txt')));
+  const pr = mkApp(); cleanup.push(pr); const prHead = gitIn(pr, 'rev-parse', 'HEAD');
+  wr(pr, 'public/index.html', '보존 시험\n'); wr(pr, 'public/new.txt', '새 파일\n');
+  const b1 = guard.preserve(pr, 'x-', '보존 시험', 'Sancho 시험'), b2 = guard.preserve(pr, 'x-', '보존 시험', 'Sancho 시험');
+  check('보존(마무리): 지금 작업 폴더(고친 파일·새 파일)를 rescue/<이름><시각> 브랜치에 커밋으로 남기고, 지금 HEAD·작업 폴더는 그대로 둠 · 같은 초에 또 하면 다른 이름',
+    /^rescue\/x-\d{8}-\d{6}/.test(b1 || '') && !!b2 && b2 !== b1 && gitIn(pr, 'rev-parse', 'HEAD') === prHead && guard.dirty(pr)
+    && lf(gitIn(pr, 'show', `${b1}:public/new.txt`)) === '새 파일' && gitIn(pr, 'rev-parse', `${b1}^`) === prHead && gitIn(pr, 'log', '-1', '--format=%an|%s', b1) === 'Sancho 시험|보존 시험');
+  guard.revert(pr); const b3 = guard.preserve(pr, 'y-', 'x', 'x');
+  check('보존(마무리): 깨끗한 폴더면 지금 HEAD 를 그대로 가리키는 브랜치를 남김', !!b3 && gitIn(pr, 'rev-parse', b3) === prHead);
+  const lkApp = mkApp(); cleanup.push(lkApp);
+  const holderP = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+  fs.writeFileSync(guard.gateLockFile(lkApp), String(holderP.pid));
+  const gBusy = await guard.runGate({ root: lkApp, waitMs: 800 });
+  holderP.kill(); await exitOf(holderP, 5000);
+  const gFree = await guard.runGate({ root: lkApp, waitMs: 800 });
+  check('관문 잠금(마무리): 같은 앱 폴더의 관문을 다른 프로그램(살아 있는 프로세스)이 잡고 있으면 기다리다 step=busy, 그 프로그램이 끝나 잠금만 남았으면 넘겨받아 검사하고 끝나면 잠금을 치움',
+    gBusy.step === 'busy' && gFree.ok === true && !fs.existsSync(guard.gateLockFile(lkApp)));
+
   // ③ 서버: /health · /api/restart (관문) — 임시 앱 폴더를 SANCHO_APP_ROOT 로 건네고 감시자 아래에서 켠 것처럼(SANCHO_SUPERVISED=1)
   const dA = tmp('sancho-ep8-'), app2 = mkApp(), BA = 'http://127.0.0.1:8798', J = { 'Content-Type': 'application/json' }; cleanup.push(dA, app2);
   const fake = path.join(__dirname, 'test', 'fake-claude.js'), envA = { ...process.env, SANCHO_BRAIN_SCRIPT: fake, SANCHO_SUPERVISED: '1', SANCHO_APP_ROOT: app2 };
@@ -3235,9 +3266,12 @@ async function runEp8() {
   check('자기 수정 기록: 시각·요청·결과·커밋·바뀐 파일·누가가 data/selfmod-log.json 에 남음', !!log1 && log1.result === '통과·커밋·재시작' && log1.commit === gitIn(app2, 'rev-parse', '--short', 'HEAD') && log1.request.startsWith('/selfmod edit') && same(log1.files, ['public/index.html']) && !!log1.at && log1.user === 'eight');
 
   s = startServer(8798, dA, envA); await s.ready; const head1 = gitIn(app2, 'rev-parse', 'HEAD');
-  const bk = await say('/selfmod break server.js');
+  const bk = await say('/selfmod break server.js'), rec1 = logOf()[0], kept1 = rec1.kept || '';
   check('자기 수정: 문법을 깨뜨리면 되돌리고(파일 원래대로·폴더 깨끗·새 커밋 없음) 이유를 채팅에 보여 줌 — 서버는 안 꺼지고 재시작 신호도 없음',
     bk.text.includes('되돌렸어요') && bk.text.includes('문법 오류') && !guard.dirty(app2) && lf(fs.readFileSync(path.join(app2, 'server.js'), 'utf8')) === 'console.log("ok");\n' && gitIn(app2, 'rev-parse', 'HEAD') === head1 && s.exitCode === null && !bk.raw.includes('event: restart'));
+  check('자기 수정(마무리): 되돌리기 전에 비서가 시도한 것을 rescue/selfmod-<시각> 브랜치에 남김 — 지금 브랜치·HEAD 는 그대로, 기록·채팅에 그 브랜치 이름이 나오고, 이유에 윈도우 줄바꿈(\\r)이 섞이지 않음',
+    /^rescue\/selfmod-\d{8}-\d{6}/.test(kept1) && gitIn(app2, 'show', `${kept1}:server.js`).includes('}}} 문법 오류') && gitIn(app2, 'rev-parse', `${kept1}^`) === head1
+    && gitIn(app2, 'rev-parse', '--abbrev-ref', 'HEAD') !== kept1 && bk.text.includes(kept1) && !rec1.reason.includes('\r'));
   const bs = await say('/selfmod edit start.bat 몰래'), bn = await say('/selfmod edit test/new.js 몰래');
   check('자기 수정: 불변 파일(start.bat)·불변 폴더(test/)를 건드리면 검사도 하기 전에 거부하고 되돌림 (권한 규칙을 어겨도 서버가 한 번 더 잡음)', bs.text.includes('고칠 수 없는 파일') && bn.text.includes('고칠 수 없는 파일')
     && !fs.existsSync(path.join(app2, 'test', 'new.js')) && lf(fs.readFileSync(path.join(app2, 'start.bat'), 'utf8')) === '@echo off\n' && !guard.dirty(app2) && logOf()[0].result === '거부');
@@ -3266,6 +3300,7 @@ async function runEp8() {
   const copyTree = (to) => { // 작업 폴더의 코드를 임시 폴더로 복사해 git 저장소로 (data·.git·docs·점검 파일은 뺌)
     const skip = new Set(['data', '.git', '.old', 'node_modules', 'docs', 'selftest.js']);
     (function cp(from, dest) { fs.mkdirSync(dest, { recursive: true }); for (const e of fs.readdirSync(from, { withFileTypes: true })) { if (from === __dirname && skip.has(e.name)) continue; const f = path.join(from, e.name), t = path.join(dest, e.name); e.isDirectory() ? cp(f, t) : fs.copyFileSync(f, t); } })(__dirname, to);
+    wr(to, 'selftest.js', "console.log('통과  가짜 점검 (감시자 시험용 — 진짜 selftest 를 또 돌리면 끝없이 이어진다)');\n"); // 감시자는 last-good 전에 관문(selftest 포함)을 직접 돌린다
     initRepo(to);
   };
   const mkStub = (serverJs, tag = true) => { const d = tmp('sancho-stub-'); for (const f of ['supervisor.js', 'guard.js']) fs.copyFileSync(path.join(__dirname, f), path.join(d, f)); wr(d, 'server.js', serverJs); initRepo(d); if (tag) gitIn(d, 'tag', 'last-good'); cleanup.push(d); return d; };
@@ -3279,12 +3314,21 @@ async function runEp8() {
 
   const t1 = tmp('sancho-sup-'), d1 = tmpc('sancho-supd-'); cleanup.push(t1, d1); copyTree(t1);
   let p = supRun(t1, 8800, d1);
-  const tagged = await until(() => /last-good →/.test(p.log), 45000);
-  check('감시자: 서버를 켜고 /health 가 계속 통과하면(점검에서는 2초) 그 커밋에 git tag last-good 을 붙임 (진짜 server.js 로)', tagged && gitIn(t1, 'rev-parse', 'last-good^{commit}') === gitIn(t1, 'rev-parse', 'HEAD'));
+  const tagged = await until(() => /last-good →/.test(p.log), 60000);
+  check('감시자: 서버가 계속 건강하고(점검에서는 2초) 감시자가 직접 돌린 관문(문법 검사·selftest)도 통과해야 그 커밋에 git tag last-good 을 붙임 (진짜 server.js 로)',
+    tagged && p.log.includes('관문(문법 검사·selftest)을 직접 돌려') && p.log.includes('관문 통과') && gitIn(t1, 'rev-parse', 'last-good^{commit}') === gitIn(t1, 'rev-parse', 'HEAD'));
   const H1 = { ...J, Cookie: cookieOf(await fetch('http://127.0.0.1:8800/api/auth/setup', { method: 'POST', headers: J, body: JSON.stringify({ name: '열', username: 'ten', password: PW }) })) };
-  const rs = await (await fetch('http://127.0.0.1:8800/api/restart', { method: 'POST', headers: H1 })).json();
-  check('감시자: 감시자가 켠 서버는 "감시자 아래"임을 알아서 재시작 관문이 열려 있음 (unsupervised 가 아니라 검사 단계까지 감 — 이 복사본에는 selftest.js 가 없어 거기서 거부됨)', rs.step === 'selftest' && p.exitCode === null);
+  const pid1 = (await (await fetch('http://127.0.0.1:8800/health')).json()).pid;
+  const rs = await fetch('http://127.0.0.1:8800/api/restart', { method: 'POST', headers: H1 }), rsj = await rs.json();
+  const reborn = await until(async () => { try { return (await (await fetch('http://127.0.0.1:8800/health')).json()).pid !== pid1; } catch { return false; } }, 30000);
+  check('감시자: 감시자가 켠 서버는 재시작 관문이 열려 있고, 통과하면 종료 코드 10 으로 끝나 감시자가 바로 다시 켬 (진짜 server.js 로 끝까지)', rs.status === 200 && rsj.restarting === true && reborn && p.log.includes('재시작을 요청했어요') && p.exitCode === null);
   await supStop(p);
+  const lg1 = gitIn(t1, 'rev-parse', 'last-good^{commit}');
+  wr(t1, 'public/m/broken.js', 'var = ;\n'); gitIn(t1, 'add', '-A'); gitIn(t1, 'commit', '-qm', '화면 스크립트 문법 오류'); p = supRun(t1, 8800, tmpc('sancho-supd-'));
+  const refused = await until(() => p.log.includes('관문을 통과하지 못해서 last-good 을 올리지 않았어요'), 60000);
+  check('감시자: 서버가 건강해도 감시자가 돌린 관문(여기서는 화면 스크립트 문법)을 통과하지 못한 커밋에는 last-good 을 붙이지 않음 — 서버(비서가 고칠 수 있는 파일)의 말이 아니라 직접 돌려 본 결과로',
+    refused && p.log.includes('broken.js') && gitIn(t1, 'rev-parse', 'last-good^{commit}') === lg1 && p.exitCode === null);
+  await supStop(p); gitIn(t1, 'reset', '-q', '--hard', lg1);
 
   gitIn(t1, 'tag', '-d', 'last-good'); wr(t1, 'junk.txt', '커밋 안 한 파일\n'); p = supRun(t1, 8800, tmpc('sancho-supd-'));
   const warned = await until(() => p.log.includes('커밋하지 않은 변경'), 30000);
