@@ -51,6 +51,7 @@ async function run() {
   const login = await post('/api/auth/login', { username: 'TESTER', password: PW });
   check('올바른 비밀번호로 로그인(아이디 대소문자 무시)', login.status === 200);
   const ck = cookieOf(login);
+  if (process.env.SELFTEST_ONLY === 'wfserver') { if (process.env.WF_WITH_TG) await runTelegram(ck); const people = await runUsers(ck); await runWorkflow(ck, people); return; }
   check('로그인 후 /api/me 가능', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 200);
   check('로그인 후 / 는 메인 화면', (await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text()).includes('id="who"'));
   const mainHtml = await (await fetch(BASE + '/', { headers: { Cookie: ck } })).text();
@@ -179,6 +180,9 @@ async function run() {
   await runKb(ck, people);
   runKnowledgeCalc();
   await runKnowledge(ck);
+  runWorkflowCalc();
+  await runWorkflowEngine();
+  await runWorkflow(ck, people);
   await runOkr(ck);
   await runMandays(ck, people);
   await post('/api/auth/logout', {}, ck);
@@ -1973,7 +1977,7 @@ async function runUsers(ck) {
   // 화면
   const html = await (await fetch(BASE + '/', { headers: { Cookie: CM } })).text();
   check('화면: 설정에 일반·사용자 탭과 계정 추가 폼, 닫을 수 없는 비밀번호 바꾸기 창이 있고, 설정 메뉴는 관리자 전용(ADMIN_ONLY)',
-    ['#설정/사용자', 'id="pwModal"', "ADMIN_ONLY = ['설정']", 'showUsers', '/api/auth/password', '임시 비밀번호', '새 사용자 추가', 'id="uRole"'].every((w) => html.includes(w)) && !html.includes('id="pwModal" hidden></div>'));
+    ['#설정/사용자', 'id="pwModal"', "ADMIN_ONLY = ['설정', '워크플로']", 'showUsers', '/api/auth/password', '임시 비밀번호', '새 사용자 추가', 'id="uRole"'].every((w) => html.includes(w)) && !html.includes('id="pwModal" hidden></div>'));
   return { CM, CS, CC }; // 메신저 점검이 이어서 쓴다 (김민준·이서연·chief 의 로그인)
 }
 
@@ -2635,6 +2639,291 @@ async function runKnowledge(ck) {
   check('화면이 읽는 주소의 모양: 위키·스킬·기억·예약·결재는 { items: [...] } · 대화·사람은 목록 — 지식 지도·뇌 그래프의 자료 그대로', [wk, sk, mem, sc, ap].every((j) => Array.isArray(j.items)) && Array.isArray(ch) && Array.isArray(pe) && (pe.length === 0 || ('name' in pe[0] && 'dept' in pe[0]))
     && (ch.length === 0 || ('id' in ch[0] && 'title' in ch[0] && 'updatedAt' in ch[0])));
   for (const n of ['projects', 'tasks', 'meetings']) check(`db 목록(/api/db/${n})도 목록으로 읽힘`, Array.isArray(await J(`/api/db/${n}`)));
+}
+
+// 워크플로 (10편 셋째 단계) ① 노드 규칙·검사·값 넣기·비교 — 서버 없이 (SELFTEST_ONLY=workflow 로 ①②만 빨리)
+function runWorkflowCalc() {
+  const wf = require('./public/m/workflow-calc.js');
+  const n = (id, type, name, params) => ({ id, type, name, params: params || {} });
+  const E = (nodes, edges, extra = {}) => wf.normalize({ name: 'x', nodes, edges, ...extra }).errors.join(' | ');
+  const S = [n('a', 'manual', '시작'), n('b', 'set', '값')];
+  const good = wf.normalize({ name: '  시험  ', nodes: [n('a', 'manual', '시작'), n('b', 'set', '값', { fields: '{"x":"1"}' }), n('c', 'if', '확인', { left: '{{steps.값.x}}', op: 'eq', right: '1' }), n('d', 'notice', '알림', { text: '{{steps.값.x}}' })], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'd', branch: 'true' }] });
+  check('워크플로 검사: 정상이면 오류 없음 · 이름 앞뒤 공백 제거 · 좌표가 없으면 왼쪽→오른쪽으로 저절로 놓임 · 없는 설정 칸은 노드 종류의 기본값', good.errors.length === 0 && good.wf.name === '시험' && good.wf.nodes.every((x) => Number.isFinite(x.x) && Number.isFinite(x.y))
+    && good.wf.nodes[0].x < good.wf.nodes[1].x && good.wf.nodes[1].x < good.wf.nodes[2].x && good.wf.nodes[3].params.via === 'bell' && good.wf.nodes[3].params.to === 'me' && good.wf.enabled === false);
+  check('저장을 막는 문제 ①: 모르는 노드 종류 · 겹치는 id · 겹치는 이름(대·소문자 무시) · 이름에 { } . 같은 기호 · 시작 노드 없음', /몰라요/.test(E([n('a', 'nope', 'x')], [])) && /겹치/.test(E([n('a', 'manual', '시작'), n('a', 'set', '값')], []))
+    && /겹쳐요/.test(E([n('a', 'manual', 'ABC'), n('b', 'set', 'abc')], [])) && /쓸 수 있어요/.test(E([n('a', 'manual', '시작'), n('b', 'set', '값.x')], [])) && /쓸 수 있어요/.test(E([n('a', 'manual', '시작'), n('b', 'set', '{{x}}')], [])) && /시작 노드/.test(E([n('b', 'set', '값')], [])));
+  check('저장을 막는 문제 ②: 없는 노드로 가는 선 · 시작 노드로 들어오는 선 · 자기 자신으로 가는 선 · 조건 나누기 선에 참/거짓이 없음 · 빙 도는 선', /찾지 못했어요/.test(E(S, [{ from: 'a', to: 'zz' }])) && /들어오는 선/.test(E(S, [{ from: 'b', to: 'a' }])) && /자기 자신/.test(E(S, [{ from: 'b', to: 'b' }]))
+    && /참/.test(E([n('a', 'manual', '시작'), n('c', 'if', '확인'), n('d', 'set', '값')], [{ from: 'a', to: 'c' }, { from: 'c', to: 'd' }])) && /빙 돌아/.test(E([n('a', 'manual', '시작'), n('b', 'set', '값'), n('c', 'set', '값2')], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'b' }])));
+  check('개수 한도(노드 40·선 80)와 모양이 깨진 입력(목록이 아님·null·숫자)에도 죽지 않고 이유를 돌려줌', /40개/.test(E(Array.from({ length: 41 }, (_, i) => n(`n${i}`, i ? 'set' : 'manual', `노드${i}`)), [])) && /80개/.test(E(S, Array.from({ length: 81 }, () => ({ from: 'a', to: 'b' }))))
+    && wf.normalize(null).errors.length === 1 && wf.normalize({ nodes: 5, edges: 'x' }).errors.length >= 2 && wf.normalize({ nodes: [null, 7, { id: 1 }], edges: [null] }).errors.length >= 3);
+  const w2 = wf.normalize({ name: 'x', nodes: [n('a', 'every', '시계', { minutes: 99999 }), n('b', 'daily', '매일', { time: '25:99' }), n('c', 'read', '읽기', { source: 'approvals', limit: -5, op: '뭐' }), n('d', 'write', '쓰기', { collection: 'approvals', mode: 'delete', fields: 'x'.repeat(9000) }), n('e', 'wait', '쉼', { seconds: 9999 }), n('f', 'http', '웹', { method: 'DELETE' })], edges: [] }).wf.nodes;
+  check('설정 값은 노드 규칙대로 고쳐짐: 분 1~1440 · 틀린 시각은 기본값 · 읽을 수 없는 자료(approvals)는 기본(WBS 지연) · 쓸 수 없는 자료(approvals)는 기본(tasks) · 방식·조건은 목록 안에서만 · 글은 4000자까지 · 기다리기 120초까지 · 웹 호출 방식은 GET/POST 만',
+    w2[0].params.minutes === 1440 && w2[1].params.time === '08:00' && w2[2].params.source === 'wbs-delayed' && w2[2].params.limit === 1 && w2[2].params.op === '' && w2[3].params.collection === 'tasks' && w2[3].params.mode === 'add' && w2[3].params.fields.length === 4000 && w2[4].params.seconds === 120 && w2[5].params.method === 'GET');
+  const warns = wf.normalize({ name: 'x', nodes: [n('a', 'manual', '시작'), n('b', 'set', '값', { fields: '{"x":"{{steps.없는이름.y}}"}' }), n('c', 'set', '외톨이')], edges: [{ from: 'a', to: 'b' }] }).warns.join(' | ');
+  check('알려 주기만 하는 경고: 없는 노드 이름을 부르는 {{steps.…}} · 시작에서 이어지지 않은 노드', /없는이름/.test(warns) && /외톨이/.test(warns) && wf.normalize({ name: 'x', nodes: [n('a', 'manual', '시작'), n('b', 'set', '값')], edges: [{ from: 'a', to: 'b' }] }).warns.length === 0);
+
+  // ---- 값 넣기 ({{…}}) · 비교
+  const scope = { steps: { '지연 작업': { count: 3, items: [{ title: 'a' }, { title: 'b' }], text: '- a\n- b' }, 글: 'hello', 숫자: 7 }, names: ['지연 작업', '글', '숫자', '건너뜀'], today: '2026-10-07', now: '2026-10-07 08:00', weekday: '수', workflow: 'W', vars: { owner: '김' } };
+  check('값 넣기: {{today}}·{{now}}·{{weekday}}·{{workflow}} · 이름에 공백이 있어도 {{steps.지연 작업}} · 점으로 안쪽 값({{steps.지연 작업.count}}·.items.1.title) · {{ 공백 }} 허용 · 담당자별 알림의 {{owner}}',
+    wf.render('{{today}} {{now}} {{ weekday }} {{workflow}} {{steps.글}} {{steps.숫자}} {{steps.지연 작업.count}} {{steps.지연 작업.items.1.title}} {{owner}}', scope) === '2026-10-07 2026-10-07 08:00 수 W hello 7 3 b 김');
+  check('결과가 { text } 를 가지면 {{steps.이름}} 은 그 글(읽기 좋게) · 아직 실행 안 된(건너뛴) 노드나 없는 칸은 빈 글 · 객체 안의 constructor·__proto__ 같은 이름은 안 열림', wf.render('{{steps.지연 작업}}', scope) === '- a\n- b'
+    && wf.render('[{{steps.건너뜀}}][{{steps.글.없음}}][{{steps.지연 작업.constructor}}][{{steps.지연 작업.__proto__}}][{{steps.지연 작업.items.9}}]', scope) === '[][][][][]');
+  let e1 = '', e2 = ''; try { wf.render('{{steps.없는이름}}', scope); } catch (e) { e1 = e.message; } try { wf.render('{{foo}}', scope); } catch (e) { e2 = e.message; }
+  check('없는 노드 이름·모르는 값({{foo}})은 조용히 비우지 않고 쉬운 한국어로 알려 줌 (코드는 실행하지 않음 — 이름 찾기만)', /이름을 찾지 못했어요/.test(e1) && /알 수 없는 값/.test(e2) && (() => { try { wf.render('{{constructor}}', { steps: {}, names: [], vars: {} }); return false; } catch { return true; } })() && (() => { try { wf.render('{{process.exit}}', { steps: {}, names: [], vars: {} }); return false; } catch { return true; } })());
+  const c = wf.compare;
+  check('비교: 숫자는 숫자끼리("10" > "9") · 3 = 3.0 · 날짜(2026-10-07) 글은 앞뒤로 · 포함/포함 안 함 · 비어 있다/아니다 · 모르는 비교는 오류', c('gt', '10', '9') && c('gt', 'b10', 'b9') === false && c('eq', '3', '3.0') && c('lt', '2026-10-07', '2026-10-08') && c('ge', '5', '5') && c('contains', '지연 3건', '3') && c('notcontains', 'abc', 'z') && c('empty', '  ', '') && c('notempty', 'x', '') && c('ne', 'a', 'b')
+    && (() => { try { c('뭐', 'a', 'b'); return false; } catch { return true; } })());
+  const types = wf.TYPE_ORDER;
+  check('노드는 정확히 12가지(수동 시작·매일 시각·N분마다·비서에게 시키기·데이터 읽기·데이터 쓰기·조건 나누기·웹 호출·알림·텔레그램·기다리기·값 만들기)이고 시작 노드는 셋, 조건 나누기만 참/거짓으로 갈라짐',
+    types.length === 12 && ['수동 시작', '매일 시각', 'N분마다', '비서에게 시키기', '데이터 읽기', '데이터 쓰기', '조건 나누기', '웹 호출', '알림', '텔레그램', '기다리기', '값 만들기'].every((l) => types.some((t) => wf.TYPES[t].label === l))
+    && types.filter((t) => wf.TYPES[t].trigger).length === 3 && types.filter((t) => wf.TYPES[t].branches).join() === 'if');
+  check('4편 시계가 읽는 시각 모양으로 바뀜(schedOf): 매일 시각 → {종류:daily,시각} · N분마다 → {종류:every,분} · 그 밖은 없음 — 그리고 scheduler.js 가 그 모양을 받아들임', JSON.stringify(wf.schedOf({ type: 'daily', params: { time: '08:00' } })) === '{"종류":"daily","시각":"08:00"}' && wf.schedOf({ type: 'every', params: { minutes: 30 } }).분 === 30
+    && wf.schedOf({ type: 'manual', params: {} }) === null && require('./scheduler.js').check({ id: 'x', 지시문: '-', 언제: wf.schedOf({ type: 'daily', params: { time: '08:00' } }) }) === null);
+}
+
+// ② 실행 엔진 (workflow.js) — 가짜 io 로 모든 길을
+async function runWorkflowEngine() {
+  const wf = require('./public/m/workflow-calc.js'), eng = require('./workflow.js');
+  const n = (id, type, name, params) => ({ id, type, name, params: params || {} });
+  const mk = (nodes, edges) => { const r = wf.normalize({ name: '시험', nodes, edges }); if (r.errors.length) throw new Error(r.errors.join(' / ')); r.wf.id = 'wtest0001'; return r.wf; };
+  const log = [];
+  const io = (o = {}) => ({ owner: 'boss', read: async (s) => (o.read ? o.read(s) : []), write: async (c, m, id, f) => { log.push(['write', c, m, id, f]); return { id: id || 'new1' }; }, ask: async (p) => ({ ok: true, text: `답:${p}` }), http: async (r) => (o.http ? o.http(r) : { status: 200, text: '{"n":5}' }),
+    telegram: async (t) => ({ ok: true }), bell: async (u, t, x) => log.push(['bell', u, t, x]), messenger: async (u, x) => log.push(['msg', u, x]), resolveUser: (nm) => ({ 김민준: 'minjun', 이서연: 'seoyeon' }[nm] || null), userExists: (u) => ['boss', 'minjun'].includes(u), sleep: async (ms) => log.push(['sleep', ms]), ...o.io });
+  const stat = (r) => r.steps.map((s) => s.status).join();
+  const step = (r, name) => r.steps.find((s) => s.name === name);
+  const snaps = [];
+  const r1 = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'set', '값', { fields: '{"인사":"안녕 {{today}}","줄":"가\\n나\\"다"}' }), n('c', 'set', '둘째', { fields: '{"합":"{{steps.값.인사}}!"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]), 'a', io(), { onUpdate: (r) => snaps.push(r.steps.map((s) => s.status).join()) });
+  check('엔진: 시작 → 앞 단계 결과를 {{steps.…}} 로 받아 다음 단계로 · 모두 ✅ · 단계마다 기록(대기 → 실행 중 → 성공)이 실시간으로 남음', r1.status === 'ok' && stat(r1) === 'ok,ok,ok' && step(r1, '둘째').out.includes('안녕 20') && snaps[0] === 'pending,pending,pending' && snaps.some((s) => s.startsWith('running')) && snaps.some((s) => s === 'ok,running,pending') && snaps.at(-1) === 'ok,ok,ok');
+  const rj = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'set', '값', { fields: '{"줄":"가\\n나\\"다"}' }), n('c', 'set', '둘째', { fields: '{"복사":"{{steps.값.줄}}"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]), 'a', io());
+  check('JSON 칸에 넣는 앞 단계 글에 줄바꿈·따옴표가 있어도 JSON 이 깨지지 않음(틀을 먼저 읽고 값마다 채움)', rj.status === 'ok' && step(rj, '둘째').out === '{"복사":"가\\n나\\"다"}');
+  const branchFlow = (left) => mk([n('a', 'manual', '시작'), n('b', 'if', '있나', { left, op: 'gt', right: '0' }), n('t', 'set', '참쪽', { fields: '{"v":"1"}' }), n('f', 'set', '거짓쪽', { fields: '{"v":"2"}' }), n('t2', 'set', '참뒤', { fields: '{"v":"{{steps.참쪽.v}}"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 't', branch: 'true' }, { from: 'b', to: 'f', branch: 'false' }, { from: 't', to: 't2' }]);
+  const rt = await eng.run(branchFlow('3'), 'a', io()), rf = await eng.run(branchFlow('0'), 'a', io());
+  check('조건 나누기: 참이면 참 선만 · 거짓이면 거짓 선만 — 안 가는 쪽(그 뒤 노드까지)은 "건너뜀"(이유가 적힘)이고 실행은 성공으로 끝남', stat(rt) === 'ok,ok,ok,skipped,ok' && stat(rf) === 'ok,ok,skipped,ok,skipped' && rt.status === 'ok' && rf.status === 'ok' && /조건이 달라서/.test(step(rt, '거짓쪽').out) && /앞 단계가 실행되지 않아서/.test(step(rf, '참뒤').out) && step(rt, '있나').out.startsWith('참 (3 > 0'));
+  const onlyTrue = mk([n('a', 'manual', '시작'), n('b', 'if', '있나', { left: '0', op: 'gt', right: '0' }), n('t', 'notice', '알림', { text: 'x' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 't', branch: 'true' }]), ro = await eng.run(onlyTrue, 'a', io());
+  check('"있으면 알리고, 없으면 그냥 끝": 거짓 쪽에 선이 없으면 참 쪽만 건너뛰고 성공으로 끝남(알림은 안 감)', stat(ro) === 'ok,ok,skipped' && ro.status === 'ok' && !log.some((l) => l[0] === 'bell' && l[3] === 'x'));
+  const bad = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks' }), n('c', 'http', '웹', { url: 'https://example.com' }), n('d', 'set', '뒤', { fields: '{"v":"1"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'd' }]), 'a', io({ read: async () => [], http: async () => ({ status: 503, text: '점검 중' }) }));
+  check('한 단계가 실패하면(웹 호출 503) 거기서 ❌ + 이유, 나머지는 "멈춰서 실행하지 않았어요"(건너뜀) · 실행은 실패 · 이미 한 단계는 그대로', stat(bad) === 'ok,ok,error,skipped' && bad.status === 'error' && /503/.test(step(bad, '웹').error) && /점검 중/.test(step(bad, '웹').error) && /멈춰서/.test(step(bad, '뒤').out));
+  const unk = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'set', '값', { fields: '{"v":"{{steps.오타.x}}"}' })], [{ from: 'a', to: 'b' }]), 'a', io());
+  check('{{steps.오타}} 처럼 없는 이름을 부르면 그 단계가 ❌ 로 멈추고 이유를 보여 줌', unk.status === 'error' && /이름을 찾지 못했어요/.test(step(unk, '값').error));
+  const join = await eng.run(mk([n('a', 'manual', '시작'), n('i', 'if', '조건', { left: '0', op: 'gt', right: '0' }), n('x', 'set', '길', { fields: '{"v":"1"}' }), n('j', 'set', '합류', { fields: '{"v":"끝"}' })], [{ from: 'a', to: 'i' }, { from: 'a', to: 'x' }, { from: 'i', to: 'j', branch: 'true' }, { from: 'x', to: 'j' }]), 'a', io());
+  check('합류(두 길이 한 노드로): 앞 길 중 하나라도 켜져 있으면 한 번 실행 — 둘 다 꺼졌을 때만 건너뜀', join.steps.find((s) => s.name === '합류').status === 'ok' && stat(join).split(',').filter((s) => s === 'ok').length === 4);
+  const rows = [{ title: 'a', status: '진행', due: '2026-10-01' }, { title: 'b', status: '완료', due: '2026-10-09' }, { title: 'c', status: '진행', due: '2026-10-05' }, { title: 'd', status: '진행', due: '2026-10-20' }];
+  const rd = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks', field: 'status', op: 'ne', value: '완료', limit: 2 }), n('c', 'read', '날짜', { source: 'tasks', field: 'due', op: 'lt', value: '2026-10-07' }), n('d', 'read', '미래', { source: 'tasks', field: 'due', op: 'gt', value: '{{today}}' })], [{ from: 'a', to: 'b' }, { from: 'a', to: 'c' }, { from: 'a', to: 'd' }]), 'a', io({ read: async () => [...rows, { title: '먼미래', status: '진행', due: '2999-01-01' }] }));
+  check('데이터 읽기: 칸·조건으로 거르고({{today}} 와 날짜 비교도) · 최대 개수만 가져오되 count 는 거른 전체 개수 · 결과는 한 줄씩 읽기 좋은 글 + (… N개 더) · 빈 결과는 "(없음)"', step(rd, '읽기').out.includes('- a') && step(rd, '읽기').out.includes('(… 2개 더)') && !step(rd, '읽기').out.includes('- b') && step(rd, '날짜').out.split('\n').length === 2 && step(rd, '미래').out.includes('먼미래') && !step(rd, '미래').out.includes('- a') && !JSON.stringify(rd).includes('undefined')
+    && (await eng.run(mk([n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks', field: 'title', op: 'eq', value: '없음' })], [{ from: 'a', to: 'b' }]), 'a', io({ read: async () => rows }))).steps[1].out === '(없음)');
+  log.length = 0;
+  const wr = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'write', '쓰기', { collection: 'tasks', mode: 'add', fields: '{"title":"점검 {{today}}","id":"가짜","status":"할 일","n":3,"ok":true}' }), n('c', 'write', '고침', { collection: 'tasks', mode: 'update', id: '{{steps.쓰기.id}}', fields: '{"status":"완료"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]), 'a', io());
+  check('데이터 쓰기: 새로 추가하면 id 는 서버가 정하고(글에 적은 "id" 칸은 버림) 칸 값은 글·숫자·참거짓 · 이어서 {{steps.쓰기.id}} 로 그 항목을 고침 — 지우기는 없음', wr.status === 'ok' && log[0][2] === 'add' && !('id' in log[0][4]) && log[0][4].title.startsWith('점검 20') && log[0][4].n === 3 && log[0][4].ok === true && log[1][2] === 'update' && log[1][3] === 'new1' && !wf.WRITABLE.some((w) => /delete/.test(w[0])));
+  const wbad = async (fields, id) => (await eng.run(mk([n('a', 'manual', '시작'), n('b', 'write', '쓰기', { collection: 'tasks', mode: id === undefined ? 'add' : 'update', id: id || '', fields })], [{ from: 'a', to: 'b' }]), 'a', io())).steps[1].error;
+  check('데이터 쓰기의 잘못된 칸은 ❌: JSON 이 아님 · 객체가 아님 · 안쪽 객체/목록 값 · 이상한 칸 이름 · 500자 넘는 값 · 빈 칸 · 고칠 id 비어 있음', /올바르지 않아요/.test(await wbad('{ 깨짐')) && /모양이어야/.test(await wbad('[1,2]')) && /글·숫자·참거짓/.test(await wbad('{"a":{"b":1}}')) && /쓸 수 없어요/.test(await wbad('{"__proto__ x":1}'))
+    && /500자/.test(await wbad(JSON.stringify({ a: 'x'.repeat(501) }))) && /비어 있어요/.test(await wbad('{}')) && /id 가 비어/.test(await wbad('{"a":1}', '')));
+  log.length = 0;
+  const owners = [{ title: '용접', owner: '김민준' }, { title: '도장', owner: '김민준' }, { title: '검사', owner: '외부인' }, { title: '청소', owner: '' }];
+  const nf = (via, to, extra = {}) => mk([n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks' }), n('c', 'notice', '알리기', { via, to, list: '읽기', title: '지연', text: '{{owner}} 님 {{count}}건\n{{lines}}', ...extra })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]);
+  const ro1 = await eng.run(nf('messenger', 'owners'), 'a', io({ read: async () => owners }));
+  const msg = log.find((l) => l[0] === 'msg'), fallback = log.find((l) => l[0] === 'bell');
+  check('담당자별 알림(메신저): 담당자마다 한 번씩(그 사람 몫 {{count}}·{{lines}}) · 사용자 목록에 있는 사람(김민준)만 메신저로 · 목록에 없는 사람(외부인)·담당 없음 몫은 만든 관리자에게 🔔 한 건으로 대신 · 요약에 숫자와 이름이 적힘',
+    ro1.status === 'ok' && log.filter((l) => l[0] === 'msg').length === 1 && msg[1] === 'minjun' && msg[2].includes('김민준 님 2건') && msg[2].includes('- 용접') && msg[2].includes('- 도장') && log.filter((l) => l[0] === 'bell').length === 1 && fallback[1] === 'boss' && fallback[3].includes('외부인') && fallback[3].includes('(담당 없음)')
+    && step(ro1, '알리기').out.includes('담당자 3명 → 메신저 1명') && step(ro1, '알리기').out.includes('2명(외부인, (담당 없음))'));
+  log.length = 0;
+  const ro2 = await eng.run(nf('messenger', 'me', { list: '', text: '지연 안내' }), 'a', io({ read: async () => owners })), ro3 = await eng.run(nf('bell', 'user', { user: 'minjun', list: '', text: '지연 안내' }), 'a', io({ read: async () => owners }));
+  check('나에게 보내는 메신저는 "나와의 1:1"이 없어서 🔔 로(요약에 알림) · 특정 사람(아이디) 🔔 · 없는 아이디는 ❌', ro2.status === 'ok' && log[0][0] === 'bell' && log[0][1] === 'boss' && /메신저 대신/.test(step(ro2, '알리기').out) && ro3.status === 'ok' && log[1][0] === 'bell' && log[1][1] === 'minjun'
+    && (await eng.run(nf('bell', 'user', { user: 'nobody', list: '', text: '지연 안내' }), 'a', io({ read: async () => owners }))).steps[2].error.includes('찾지 못했어요'));
+  check('담당자별인데 읽을 앞 단계를 안 골랐거나 목록이 없는 단계(값 만들기)를 골랐으면 ❌ · 담당자가 20명을 넘으면 ❌(한 번에 20명까지) · 목록이 비면 보낼 게 없다며 성공',
+    /앞 단계를 골라/.test((await eng.run(nf('bell', 'owners', { list: '' }), 'a', io({ read: async () => owners }))).steps[2].error)
+    && /목록\(items\)이 없어요/.test((await eng.run(mk([n('a', 'manual', '시작'), n('s', 'set', '값', { fields: '{"v":"1"}' }), n('c', 'notice', '알리기', { to: 'owners', list: '값', text: 'x' })], [{ from: 'a', to: 's' }, { from: 's', to: 'c' }]), 'a', io())).steps[2].error)
+    && /20명/.test((await eng.run(nf('bell', 'owners'), 'a', io({ read: async () => Array.from({ length: 21 }, (_, i) => ({ title: 't', owner: `사람${i}` })) }))).steps[2].error) && /알릴 담당자가 없어요/.test((await eng.run(nf('bell', 'owners'), 'a', io({ read: async () => [] }))).steps[2].out));
+  const hp = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'http', '웹', { method: 'POST', url: 'https://x.example/{{today}}', body: '{"d":"{{today}}"}' }), n('c', 'set', '값', { fields: '{"n":"{{steps.웹.json.n}}","s":"{{steps.웹.status}}"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]), 'a', io({ http: async (r) => { log.push(['http', r]); return { status: 201, text: '{"n":5}' }; } }));
+  check('웹 호출: 주소·보낼 내용에도 {{today}} · POST 는 내용을 보냄 · 결과의 .status · JSON 이면 .json.칸 으로 안쪽 값(뒤 노드가 받음)', hp.status === 'ok' && log.at(-1)[1].method === 'POST' && log.at(-1)[1].url.includes('/20') && log.at(-1)[1].body.includes('"d":"20') && step(hp, '값').out.includes('"n":"5"') && step(hp, '값').out.includes('"s":"201"'));
+  log.length = 0; const sn = [];
+  await eng.run(mk([n('a', 'manual', '시작'), n('w', 'wait', '쉼', { seconds: 7 }), n('t', 'telegram', '텔레', { text: '안녕 {{today}}' }), n('k', 'ask', '묻기', { prompt: '요약 {{today}}' })], [{ from: 'a', to: 'w' }, { from: 'w', to: 't' }, { from: 't', to: 'k' }]), 'a', io({ io: { sleep: async (ms) => sn.push(ms), telegram: async (t) => { sn.push(t); return { ok: true }; } } })).then((r) => { check('기다리기는 정한 초(7초 = 7000ms)만큼 · 텔레그램은 {{today}} 를 채워 보냄 · 비서에게 시키기는 채운 말을 그대로 넘겨 답 글을 받음', r.status === 'ok' && sn[0] === 7000 && /^안녕 20/.test(sn[1]) && /^답:요약 20/.test(step(r, '묻기').out)); });
+  const tgFail = await eng.run(mk([n('a', 'manual', '시작'), n('t', 'telegram', '텔레', { text: 'x' })], [{ from: 'a', to: 't' }]), 'a', io({ io: { telegram: async () => ({ ok: false, error: '텔레그램 설정이 비어 있어요.' }) } })),
+    askFail = await eng.run(mk([n('a', 'manual', '시작'), n('t', 'ask', '묻기', { prompt: ' ' })], [{ from: 'a', to: 't' }]), 'a', io());
+  check('텔레그램이 안 보내지면 그 이유가 ❌ 로 · 비서에게 시킬 말이 비면 ❌ · 읽을 수 없는 자료를 io 가 거절하면 ❌', /설정이 비어/.test(step(tgFail, '텔레').error) && /비어 있어요/.test(step(askFail, '묻기').error)
+    && /읽을 수 없어요/.test((await eng.run(mk([n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks' })], [{ from: 'a', to: 'b' }]), 'a', io({ read: async () => { throw new Error('"approvals" 자료는 읽을 수 없어요.'); } }))).steps[1].error));
+  let tick = 0; const slow = await eng.run(mk([n('a', 'manual', '시작'), n('b', 'set', '값', { fields: '{"v":"1"}' })], [{ from: 'a', to: 'b' }]), 'a', io(), { now: () => new Date(1e12 + (tick++) * 20 * 60 * 1000) });
+  check('너무 오래 걸리는 실행(15분 넘음)은 다음 단계 앞에서 멈춤 — ❌ + 남은 단계는 건너뜀', slow.status === 'error' && /15분/.test(slow.steps[0].error) && slow.steps[1].status === 'skipped');
+  const fb = await eng.run(mk([n('x', 'set', '값', { fields: '{"v":"1"}' }), n('a', 'daily', '매일', { time: '08:00' }), n('b', 'set', '뒤', { fields: '{"v":"1"}' })], [{ from: 'a', to: 'b' }]), 'zzz', io()), two = await eng.run(mk([n('a', 'manual', '손'), n('d', 'daily', '시계'), n('b', 'set', '뒤', { fields: '{"v":"1"}' })], [{ from: 'a', to: 'b' }, { from: 'd', to: 'b' }]), 'd', io());
+  check('시작 노드 id 가 이상하거나 시작이 아니면 첫 시작 노드부터 · 시계 노드에서 시작하면 그 노드에서 닿는 것만 실행(다른 시작 노드는 목록에 안 나옴)', fb.steps.map((s) => s.name).join() === '매일,뒤' && two.steps.map((s) => s.name).join() === '시계,뒤' && two.status === 'ok');
+  const priv = { '127.0.0.1': 1, '10.1.2.3': 1, '192.168.0.5': 1, '172.16.5.5': 1, '172.32.0.1': 0, '169.254.169.254': 1, '0.0.0.0': 1, '100.64.0.1': 1, '8.8.8.8': 0, '93.184.216.34': 0, '::1': 1, '::ffff:127.0.0.1': 1, '::ffff:7f00:1': 1, 'fc00::1': 1, 'fe80::1': 1, '2606:4700::6810:85e5': 0, '224.0.0.1': 1, '2002:7f00:1::': 1, '64:ff9b::7f00:1': 1, 'abc': 1 };
+  check('웹 호출이 못 가는 주소: 이 PC(127.·::1·::ffff:127…)·사설(10.·172.16~31.·192.168.)·링크 로컬/클라우드 메타데이터(169.254.169.254)·0.0.0.0·100.64/10·멀티캐스트·6to4/NAT64·주소가 아닌 글 — 공개 주소(8.8.8.8·93.184…·172.32…)는 허용',
+    Object.entries(priv).every(([ip, want]) => eng.isPrivateAddress(ip) === !!want));
+}
+
+// ③ 서버 통합: 관리자 전용 · 저장·실행·기록 · 자료 읽기/쓰기 · 메신저 · 웹 호출 막기 · 4편 시계 · 비서가 만들기
+async function runWorkflow(ck, { CM, CC }) { // ck 첫 관리자(tester) · CM 김민준(일반) · CC 최관리(관리자)
+  const wf = require('./public/m/workflow-calc.js');
+  const call = (m, u, c, b) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json', ...(c ? { Cookie: c } : {}) }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const J = (r) => r.json(), sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const until = async (fn, ms = 15000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) { const v = await fn(); if (v) return v; } return null; };
+  const n = (id, type, name, params) => ({ id, type, name, params: params || {} });
+  const sayAs = async (c, content) => { const id = (await J(await call('POST', '/api/chats', c))).id, r = await call('POST', `/api/chats/${id}/messages`, c, { content }); return [...(await r.text()).matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join(''); };
+  const made = [];
+  const create = async (name, nodes, edges, c = ck) => { const f = await J(await call('POST', '/api/workflows', c, { name })); made.push(f.id); const r = await call('PUT', `/api/workflows/${f.id}`, c, { name, nodes, edges }); if (r.status !== 200) throw new Error(`워크플로 저장 실패: ${(await J(r)).error}`); return f.id; };
+  const runs = async (id, c = ck) => (await J(await call('GET', `/api/workflows/${id}/runs`, c)));
+  const runAndWait = async (id, c = ck) => { const r = await call('POST', `/api/workflows/${id}/run`, c, {}); if (r.status !== 202) return { status: r.status, error: (await J(r)).error }; const rid = (await J(r)).runId; return until(async () => { const x = (await runs(id, c)).items.find((y) => y.id === rid); return x && x.status !== 'running' ? x : null; }); };
+  const step = (r, name) => r.steps.find((s) => s.name === name);
+  const dbFile = (nm) => path.join(dir, 'db', `${nm}.json`), readDb = (nm) => { try { return JSON.parse(fs.readFileSync(dbFile(nm), 'utf8')); } catch { return []; } };
+  const putTask = (id, o) => call('PUT', `/api/db/tasks/${id}`, ck, o);
+
+  // ---- 관리자 전용 · 화면 · 막힌 길
+  const page = await (await fetch(BASE + '/m/workflow.html', { headers: { Cookie: ck } })).text(), calcJs = await (await call('GET', '/m/workflow-calc.js', ck)).text(), main = await (await call('GET', '/', ck)).text();
+  check('워크플로 화면(public/m/workflow.html): 로그인 없이는 401 · 일반 사용자는 403 · 관리자는 열림 · 왼쪽 메뉴 "워크플로"는 관리자에게만(ADMIN_ONLY) 보이고 "준비 중" 대신 이 화면을 띄움', (await call('GET', '/m/workflow.html')).status === 401 && (await call('GET', '/m/workflow.html', CM)).status === 403 && page.includes('id="stage"') && calcJs.includes('normalize')
+    && /ADMIN_ONLY = \[[^\]]*'워크플로'/.test(main) && main.includes('showWorkflow()') && main.includes('src="/m/workflow.html"'));
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]); let syn = scripts.length > 0; for (const s of scripts) { try { new vm.Script(s); } catch { syn = false; } }
+  check('워크플로 화면: 스크립트 문법 오류 없음 · 그림 라이브러리 없음(이 사이트 파일만) · 캔버스 조작(노드 끌기·점에서 선 잇기·참/거짓 점·빈 곳 끌어 이동·휠 확대·Delete 로 지우기·설정 패널) · 실시간 기록(db.watch) · 글은 esc 로 거름 · 노드 12가지는 workflow-calc.js 한 곳에서만 정의',
+    syn && !/<script[^>]+src="(https?:)?\/\//.test(page) && !/d3\.|cytoscape|litegraph|jsplumb/i.test(page) && ['pointerdown', "data-b=\"true\"", "data-b=\"false\"", 'class="pi"', "addEventListener('wheel'", "e.key === 'Delete'", 'renderInspector', "db.watch('workflowruns'", 'const esc =', '${esc(n.name)}', '/run`', '/enable`'].every((x) => page.includes(x))
+    && !page.includes("manual:") && wf.TYPE_ORDER.length === 12);
+  check('로그인 없이는 워크플로 API 가 401 · 일반 사용자(김민준)는 목록·만들기·실행 모두 403', (await call('GET', '/api/workflows')).status === 401 && (await call('GET', '/api/workflows', CM)).status === 403 && (await call('POST', '/api/workflows', CM, {})).status === 403 && (await call('POST', '/api/workflows/w00000000/run', CM, {})).status === 403);
+  check('워크플로·실행 기록은 일반 업무 자료 주소(/api/db)로는 안 열림(읽기·쓰기·지우기 모두) — 일반 사용자가 관리자 권한 자동화를 심지 못하게', (await Promise.all([['GET', '/api/db/workflows'], ['GET', '/api/db/workflowruns'], ['PUT', '/api/db/workflows/wabcdef01', { x: 1 }], ['DELETE', '/api/db/workflows/wabcdef01']].map(async ([m, u, b]) => (await call(m, u, CM, b)).status))).every((s) => s === 404));
+
+  // ---- 만들기·고치기·지우기
+  const f0 = await J(await call('POST', '/api/workflows', ck, { name: '  시험 하나  ' })); made.push(f0.id);
+  check('새 워크플로: 이름 정리 · "수동 시작" 노드 하나로 시작 · 자동 실행 꺼짐 · 주인은 만든 관리자', f0.name === '시험 하나' && f0.nodes.length === 1 && f0.nodes[0].type === 'manual' && f0.enabled === false && f0.owner === 'tester' && /^w[0-9a-f]{8}$/.test(f0.id));
+  const cyc = await call('PUT', `/api/workflows/${f0.id}`, ck, { name: 'x', nodes: [n('a', 'manual', '시작'), n('b', 'set', '값'), n('c', 'set', '값2')], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'b' }] });
+  check('저장 검사: 빙 도는 선은 400 + 이유(저장 안 됨, 옛 내용 그대로) · 잘못된 주소·본문은 400/404', cyc.status === 400 && (await J(cyc)).error.includes('빙 돌아') && (await J(await call('GET', `/api/workflows/${f0.id}`, ck))).nodes.length === 1 && (await call('PUT', '/api/workflows/wzzzzzzzz', ck, {})).status === 404 && (await call('GET', '/api/workflows/xyz', ck)).status === 404);
+  const forged = await call('PUT', `/api/workflows/${f0.id}`, ck, { name: '자동', enabled: true, owner: 'chief', nodes: [n('a', 'manual', '시작')], edges: [], triggerRuns: { a: '2000-01-01T00:00:00Z' } }), fj = await J(forged), stored = readDb('workflows').find((x) => x.id === f0.id);
+  check('저장 요청으로는 자동 실행을 못 켬(enable 주소로만) · 주인·시계 기록(triggerRuns)은 못 바꿈 — 서버가 관리하는 칸', forged.status === 200 && fj.enabled === false && stored.owner === 'tester' && !('a' in (stored.triggerRuns || {})) && fj.name === '자동');
+  const noClock = await call('POST', `/api/workflows/${f0.id}/enable`, ck, { on: true });
+  check('시계 시작 노드(매일 시각·N분마다)가 없으면 자동 실행을 켤 수 없음(400, 이유가 적힘)', noClock.status === 400 && (await J(noClock)).error.includes('매일 시각'));
+
+  // ---- 자료 읽기 → 조건 → 쓰기 → 알림 (진짜 서버 io)
+  for (const [id, o] of [['wfT1', { title: '용접 점검', status: 'WF시험', owner: '김민준', due: '2026-10-01' }], ['wfT2', { title: '도장 점검', status: 'WF시험', owner: '김민준', due: '2026-10-02' }], ['wfT3', { title: '검사 점검', status: 'WF시험', owner: '외부인', due: '2026-10-03' }]]) await putTask(id, o);
+  const flowA = await create('자료 시험', [n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks', field: 'status', op: 'eq', value: 'WF시험' }), n('c', 'if', '있나', { left: '{{steps.읽기.count}}', op: 'gt', right: '0' }),
+    n('d', 'write', '쓰기', { collection: 'tasks', mode: 'add', fields: '{"title":"점검 {{steps.읽기.count}}건 {{today}}","status":"WF결과","owner":"WF"}' }), n('e', 'notice', '알림', { via: 'bell', to: 'me', title: 'WF시험 알림', text: '{{steps.쓰기.text}}\n{{steps.읽기}}' }), n('f', 'set', '없음', { fields: '{"v":"없음"}' })],
+    [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'd', branch: 'true' }, { from: 'd', to: 'e' }, { from: 'c', to: 'f', branch: 'false' }]);
+  const ra = await runAndWait(flowA), written = readDb('tasks').find((t) => t.status === 'WF결과'), nts = await J(await call('GET', '/api/db/notices', ck));
+  check('진짜 서버로 실행: 할 일 3건 읽기 → 조건(참) → 새 할 일 추가(제목에 {{steps.읽기.count}} 가 채워짐) → 🔔 알림 — 단계마다 ✅(거짓 쪽 "없음"은 건너뜀) · 실행 기록(단계·결과·걸린 시간)이 파일에 남고 /runs 로 읽힘',
+    ra && ra.status === 'ok' && ra.steps.map((s) => s.status).join() === 'ok,ok,ok,ok,ok,skipped' && step(ra, '읽기').out.includes('- 용접 점검') && !!written && written.title.startsWith('점검 3건 20') && nts.some((x) => x.title === 'WF시험 알림' && x.owner === 'tester') && ra.trigger === 'manual' && ra.steps.every((s) => typeof s.ms === 'number')
+    && readDb('workflowruns').some((r) => r.id === ra.id) && (await runs(flowA)).running === false);
+  check('결과 기록은 서버가 쓰는 값만 담음: 단계 출력은 1500자로 잘려 있고, 기록은 워크플로마다 30개까지만 남김', ra.steps.every((s) => (s.out || '').length <= 1600) && readDb('workflowruns').filter((r) => r.workflowId === flowA).length <= 30);
+
+  // ---- 담당자별 메신저
+  const flowM = await create('메신저 시험', [n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'tasks', field: 'status', op: 'eq', value: 'WF시험' }), n('c', 'notice', '알리기', { via: 'messenger', to: 'owners', list: '읽기', title: 'WF담당 알림', text: '{{owner}} 님, 점검 {{count}}건:\n{{lines}}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]);
+  const rm = await runAndWait(flowM), msgs = readDb('messages'), chs = readDb('channels'), dm = chs.find((c) => c.kind === 'dm' && c.members.includes('minjun') && c.members.includes('tester')), mm = msgs.find((m) => dm && m.channelId === dm.id && m.text.includes('김민준 님, 점검 2건'));
+  const nts2 = await J(await call('GET', '/api/db/notices', ck));
+  check('담당자별 메신저(진짜 서버): 담당자 "김민준"은 사용자 목록에 있어 만든 관리자와의 1:1 대화에 🤖 산초 이름으로 점검 2건 목록이 감 · 목록에 없는 "외부인" 몫은 관리자에게 🔔 한 건으로 대신 — 요약에 숫자·이름',
+    rm && rm.status === 'ok' && !!mm && mm.bot === true && mm.from === 'sancho' && mm.askedBy === 'tester' && mm.text.includes('- 용접 점검') && mm.text.includes('- 도장 점검') && nts2.some((x) => x.title === 'WF담당 알림' && x.owner === 'tester' && String(x.detail).includes('외부인'))
+    && step(rm, '알리기').out.includes('메신저 1명') && step(rm, '알리기').out.includes('1명(외부인)'));
+  check('김민준(받는 사람)은 자기 메신저 1:1 대화 목록에서 그 알림을 볼 수 있음(채널 멤버) · 다른 일반 사용자(이서연)는 못 봄', (await J(await call('GET', '/api/messenger/channels', CM))).some((c) => c.id === (dm || {}).id) && !(await J(await call('GET', '/api/messenger/channels', CC))).some((c) => c.id === (dm || {}).id));
+
+  // ---- 웹 호출: 막기 · 허용된 시험 주소 · 리다이렉트 · 오류
+  const http = require('http'), echo = [];
+  const web = http.createServer((q, s) => { let b = ''; q.on('data', (d) => (b += d)); q.on('end', () => {
+    if (q.url === '/json') { s.writeHead(200, { 'Content-Type': 'application/json' }); return s.end('{"n":5,"msg":"안녕"}'); }
+    if (q.url === '/redir') { s.writeHead(302, { Location: `${BASE}/api/me` }); return s.end('이동'); }
+    if (q.url === '/500') { s.writeHead(500); return s.end('고장'); }
+    if (q.url === '/big') { s.writeHead(200); return s.end('가'.repeat(300000)); }
+    echo.push({ m: q.method, ct: q.headers['content-type'], b }); s.writeHead(200); s.end(`받음:${b}`);
+  }); }).listen(8806, '127.0.0.1');
+  const W = 'http://127.0.0.1:8806', flowW = await create('웹 시험', [n('a', 'manual', '시작'), n('b', 'http', '웹', { method: 'GET', url: `${W}/json` }), n('c', 'set', '값', { fields: '{"n":"{{steps.웹.json.n}}","s":"{{steps.웹.status}}","m":"{{steps.웹.json.msg}}"}' })], [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]);
+  const setUrl = async (url, method = 'GET', body = '') => { const g = await J(await call('GET', `/api/workflows/${flowW}`, ck)); g.nodes.find((x) => x.name === '웹').params = { method, url, body }; return call('PUT', `/api/workflows/${flowW}`, ck, g); };
+  const rw1 = await runAndWait(flowW);
+  check('웹 호출(허용된 시험 주소): 가져오기 ✅ · 결과의 .status·.json.칸 을 뒤 노드가 받음({"n":"5","s":"200","m":"안녕"})', rw1.status === 'ok' && step(rw1, '값').out.includes('"n":"5"') && step(rw1, '값').out.includes('"s":"200"') && step(rw1, '값').out.includes('"m":"안녕"'));
+  await setUrl(`${W}/redir`); const rw2 = await runAndWait(flowW);
+  check('리다이렉트(302)는 따라가지 않음 — 사내·이 PC 주소로 튕겨 가는 길을 막음: 결과 status 302 로 끝나고 이동한 곳(/api/me)의 내용은 안 읽힘', rw2.status === 'ok' && step(rw2, '값').out.includes('"s":"302"') && !JSON.stringify(rw2).includes('tester'));
+  await setUrl(`${W}/500`); const rw3 = await runAndWait(flowW);
+  await setUrl(`${W}/echo`, 'POST', '{"날짜":"{{today}}"}'); const rw4 = await runAndWait(flowW), got = echo.at(-1);
+  check('웹 호출 오류와 POST: 500 이면 ❌(상태·본문 일부가 이유) · POST 는 {{today}} 를 채운 JSON 을 application/json 으로 보냄', rw3.status === 'error' && /500/.test(step(rw3, '웹').error) && /고장/.test(step(rw3, '웹').error) && rw4.status === 'ok' && got.m === 'POST' && got.ct === 'application/json' && /^\{"날짜":"20\d\d-\d\d-\d\d"\}$/.test(got.b));
+  await setUrl(`${W}/big`); const rw5 = await runAndWait(flowW);
+  const refused = [];
+  for (const u of [`${BASE}/api/me`, 'http://localhost:8791/', 'http://[::1]:8791/', 'http://169.254.169.254/latest/meta-data', 'http://10.0.0.1/', 'http://192.168.1.1/', 'http://0x7f.1/', 'http://2130706433/', 'file:///etc/passwd', 'ftp://example.com/x', 'http://user:pw@example.com/', 'abc']) { await setUrl(u); const r = await runAndWait(flowW); refused.push([u, r.status, (step(r, '웹') || {}).error]); }
+  check('웹 호출이 이 서버 자신·localhost·IPv6 루프백·클라우드 메타데이터(169.254.169.254)·사설망(10.·192.168.)·숫자로 감춘 127(0x7f.1, 2130706433)·file://·ftp://·주소에 아이디/비밀번호·주소가 아닌 글을 부르면 모두 ❌ (허용한 시험 주소 하나만 예외)',
+    refused.every(([, st, er]) => st === 'error' && !!er) && /사내망|안/.test(refused[0][2]) && /http:\/\/ 나 https/.test(refused[8][2]) && /아이디·비밀번호/.test(refused[10][2]) && refused.length === 12);
+  check('답이 아주 커도(30만 자) 100KB 까지만 받음 — 기록에도 잘려서 들어감', rw5.status === 'ok' && JSON.stringify(rw5).length < 20000);
+  web.close();
+
+  // ---- 텔레그램 · 비서에게 시키기
+  const sfile = path.join(dir, 'settings.json'), savedSettings = fs.existsSync(sfile) ? fs.readFileSync(sfile, 'utf8') : null, H = { 'Content-Type': 'application/json', Cookie: ck };
+  if (!tgServer.listening) await new Promise((ok) => tgServer.listen(8793, '127.0.0.1', ok)); // 텔레그램 점검(runTelegram)이 "연결 안 됨"을 흉내 내려고 끈 가짜 서버를 다시 켠다
+  await fetch(`${BASE}/api/settings/telegram`, { method: 'PUT', headers: H, body: JSON.stringify({ token: '123456:SELFTEST_fake_token_for_tests_000', chatId: '424242' }) });
+  const flowT = await create('텔레 시험', [n('a', 'manual', '시작'), n('t', 'telegram', '텔레', { text: '워크플로 {{today}} 알림' }), n('k', 'ask', '묻기', { prompt: '오늘은 {{today}} 이야, 한 줄로 답해' })], [{ from: 'a', to: 't' }, { from: 't', to: 'k' }]);
+  const before = tgSeen.length, rt1 = await runAndWait(flowT), tgMsg = tgSeen.slice(before).find((x) => x.body && /워크플로 20\d\d-\d\d-\d\d 알림/.test(x.body.text || ''));
+  check('텔레그램 노드: 연결된 봇으로 {{today}} 를 채워 보냄 · 비서에게 시키기: 채운 말을 새 대화(보는 사람 없는 실행)로 넘겨 답 글을 {{steps.이름}} 으로 받음', rt1.status === 'ok' && !!tgMsg && step(rt1, '묻기').out.startsWith('에코: 오늘은 20'));
+  await fetch(`${BASE}/api/settings/telegram`, { method: 'DELETE', headers: H }); // 연결을 끊고 한 번 더
+  const rt2 = await runAndWait(flowT);
+  if (savedSettings === null) fs.rmSync(sfile, { force: true }); else fs.writeFileSync(sfile, savedSettings); // 점검 전 설정 그대로
+  check('텔레그램 설정이 없으면 그 노드가 ❌ 로 멈추고 "설정이 비어 있어요" 이유를 보여 줌(뒤 단계는 건너뜀)', rt2.status === 'error' && /설정/.test(step(rt2, '텔레').error) && step(rt2, '묻기').status === 'skipped');
+
+  // ---- 막기: 읽을 수 없는 자료·쓸 수 없는 자료·회의실
+  const forgedNodes = [n('a', 'manual', '시작'), n('b', 'read', '읽기', { source: 'approvals' }), n('c', 'write', '쓰기', { collection: 'approvals', mode: 'add', fields: '{"title":"몰래"}' })], fg = await create('막기 시험', forgedNodes, [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]), fgv = await J(await call('GET', `/api/workflows/${fg}`, ck));
+  check('읽을 수 없는 자료(결재 approvals)·쓸 수 없는 자료는 저장할 때 기본값으로 바뀜 — 읽기 목록(wbs-delayed·tasks·events·projects·meetings·notices·okrs)·쓰기 목록(tasks·events·projects) 밖은 못 고름', fgv.nodes[1].params.source === 'wbs-delayed' && fgv.nodes[2].params.collection === 'tasks' && !readDb('approvals').some((a) => a.title === '몰래') && !readDb('tasks').some((t) => t.title === '몰래'));
+  const fr = await create('회의실 시험', [n('a', 'manual', '시작'), n('b', 'write', '쓰기', { collection: 'events', mode: 'add', fields: '{"title":"몰래 예약","roomId":"room1","date":"2026-10-07"}' })], [{ from: 'a', to: 'b' }]), rr = await runAndWait(fr);
+  check('일정에 회의실(roomId)을 넣는 쓰기는 ❌ — 회의실 예약은 겹침 검사를 거치는 회의록 메뉴로만', rr.status === 'error' && /roomId/.test(step(rr, '쓰기').error) && !readDb('events').some((e) => e.title === '몰래 예약'));
+
+  // ---- 겹쳐 실행하지 않기 · 실행 중 표시
+  const fs1 = await create('느린 시험', [n('a', 'manual', '시작'), n('w', 'wait', '쉼', { seconds: 2 }), n('s', 'set', '끝', { fields: '{"v":"1"}' })], [{ from: 'a', to: 'w' }, { from: 'w', to: 's' }]);
+  const first = await call('POST', `/api/workflows/${fs1}/run`, ck, {}), second = await call('POST', `/api/workflows/${fs1}/run`, ck, {}), mid = await runs(fs1);
+  check('도는 중에 또 ▶ 를 누르면 409("이미 실행 중") · /runs 가 running=true 와 "running" 단계를 알려 줌 · 끝나면 running=false 와 모두 ✅', first.status === 202 && second.status === 409 && mid.running === true && mid.items[0].status === 'running' && mid.items[0].steps.some((s) => s.status === 'running')
+    && !!(await until(async () => (await runs(fs1)).running === false)) && (await runs(fs1)).items[0].status === 'ok');
+
+  // ---- 4편의 시계: 켜기·끄기 · 때가 되면 시작 노드부터 · 처음엔 지금부터 센다
+  const fC = await create('시계 시험', [n('a', 'every', '시계', { minutes: 1 }), n('b', 'set', '값', { fields: '{"v":"{{today}}"}' })], [{ from: 'a', to: 'b' }]);
+  const swapWf = (fn) => { const list = readDb('workflows'); fn(list); fs.writeFileSync(dbFile('workflows') + '.t', JSON.stringify(list)); swapFile(dbFile('workflows') + '.t', dbFile('workflows')); };
+  const en = await call('POST', `/api/workflows/${fC}/enable`, ck, { on: true }), enj = await J(en);
+  const tr0 = readDb('workflows').find((x) => x.id === fC).triggerRuns;
+  await sleep(900);
+  check('자동 실행 켜기: 켜는 순간부터 센다(시계 기록이 지금) → 켜자마자 놓친 회차가 돌지 않음(0.9초 뒤에도 실행 기록 없음)', en.status === 200 && enj.enabled === true && Math.abs(Date.now() - Date.parse(tr0.a)) < 5000 && (await runs(fC)).items.length === 0);
+  swapWf((l) => { l.find((x) => x.id === fC).triggerRuns.a = new Date(Date.now() - 2 * 60_000).toISOString(); });
+  const sched = await until(async () => (await runs(fC)).items.find((r) => r.trigger === 'schedule' && r.status !== 'running'));
+  const tr1 = readDb('workflows').find((x) => x.id === fC).triggerRuns.a;
+  await sleep(700);
+  check('N분마다: 마지막 실행이 2분 전이면(1분마다) 4편의 시계가 그 시작 노드부터 돌림 — 기록에 "시계가 시작"(trigger=schedule) · 시계 기록이 지금으로 · 같은 회차가 되풀이해 돌지 않음', !!sched && sched.status === 'ok' && sched.steps[0].name === '시계' && Date.now() - Date.parse(tr1) < 8000 && (await runs(fC)).items.filter((r) => r.trigger === 'schedule').length === 1);
+  const off = await call('POST', `/api/workflows/${fC}/enable`, ck, { on: false });
+  swapWf((l) => { l.find((x) => x.id === fC).triggerRuns.a = new Date(Date.now() - 5 * 60_000).toISOString(); });
+  await sleep(800);
+  check('자동 실행을 끄면 때가 지나도 안 돎(켜 둔 것만 시계가 봄)', off.status === 200 && (await J(off)).enabled === false && (await runs(fC)).items.filter((r) => r.trigger === 'schedule').length === 1);
+  const fD = await create('매일 시험', [n('a', 'daily', '매일', { time: '00:00' }), n('b', 'http', '웹', { method: 'GET', url: `${BASE}/api/me` })], [{ from: 'a', to: 'b' }]);
+  await call('POST', `/api/workflows/${fD}/enable`, ck, { on: true });
+  swapWf((l) => { l.find((x) => x.id === fD).triggerRuns.a = new Date(Date.now() - 26 * 3600_000).toISOString(); });
+  const dr = await until(async () => (await runs(fD)).items.find((r) => r.trigger === 'schedule' && r.status !== 'running')), ntsF = await J(await call('GET', '/api/db/notices', ck));
+  check('매일 시각: 어제 이후 00:00 이 지났으면 한 번 돎 · 시계가 돌린 실행이 실패하면(웹 호출이 이 서버 자신을 불러 막힘) 🔔 "워크플로 실패: 이름" 알림이 와서 조용히 실패하지 않음', !!dr && dr.status === 'error' && ntsF.some((x) => x.title === '워크플로 실패: 매일 시험' && x.level === '주의' && x.owner === 'tester') && (await runs(fD)).items.filter((r) => r.trigger === 'schedule').length === 1);
+  await call('POST', `/api/workflows/${fD}/enable`, ck, { on: false });
+  await call('POST', `/api/workflows/${fC}/enable`, ck, { on: true });
+  const dis = await call('PUT', `/api/workflows/${fC}`, ck, { name: '시계 시험', nodes: [n('b', 'manual', '손')], edges: [] }), again = await call('POST', `/api/workflows/${fC}/enable`, ck, { on: true });
+  check('켜 둔 워크플로에서 시계 노드를 다 지우면 자동 실행이 저절로 꺼짐(켜진 채 아무것도 안 돌지 않게) — 다시 켜기는 400', dis.status === 200 && (await J(dis)).enabled === false && (await J(await call('GET', `/api/workflows/${fC}`, ck))).enabled === false && again.status === 400);
+
+  // ---- 비서가 만들기
+  const wfCount = () => readDb('workflows').length, draft = path.join(dir, 'users', 'tester', 'workflow-draft.json'), skillTxt = fs.readFileSync(path.join(dir, '.claude', 'skills', 'workflow', 'SKILL.md'), 'utf8');
+  const nBefore = wfCount(), say1 = await sayAs(ck, '워크플로 만들어줘: 아침 알림 시험'), mk1 = readDb('workflows').find((x) => x.name === '아침 알림 시험');
+  check('비서의 "워크플로 만들어줘": 말이 끝나면 서버가 초안을 검사해 만듦 — 🔀 알림 줄 · 자동 실행 꺼짐 · 주인은 말한 관리자 · 좌표는 왼쪽→오른쪽으로 저절로 · 초안 파일은 지워짐 · 만든 것을 바로 ▶ 실행할 수 있음',
+    say1.includes('🔀 워크플로를 만들었어요: 「아침 알림 시험」') && !!mk1 && mk1.enabled === false && mk1.owner === 'tester' && mk1.nodes.length === 4 && mk1.nodes[0].x < mk1.nodes[3].x && !fs.existsSync(draft) && wfCount() === nBefore + 1 && (made.push(mk1.id), (await runAndWait(mk1.id)).status === 'ok'));
+  const cnt0 = wfCount(), bads = [await sayAs(ck, '워크플로 만들어줘: 깨진 것 /깨짐'), await sayAs(ck, '워크플로 만들어줘: 도는 것 /순환'), await sayAs(ck, '워크플로 만들어줘: 겹치는 것 /이름중복')];
+  check('깨진 초안(JSON 아님)·빙 도는 선·겹치는 노드 이름은 만들지 않고 ⚠ 이유가 채팅에 붙음(초안 파일은 지워짐)', bads.every((t) => t.includes('⚠')) && /JSON 모양/.test(bads[0]) && /빙 돌아/.test(bads[1]) && /겹쳐요/.test(bads[2]) && wfCount() === cnt0 && !fs.existsSync(draft));
+  const sneaky = await sayAs(ck, '지금 일정을 알려 줘 /몰래워크플로'), ntsS = await J(await call('GET', '/api/db/notices', ck));
+  check('주인이 시키지 않았는데 놓인 워크플로 초안(웹 글이 시킨 경우)은 만들지 않음 — ⚠ 와 🔔 주의 알림(그 사람에게만)', sneaky.includes('시키지 않아서 만들지 않았어요') && wfCount() === cnt0 && ntsS.some((x) => x.title === '워크플로를 시키지 않았는데 초안이 생겼어요' && x.level === '주의' && x.owner === 'tester'));
+  fs.writeFileSync(draft, JSON.stringify({ name: '묵은 초안', nodes: [n('n1', 'manual', '시작')], edges: [] })); await sayAs(ck, '워크플로 만들기는 나중에 할게');
+  const sm = await sayAs(CM, '워크플로 만들어줘: 일반 사용자 것'), smChief = await sayAs(CC, '워크플로 만들어줘: 최관리 것');
+  check('지난 차례의 묵은 초안은 새 말이 시작될 때 치워짐 · 일반 사용자는 못 만듦(⚠ 관리자만) · 다른 관리자는 만들 수 있고 주인이 그 관리자가 됨', !readDb('workflows').some((x) => x.name === '묵은 초안') && !fs.existsSync(draft) && sm.includes('관리자만') && !readDb('workflows').some((x) => x.name === '일반 사용자 것')
+    && smChief.includes('🔀') && readDb('workflows').find((x) => x.name === '최관리 것').owner === 'chief' && (made.push(readDb('workflows').find((x) => x.name === '최관리 것').id), true));
+  const perm = await sayAs(ck, '/perm'), ctxText = await sayAs(ck, '/ctx');
+  check('비서(두뇌)는 워크플로·실행 기록 파일을 읽지도 쓰지도 못함(거절 목록에 db/workflows.json·db/workflowruns.json 의 Read·Edit·Write) — 초안만 놓을 수 있음', ['Read', 'Edit', 'Write'].every((t) => perm.includes(`${t}(./db/workflows.json)`) && perm.includes(`${t}(./db/workflowruns.json)`)));
+  const sysTxt = fs.readFileSync(path.join(dir, '.system.md'), 'utf8'), ex = JSON.parse(/```json\r?\n([\s\S]*?)```/.exec(skillTxt)[1]), exN = wf.normalize(ex), tmpl = fs.readFileSync(path.join(__dirname, 'templates', 'skills', 'workflow', 'SKILL.md'), 'utf8');
+  check('workflow 스킬: 원본이 data/.claude/skills/workflow/ 로 복사됨 · 설명에 "워크플로 만들어줘" · 초안 파일 위치 · 노드 12가지가 모두 표에 있음 · 작성 예가 스킬 자신의 규칙(저장 검사)을 통과하고 경고도 없음 · 기본 스킬이라 스킬 칸·알려 주는 글에 안 나옴',
+    skillTxt === tmpl && /^---\r?\nname: workflow\r?\ndescription: .*워크플로 만들어줘/.test(skillTxt) && skillTxt.includes('users/<아이디>/workflow-draft.json') && wf.TYPE_ORDER.every((t) => skillTxt.includes(`| \`${t}\` |`)) && exN.errors.length === 0 && exN.warns.length === 0 && ex.nodes.some((x) => x.type === 'notice' && x.params.to === 'owners')
+    && !ctxText.includes('「workflow」') && !(await J(await call('GET', '/api/skills', ck))).items.some((x) => x.name === 'workflow') && (await call('DELETE', '/api/skills/workflow', ck)).status === 404);
+  check('.system.md: 워크플로 지침이 맨 끝에 한 번만 더해짐(workflow 스킬 먼저 · 이번 말에서 직접 시켰을 때만 · 초안 파일만) · 스킬 안내 문장에 workflow 가 들어감', sysTxt.split('<!-- 지침:워크플로 -->').length === 2 && sysTxt.includes('.claude/skills/workflow/SKILL.md') && sysTxt.includes('workflow-draft.json') && ctxText.includes('okr·workflow'));
+
+  // ---- 지우기 · 뒷정리
+  const delId = flowA, runsBefore = readDb('workflowruns').filter((r) => r.workflowId === delId).length, dl = await call('DELETE', `/api/workflows/${delId}`, ck), dl2 = await call('DELETE', `/api/workflows/${delId}`, ck);
+  check('워크플로를 지우면 그 실행 기록도 같이 지워짐 · 다시 지우면 404', runsBefore > 0 && dl.status === 200 && !readDb('workflowruns').some((r) => r.workflowId === delId) && dl2.status === 404 && !readDb('workflows').some((x) => x.id === delId));
+  for (const id of made) await call('DELETE', `/api/workflows/${id}`, ck);
+  for (const t of readDb('tasks').filter((x) => /^WF/.test(x.status || ''))) await call('DELETE', `/api/db/tasks/${t.id}`, ck);
+  check('뒷정리: 시험으로 만든 워크플로·할 일이 모두 지워지고 아무것도 켜진 채 남지 않음', !readDb('workflows').some((x) => x.enabled) && !readDb('tasks').some((t) => /^WF/.test(t.status || '')));
+}
+
+// ④ 서버를 껐다 켤 때: 도는 도중에 꺼진 실행이 "실행 중"으로 남지 않고 닫힘 (별도 서버·포트 8807)
+async function runWorkflowRestart() {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test7-')), B = 'http://127.0.0.1:8807';
+  fs.mkdirSync(path.join(d, 'db'), { recursive: true });
+  const run = { id: 'rdead0001', workflowId: 'wdead0001', name: '끊긴 시험', trigger: 'schedule', startedAt: new Date().toISOString(), endedAt: '', status: 'running', steps: [{ id: 'a', name: '시작', type: 'manual', status: 'ok', ms: 1, out: 'x', error: '' }, { id: 'b', name: '읽기', type: 'read', status: 'running', ms: 0, out: '', error: '' }, { id: 'c', name: '뒤', type: 'set', status: 'pending', ms: 0, out: '', error: '' }] };
+  fs.writeFileSync(path.join(d, 'db', 'workflowruns.json'), JSON.stringify([run]));
+  const s = startServer(8807, d, { ...process.env, SANCHO_PORT: '8807', SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js') });
+  await s.ready; await new Promise((ok) => setTimeout(ok, 300));
+  const after = JSON.parse(fs.readFileSync(path.join(d, 'db', 'workflowruns.json'), 'utf8'))[0], nts = JSON.parse(fs.readFileSync(path.join(d, 'db', 'notices.json'), 'utf8'));
+  check('서버가 도는 도중에 꺼졌다 켜지면 "실행 중"으로 남은 워크플로 실행이 닫힘 — 실행은 ❌, 실행 중이던 단계는 ❌("꺼지면서 중단됐어요"), 아직 안 한 단계는 건너뜀, 이미 끝난 단계는 그대로 · 🔔 주의 알림', after.status === 'error' && !!after.endedAt && after.steps.map((x) => x.status).join() === 'ok,error,skipped' && /중단됐어요/.test(after.steps[1].error) && nts.some((x) => /끊겼어요/.test(x.title) && x.level === '주의'));
+  s.kill(); await new Promise((ok) => setTimeout(ok, 400));
+  try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더는 못 지워도 점검과 상관없다 */ }
 }
 
 // 목표(OKR): 전사 → 부서 → 개인 나무, KR(지표·시작값·목표값·현재값·가중치·기한), 진척 = KR 달성률의 가중 평균·상위는 하위의 평균, 색(순조/주의/위험), 비서 스킬
@@ -3509,7 +3798,7 @@ async function runEp8() {
   // 감시자 없이 켠 서버(8799)에서는 스위치를 켜도 폴더를 안 연다
   await fetch('http://127.0.0.1:8799/api/settings/permissions', { method: 'PUT', headers: HB, body: JSON.stringify({ 자기수정: true }) });
   const idB = (await (await fetch('http://127.0.0.1:8799/api/chats', { method: 'POST', headers: HB })).json()).id;
-  const rawB = await (await fetch(`http://127.0.0.1:8799/api/chats/${idB}/messages`, { method: 'POST', headers: HB, body: JSON.stringify({ content: '안녕' }) })).text();
+  const rawB = [...(await (await fetch(`http://127.0.0.1:8799/api/chats/${idB}/messages`, { method: 'POST', headers: HB, body: JSON.stringify({ content: '안녕' }) })).text()).matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join(''); // 답은 20자씩 끊겨 오므로 이어 붙여서 본다 (끊긴 자리에 걸려도 실패하지 않게)
   check('자기 수정: 감시자 없이 켜진 서버에서는 스위치를 켜도 앱 폴더를 안 열고 이유(감시자 없음)를 비서에게 알림', rawB.includes('지금은 쓸 수 없음') && rawB.includes('감시자'));
   sB.kill();
 
@@ -3999,12 +4288,14 @@ const tgServer = require('http').createServer((req, res) => {
   });
 });
 tgServer.listen(8793, '127.0.0.1');
-const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793', SANCHO_UPLOAD_MAX: String(1024 * 1024), SANCHO_OPEN_SCRIPT: path.join(__dirname, 'test', 'fake-open.js'), SANCHO_OPEN_LOG: path.join(dir, 'open.log') }); // 예약 시계를 30초 대신 0.2초마다, 올리기 한도 1MB, "열기"는 가짜 프로그램
+const srv = startServer(PORT, dir, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'http://leak.invalid', SANCHO_TICK_MS: '200', SANCHO_TELEGRAM_API: 'http://127.0.0.1:8793', SANCHO_WORKFLOW_LOCAL_OK: 'http://127.0.0.1:8806', SANCHO_UPLOAD_MAX: String(1024 * 1024), SANCHO_OPEN_SCRIPT: path.join(__dirname, 'test', 'fake-open.js'), SANCHO_OPEN_LOG: path.join(dir, 'open.log') }); // 예약 시계를 30초 대신 0.2초마다, 올리기 한도 1MB, "열기"는 가짜 프로그램
 srv.ready.then(async () => {
   try {
     if (process.env.SELFTEST_ONLY === 'access') await runAccess(); // 개발 중에 외부 접속·커넥터 점검만 빨리 돌릴 때: SELFTEST_ONLY=access (또는 connector) node selftest.js
     else if (process.env.SELFTEST_ONLY === 'connector') await runConnector();
     else if (process.env.SELFTEST_ONLY === 'voice') await runVoice();
+    else if (process.env.SELFTEST_ONLY === 'wfserver') await run(); // 개발 중에 워크플로 서버 통합 점검만 (사용자 만들기까지만 하고 바로 거기로)
+    else if (process.env.SELFTEST_ONLY === 'workflow') { runWorkflowCalc(); await runWorkflowEngine(); } // 서버 없이 워크플로 규칙·엔진만
     else if (process.env.SELFTEST_ONLY === 'knowledge') runKnowledgeCalc(); // 서버 없이 지식노트 계산만 (화면 점검은 전체 점검에서)
     else {
       await run();
@@ -4017,6 +4308,7 @@ srv.ready.then(async () => {
       await runAccess();
       await runConnector();
       await runVoice();
+      await runWorkflowRestart();
       runGit();
     }
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다

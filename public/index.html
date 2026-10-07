@@ -442,7 +442,7 @@
 <script src="/m/voice.js"></script>
 <script>
   const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
-  const ADMIN_ONLY = ['설정']; // 일반 사용자에게는 메뉴에도 안 보이고, 주소로 들어와도 대시보드로 보낸다 (서버도 막는다)
+  const ADMIN_ONLY = ['설정', '워크플로']; // 일반 사용자에게는 메뉴에도 안 보이고, 주소로 들어와도 대시보드로 보낸다 (서버도 막는다)
   const $ = (id) => document.getElementById(id);
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -511,6 +511,7 @@
     else if (current === '목표') showOkr();
     else if (current === '공수') showManday();
     else if (current === '지식노트') showKnowledge();
+    else if (current === '워크플로') showWorkflow();
     else if (current === '설정') showSettings(arg);
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
     syncTabs();
@@ -562,6 +563,7 @@
   function showMeeting() { $('main').innerHTML = '<iframe class="frame" src="/m/meeting.html" title="회의록" allow="microphone"></iframe>'; } // 음성 인식(녹취)에 마이크가 필요하다
   function showApproval(id) { $('main').innerHTML = `<iframe class="frame" src="/m/approval.html${id ? '?d=' + encodeURIComponent(id) : ''}" title="결재"></iframe>`; }
   function showManday() { $('main').innerHTML = '<iframe class="frame" src="/m/manday.html" title="공수"></iframe>'; }
+  function showWorkflow() { $('main').innerHTML = '<iframe class="frame" src="/m/workflow.html" title="워크플로"></iframe>'; }
   function showKnowledge() { $('main').innerHTML = '<iframe class="frame" src="/m/knowledge.html" title="지식노트"></iframe>'; }
   function showOkr() { $('main').innerHTML = '<iframe class="frame" src="/m/okr.html" title="목표"></iframe>'; }
   function showMail() { $('main').innerHTML = '<iframe class="frame" src="/m/mail.html" title="메일정리"></iframe>'; }

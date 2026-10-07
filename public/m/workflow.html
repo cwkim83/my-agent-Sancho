@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>워크플로</title>
+<style>
+  :root { --line: #e4e7eb; --bg: #f5f6f8; --text: #1b1f24; --sub: #667085; --blue: #2f6fed; --blue-bg: #eaf1ff; --red: #b42318; --red-bg: #fee4e2; --amber-bg: #fef0c7; --green: #067647; --green-bg: #dcfae6; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; overflow-y: auto; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: default; opacity: .55; }
+  [hidden] { display: none !important; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 12px 14px 20px; }
+  .top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 8px; }
+  .top h2 { margin: 0 6px 0 0; font-size: 20px; }
+  select, input[type=text], input[type=number], input[type=time], textarea { padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 8px; font: inherit; background: #fff; max-width: 100%; }
+  select:focus, input:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  #wname { width: 200px; font-weight: 600; }
+  .btn { padding: 6px 14px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font-weight: 600; }
+  .ghost { padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 9px; background: #fff; color: #344054; }
+  .ghost:hover:not(:disabled) { background: #f2f4f7; }
+  .ghost.red:hover:not(:disabled) { background: var(--red-bg); color: var(--red); }
+  .sp { flex: 1; }
+  .auto { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #344054; cursor: pointer; }
+  .sw { position: relative; width: 34px; height: 19px; }
+  .sw input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .sw i { position: absolute; inset: 0; border-radius: 999px; background: #d0d5dd; transition: background .15s; pointer-events: none; }
+  .sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .sw input:checked + i { background: var(--blue); } .sw input:checked + i::after { transform: translateX(15px); }
+  .saved { color: var(--sub); font-size: 12px; min-width: 72px; }
+  .warnbar { margin: 0 0 8px; padding: 7px 12px; border-radius: 8px; background: var(--amber-bg); color: #7a2e0e; font-size: 13px; }
+  .warnbar.err { background: var(--red-bg); color: var(--red); }
+  .palette { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-bottom: 8px; }
+  .palette small { color: var(--sub); font-size: 12px; margin-right: 2px; }
+  .pb { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 13px; color: #344054; }
+  .pb:hover { border-color: var(--blue); background: var(--blue-bg); }
+  .pb.trigger { border-color: #abefc6; } .pb.flow { border-color: #d9d6fe; }
+
+  .stage { position: relative; height: clamp(300px, calc(100vh - 430px), 520px); border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; touch-action: none;
+    background-image: radial-gradient(#e4e7eb 1px, transparent 1px); background-size: 22px 22px; cursor: grab; }
+  .stage.panning { cursor: grabbing; }
+  .layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
+  .eh { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; pointer-events: stroke; }
+  .ev { fill: none; stroke: #98a2b3; stroke-width: 2; pointer-events: none; }
+  .ev.t { stroke: #12b76a; } .ev.f { stroke: #f04438; } .ev.sel { stroke: var(--blue); stroke-width: 3.5; }
+  .ev.live { stroke: var(--blue); stroke-dasharray: 5 4; }
+  .node { position: absolute; width: 190px; height: 64px; border: 1px solid #d0d5dd; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgba(16, 24, 40, .1); cursor: move; user-select: none; }
+  .node.sel { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .2); }
+  .node .nh { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 9px 9px 0 0; background: var(--blue-bg); overflow: hidden; }
+  .node.trigger .nh { background: #d1fadf; } .node.flow .nh { background: #ebe9fe; }
+  .node .nh b { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .bd { font-style: normal; font-size: 13px; }
+  .node .nd { padding: 3px 8px; font-size: 12px; line-height: 1.35; color: var(--sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .pi, .po { position: absolute; width: 14px; height: 14px; border: 2px solid #98a2b3; border-radius: 50%; background: #fff; }
+  .pi { left: -8px; top: 25px; } .po { right: -8px; top: 25px; cursor: crosshair; }
+  .pi::after, .po::after { content: ''; position: absolute; inset: -9px; } /* 점이 작아도(작게 줄여 봐도, 손가락으로도) 잘 잡히게 눌림 자리를 넓힌다 */
+  .po:hover, .pi.hot { border-color: var(--blue); background: var(--blue-bg); }
+  .po.t { top: 13px; border-color: #12b76a; } .po.f { top: 39px; border-color: #f04438; }
+  .pl { position: absolute; right: 10px; font-size: 10px; font-weight: 700; pointer-events: none; }
+  .pl.t { top: 11px; color: #067647; } .pl.f { top: 37px; color: #b42318; }
+  .node.if .nd { padding-right: 34px; }
+  .zoom { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: #fff; overflow: hidden; z-index: 3; }
+  .zoom button { width: 32px; height: 30px; border: 0; background: #fff; font-size: 15px; color: #344054; }
+  .zoom button + button { border-top: 1px solid var(--line); } .zoom button:hover { background: #f2f4f7; }
+  .insp { position: absolute; z-index: 4; top: 8px; right: 8px; bottom: 8px; width: 290px; display: flex; flex-direction: column; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .98); box-shadow: 0 10px 30px rgba(16, 24, 40, .16); cursor: default; }
+  .insp .ih { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .insp .ih b { font-size: 14px; } .insp .ix { width: 28px; height: 28px; border: 0; border-radius: 7px; background: none; color: var(--sub); }
+  .insp .ix:hover { background: #f2f4f7; }
+  .insp .ib { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+  .insp label { display: block; margin: 7px 0 0; font-size: 12px; font-weight: 600; color: #344054; }
+  .insp label > :not(span) { display: block; width: 100%; margin-top: 3px; font-weight: 400; }
+  .insp textarea { resize: vertical; font-size: 13px; }
+  .insp .help { margin: 8px 0 2px; color: var(--sub); font-size: 12px; }
+  .insp .chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+  .insp .chips button { padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: #f8f9fb; font-size: 11px; color: #475467; }
+  .insp .chips button:hover { background: var(--blue-bg); }
+  .insp .del { margin-top: 8px; align-self: flex-start; }
+  .hist { margin-top: 12px; }
+  .hist h3 { margin: 0 0 6px; font-size: 15px; } .hist h3 small { color: var(--sub); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .none { padding: 10px 2px; color: var(--sub); }
+  .run { margin-bottom: 6px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .run > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 7px 12px; cursor: pointer; list-style: none; }
+  .run > summary::-webkit-details-marker { display: none; }
+  .run > summary .rs { font-weight: 700; } .run > summary small { color: var(--sub); }
+  .run.ok > summary .rs { color: var(--green); } .run.error > summary .rs { color: var(--red); } .run.running > summary .rs { color: var(--blue); }
+  .steps { padding: 2px 12px 10px; border-top: 1px solid var(--line); }
+  .st { display: grid; grid-template-columns: 24px 1fr auto; align-items: start; gap: 2px 6px; padding: 5px 0; border-bottom: 1px dashed #eceff3; }
+  .st:last-child { border-bottom: 0; }
+  .st .si { font-size: 15px; } .st .sn { font-weight: 600; } .st .sn small { margin-left: 6px; color: var(--sub); font-weight: 400; } .st .sm { color: var(--sub); font-size: 12px; white-space: nowrap; }
+  .st pre { grid-column: 2 / 4; margin: 0; padding: 5px 8px; border-radius: 7px; background: #f8f9fb; font: 12px/1.45 "Malgun Gothic", system-ui, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 150px; overflow-y: auto; }
+  .st.error pre { background: var(--red-bg); color: var(--red); } .st.skipped { color: var(--sub); } .st.pending { color: #98a2b3; }
+  .st .spin { display: inline-block; animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .st .spin { animation: none; } }
+  @media (max-width: 700px) { .insp { left: 8px; width: auto; top: auto; max-height: 62%; } #wname { width: 150px; } .stage { height: clamp(280px, calc(100vh - 470px), 480px); } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h2>워크플로</h2>
+    <select id="pick" aria-label="워크플로 고르기"></select>
+    <button class="ghost" id="bNew">＋ 새 워크플로</button>
+    <span class="sp"></span>
+    <input id="wname" type="text" maxlength="40" aria-label="워크플로 이름" placeholder="이름">
+    <label class="auto" title="켜 두면 4편의 시계가 시작 노드(매일 시각·N분마다)가 정한 때에 알아서 돌려요"><span class="sw"><input type="checkbox" id="auto"><i></i></span>자동 실행 켬</label>
+    <button class="btn" id="bRun">▶ 실행</button>
+    <span class="saved" id="saved" role="status"></span>
+    <button class="ghost red" id="bDel" title="이 워크플로 지우기" aria-label="이 워크플로 지우기">🗑</button>
+  </header>
+  <div class="warnbar" id="warn" hidden role="status"></div>
+  <div class="palette" id="palette"></div>
+  <div class="stage" id="stage">
+    <div class="layer" id="layer"><svg id="edges" aria-hidden="true"></svg><div id="nodes"></div></div>
+    <div class="zoom"><button data-z="in" aria-label="확대">＋</button><button data-z="out" aria-label="축소">－</button><button data-z="fit" aria-label="전체 보기" title="전체 보기">⤢</button></div>
+    <aside class="insp" id="insp" hidden></aside>
+  </div>
+  <section class="hist"><h3>실행 기록 <small id="histSub"></small></h3><div id="runs"></div></section>
+</div>
+
+<script src="/m/db.js"></script>
+<script src="/m/workflow-calc.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const T = wf.TYPES, W = 190, H = 64, clampK = (k) => Math.min(2, Math.max(0.35, k));
+  const jfetch = async (url, opt) => {
+    const r = await fetch(url, opt && opt.body ? { ...opt, headers: { 'Content-Type': 'application/json' } } : opt);
+    if (r.status === 401) { (parent !== window ? parent : window).location.replace('/'); throw new Error('login'); }
+    const j = await r.json().catch(() => ({})); return { ok: r.ok, status: r.status, j };
+  };
+  let flows = [], cur = null, sel = null, runs = [], running = false, view = { x: 30, y: 20, k: 1 }, dirty = false, saving = false, saveTimer = 0, lastField = null, opened = new Set(), seenRun = '';
+
+  // ---------- 목록 · 불러오기 · 저장 ----------
+  async function loadList(keep) {
+    const r = await jfetch('/api/workflows');
+    if (!r.ok) { $('warn').textContent = `⚠ ${r.j.error || '워크플로를 불러오지 못했어요.'}`; $('warn').className = 'warnbar err'; $('warn').hidden = false; return; }
+    flows = r.j.items;
+    const id = keep && cur ? cur.id : (flows.slice().sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0] || {}).id;
+    $('pick').innerHTML = flows.length ? flows.map((f) => `<option value="${f.id}">${f.enabled ? '⏰ ' : ''}${esc(f.name)}</option>`).join('') : '<option value="">(워크플로가 없어요)</option>';
+    if (!flows.length) { cur = null; render(); return; }
+    if (!keep || !cur || !flows.some((f) => f.id === cur.id)) open(id); else { $('pick').value = cur.id; }
+  }
+  function open(id) {
+    const f = flows.find((x) => x.id === id); if (!f) return;
+    cur = JSON.parse(JSON.stringify(f)); sel = null; dirty = false; runs = []; opened = new Set(); seenRun = ''; view = { x: 30, y: 20, k: 1 };
+    $('pick').value = id; $('warn').hidden = true; render(); fit(); loadRuns();
+  }
+  function mark() { dirty = true; $('saved').textContent = '저장 중…'; clearTimeout(saveTimer); saveTimer = setTimeout(save, 600); }
+  async function save() {
+    clearTimeout(saveTimer); if (!cur || !dirty) return true;
+    if (saving) { saveTimer = setTimeout(save, 300); return false; }
+    saving = true; const id = cur.id, body = { name: cur.name, nodes: cur.nodes, edges: cur.edges }, snap = JSON.stringify(body);
+    try {
+      const r = await jfetch(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+      if (!cur || cur.id !== id) return true;
+      if (!r.ok) { $('saved').textContent = '⚠ 저장 못 함'; warn(`저장하지 못했어요: ${r.j.error || r.status}`, true); return false; }
+      dirty = JSON.stringify({ name: cur.name, nodes: cur.nodes, edges: cur.edges }) !== snap; // 저장하는 사이 또 고쳤으면 다시
+      cur.enabled = r.j.enabled; $('auto').checked = cur.enabled; const f = flows.find((x) => x.id === id); if (f) Object.assign(f, r.j);
+      $('saved').textContent = dirty ? '저장 중…' : '저장됨 ✓'; warn(r.j.warns && r.j.warns.length ? r.j.warns.slice(0, 2).join(' · ') : '');
+      if (dirty) saveTimer = setTimeout(save, 200); return !dirty;
+    } finally { saving = false; }
+  }
+  function warn(t, err) { const w = $('warn'); w.textContent = t ? `${err ? '⚠ ' : 'ℹ '}${t}` : ''; w.className = `warnbar${err ? ' err' : ''}`; w.hidden = !t; }
+
+  // ---------- 그리기: 노드 상자 + 선 ----------
+  const nodeById = (id) => cur.nodes.find((n) => n.id === id);
+  const portY = (n, b) => (n.type === 'if' ? (b === 'false' ? 46 : 20) : 32);
+  function lastSteps() { const r = runs[0], m = {}; if (r && r.steps) for (const s of r.steps) m[s.id] = s; return m; }
+  const ICON = { ok: '✅', error: '❌', skipped: '⏭', pending: '⏳', running: '⏵' };
+  function render() {
+    const has = !!cur;
+    $('wname').disabled = !has; $('auto').disabled = !has; $('bRun').disabled = !has || running; $('bDel').disabled = !has; $('wname').value = has ? cur.name : '';
+    $('auto').checked = has && cur.enabled; $('bRun').textContent = running ? '⏳ 실행 중…' : '▶ 실행';
+    $('stage').style.opacity = has ? 1 : .5;
+    renderNodes(); drawEdges(); applyView(); renderInspector(); renderRuns();
+  }
+  function renderNodes() {
+    if (!cur) { $('nodes').innerHTML = ''; return; }
+    const st = lastSteps();
+    $('nodes').innerHTML = cur.nodes.map((n) => {
+      const t = T[n.type], s = st[n.id], cls = t.trigger ? 'trigger' : t.branches ? 'flow if' : n.type === 'wait' || n.type === 'set' ? 'flow' : '';
+      return `<div class="node ${cls} ${sel && sel.kind === 'node' && sel.id === n.id ? 'sel' : ''}" data-id="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px"><div class="nh"><span>${t.icon}</span><b>${esc(n.name)}</b>${s ? `<i class="bd" title="${esc(s.status === 'error' ? s.error : s.out)}">${ICON[s.status] || ''}</i>` : ''}</div><div class="nd">${esc(wf.describe(n)) || '&nbsp;'}</div>`
+        + (t.trigger ? '' : '<span class="pi" data-pi="1" title="여기로 선을 이어요"></span>')
+        + (t.branches ? '<span class="po t" data-b="true" title="참일 때 → 끌어서 이어요"></span><span class="pl t">참</span><span class="po f" data-b="false" title="거짓일 때 → 끌어서 이어요"></span><span class="pl f">거짓</span>' : '<span class="po" data-b="" title="끌어서 다음 노드에 이어요"></span>') + '</div>';
+    }).join('');
+  }
+  const bez = (x1, y1, x2, y2) => { const dx = Math.max(40, Math.abs(x2 - x1) / 2); return `M${x1} ${y1} C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`; };
+  const ekey = (e) => `${e.from}>${e.to}>${e.branch || ''}`;
+  function drawEdges(tmp) {
+    if (!cur) { $('edges').innerHTML = ''; return; }
+    let h = '';
+    for (const e of cur.edges) {
+      const a = nodeById(e.from), b = nodeById(e.to); if (!a || !b) continue;
+      const d = bez(a.x + W, a.y + portY(a, e.branch), b.x, b.y + 32), on = sel && sel.kind === 'edge' && sel.key === ekey(e);
+      h += `<path class="ev ${e.branch === 'true' ? 't' : e.branch === 'false' ? 'f' : ''} ${on ? 'sel' : ''}" d="${d}"/><path class="eh" data-k="${esc(ekey(e))}" d="${d}"/>`;
+    }
+    if (tmp) h += `<path class="ev live" d="${tmp}"/>`;
+    $('edges').innerHTML = h;
+  }
+  const applyView = () => { $('layer').style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`; };
+  function fit() {
+    if (!cur || !cur.nodes.length) return;
+    const st = $('stage').getBoundingClientRect(); if (st.width < 10) return;
+    const x0 = Math.min(...cur.nodes.map((n) => n.x)), y0 = Math.min(...cur.nodes.map((n) => n.y)), x1 = Math.max(...cur.nodes.map((n) => n.x + W)), y1 = Math.max(...cur.nodes.map((n) => n.y + H));
+    const aw = st.width - ($('insp').hidden || st.width <= 700 ? 0 : 300); // 오른쪽 설정 패널이 열려 있으면 그 자리는 비운다
+    view.k = clampK(Math.min((aw - 60) / (x1 - x0), (st.height - 50) / (y1 - y0), 1.1));
+    view.x = (aw - (x1 - x0) * view.k) / 2 - x0 * view.k; view.y = (st.height - (y1 - y0) * view.k) / 2 - y0 * view.k; applyView();
+  }
+  const world = (e) => { const r = $('stage').getBoundingClientRect(); return { x: (e.clientX - r.left - view.x) / view.k, y: (e.clientY - r.top - view.y) / view.k }; };
+  function zoomAt(k, px, py) { k = clampK(k); const wx = (px - view.x) / view.k, wy = (py - view.y) / view.k; view.k = k; view.x = px - wx * k; view.y = py - wy * k; applyView(); }
+
+  // ---------- 끌기 · 잇기 · 고르기 ----------
+  let drag = null, raf = 0;
+  const later = (f) => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; f(); }); };
+  $('stage').addEventListener('pointerdown', (e) => {
+    if (!cur || e.target.closest('.insp, .zoom')) return;
+    const stg = $('stage'); stg.setPointerCapture(e.pointerId);
+    const po = e.target.closest('.po'), nd = e.target.closest('.node'), eh = e.target.closest('.eh');
+    if (po && nd) { drag = { kind: 'link', from: nd.dataset.id, branch: po.dataset.b || null }; return; }
+    if (nd) { const n = nodeById(nd.dataset.id), w = world(e); drag = { kind: 'node', id: n.id, dx: w.x - n.x, dy: w.y - n.y, moved: false, sx: e.clientX, sy: e.clientY, el: nd }; return; }
+    if (eh) { select({ kind: 'edge', key: eh.dataset.k }); drag = null; return; }
+    drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: false }; stg.classList.add('panning');
+  });
+  $('stage').addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (drag.kind === 'node') {
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
+      drag.moved = true; const w = world(e), n = nodeById(drag.id); n.x = Math.round(w.x - drag.dx); n.y = Math.round(w.y - drag.dy); drag.el.style.left = `${n.x}px`; drag.el.style.top = `${n.y}px`; later(drawEdges);
+    } else if (drag.kind === 'pan') {
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
+      drag.moved = true; view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; later(applyView);
+    } else if (drag.kind === 'link') {
+      const a = nodeById(drag.from), w = world(e); later(() => drawEdges(bez(a.x + W, a.y + portY(a, drag.branch), w.x, w.y)));
+      const over = document.elementFromPoint(e.clientX, e.clientY), t = over && over.closest('.node');
+      document.querySelectorAll('.pi.hot').forEach((x) => x.classList.remove('hot')); if (t && t.dataset.id !== drag.from) { const pi = t.querySelector('.pi'); if (pi) pi.classList.add('hot'); }
+    }
+  });
+  const endDrag = (e, cancel) => {
+    const d = drag; drag = null; $('stage').classList.remove('panning'); document.querySelectorAll('.pi.hot').forEach((x) => x.classList.remove('hot'));
+    if (!d) return;
+    if (d.kind === 'node') { if (d.moved) mark(); else select({ kind: 'node', id: d.id }); }
+    else if (d.kind === 'pan') { if (!d.moved) select(null); }
+    else if (d.kind === 'link') {
+      const over = !cancel && document.elementFromPoint(e.clientX, e.clientY), t = over && over.closest('.node');
+      if (t) connect(d.from, t.dataset.id, d.branch); else drawEdges();
+    }
+  };
+  $('stage').addEventListener('pointerup', (e) => endDrag(e, false));
+  $('stage').addEventListener('pointercancel', (e) => endDrag(e, true));
+  $('stage').addEventListener('wheel', (e) => { e.preventDefault(); const r = $('stage').getBoundingClientRect(); zoomAt(view.k * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+  $('stage').querySelectorAll('.zoom [data-z]').forEach((b) => (b.onclick = () => { const r = $('stage').getBoundingClientRect(), z = b.dataset.z; if (z === 'fit') fit(); else zoomAt(view.k * (z === 'in' ? 1.25 : 0.8), r.width / 2, r.height / 2); }));
+  document.addEventListener('keydown', (e) => { if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) { e.preventDefault(); removeSel(); } });
+
+  function connect(from, to, branch) {
+    const a = nodeById(from), b = nodeById(to);
+    if (!a || !b || a === b) return drawEdges();
+    if (T[b.type].trigger) { warn('시작 노드로는 선을 이을 수 없어요. 시작 노드는 맨 앞이에요.', true); return drawEdges(); }
+    if (T[a.type].branches && !branch) { warn('조건 나누기는 오른쪽의 "참"·"거짓" 점에서 이어 주세요.', true); return drawEdges(); }
+    if (cur.edges.some((e) => e.from === from && e.to === to && (e.branch || null) === (branch || null))) return drawEdges();
+    const next = [...cur.edges, branch ? { from, to, branch } : { from, to }];
+    if (wf.hasCycle(cur.nodes, next)) { warn('선이 빙 돌아 제자리로 와요. 앞으로만 가게 이어 주세요.', true); return drawEdges(); }
+    cur.edges = next; warn(''); select({ kind: 'edge', key: ekey(next[next.length - 1]) }); mark();
+  }
+  function select(s) { sel = s; renderNodes(); drawEdges(); renderInspector(); }
+  function removeSel() {
+    if (!sel || !cur) return;
+    if (sel.kind === 'edge') cur.edges = cur.edges.filter((e) => ekey(e) !== sel.key);
+    else { if (!confirm('이 노드와 이어진 선을 지울까요?')) return; cur.nodes = cur.nodes.filter((n) => n.id !== sel.id); cur.edges = cur.edges.filter((e) => e.from !== sel.id && e.to !== sel.id); }
+    sel = null; render(); mark();
+  }
+
+  // ---------- 노드 더하기 · 설정 패널 ----------
+  function buildPalette() {
+    const groups = ['시작', '일하기', '흐름'];
+    $('palette').innerHTML = '<small>노드 더하기:</small>' + groups.map((g) => wf.TYPE_ORDER.filter((t) => T[t].group === g).map((t) => `<button class="pb ${T[t].trigger ? 'trigger' : T[t].branches || t === 'wait' || t === 'set' ? 'flow' : ''}" data-t="${t}" title="${esc(T[t].help || '')}">${T[t].icon} ${T[t].label}</button>`).join('')).join('<small>·</small>');
+    $('palette').querySelectorAll('.pb').forEach((b) => (b.onclick = () => addNode(b.dataset.t)));
+  }
+  function uniqueName(base) { let n = base, i = 2; const have = new Set(cur.nodes.map((x) => x.name.toLowerCase())); while (have.has(n.toLowerCase())) n = `${base} ${i++}`; return n; }
+  function addNode(type) {
+    if (!cur) return;
+    if (cur.nodes.length >= wf.LIMITS.nodes) return warn(`노드는 ${wf.LIMITS.nodes}개까지예요.`, true);
+    const st = $('stage').getBoundingClientRect(), base = (sel && sel.kind === 'node' && nodeById(sel.id)) || cur.nodes[cur.nodes.length - 1]; // 고른(없으면 마지막) 노드의 오른쪽에 놓는다 — 이어 붙이기 좋게
+    let x = base ? base.x + W + 50 : Math.round((st.width / 2 - view.x) / view.k - W / 2), y = base ? base.y : Math.round((st.height / 2 - view.y) / view.k - H / 2);
+    while (cur.nodes.some((n) => Math.abs(n.x - x) < W && Math.abs(n.y - y) < H + 10)) y += H + 18;
+    let id = 1; while (cur.nodes.some((n) => n.id === `n${id}`)) id++;
+    const node = { id: `n${id}`, type, name: uniqueName(T[type].label), x, y, params: wf.cleanParams(type, {}) };
+    cur.nodes.push(node); warn(''); sel = { kind: 'node', id: node.id }; render(); mark();
+    const sx = node.x * view.k + view.x, sy = node.y * view.k + view.y; if (sx < 0 || sy < 0 || sx + W * view.k > st.width - 300 || sy + H * view.k > st.height) fit(); // 가려지는 자리면 전체가 보이게 맞춘다 (오른쪽 설정 패널 자리 포함)
+  }
+  const VISIBLE = { // 값에 따라 보이는 칸
+    write: (p, k) => (k === 'id' ? p.mode === 'update' : true),
+    if: (p, k) => (k === 'right' ? !['empty', 'notempty'].includes(p.op) : true),
+    http: (p, k) => (k === 'body' ? p.method === 'POST' : true),
+    notice: (p, k) => (k === 'user' ? p.to === 'user' : k === 'list' ? p.to === 'owners' : true),
+  };
+  function renderInspector() {
+    const el = $('insp');
+    if (!cur || !sel) { el.hidden = true; return; }
+    if (sel.kind === 'edge') {
+      const e = cur.edges.find((x) => ekey(x) === sel.key); if (!e) { el.hidden = true; return; }
+      const a = nodeById(e.from), b = nodeById(e.to);
+      el.innerHTML = `<div class="ih"><b>선</b><button class="ix" aria-label="닫기">✕</button></div><div class="ib"><div class="help">${esc(a.name)}${e.branch ? ` (${e.branch === 'true' ? '참' : '거짓'})` : ''} → ${esc(b.name)}</div></div><button class="ghost red del">이 선 지우기</button>`;
+      el.hidden = false; el.querySelector('.ix').onclick = () => select(null); el.querySelector('.del').onclick = removeSel; return;
+    }
+    const n = nodeById(sel.id); if (!n) { el.hidden = true; return; }
+    const t = T[n.type], others = cur.nodes.filter((x) => x.id !== n.id);
+    el.innerHTML = `<div class="ih"><b>${t.icon} ${t.label}</b><button class="ix" aria-label="닫기">✕</button></div><div class="ib"><label><span>이름 (뒤 노드가 {{steps.이름}} 으로 불러요)</span><input type="text" id="fName" maxlength="30" value="${esc(n.name)}"></label><div id="fParams"></div>${t.help ? `<div class="help">${esc(t.help)}</div>` : ''}<div class="help">값 넣기: <code>{{today}}</code> 오늘 · <code>{{steps.노드이름}}</code> 앞 단계 결과 · <code>{{steps.노드이름.count}}</code></div></div><button class="ghost red del">이 노드 지우기</button>`;
+    el.hidden = false;
+    $('fName').oninput = (e) => { n.name = e.target.value.slice(0, 30); const b = document.querySelector(`.node[data-id="${n.id}"] .nh b`); if (b) b.textContent = n.name; mark(); };
+    el.querySelector('.ix').onclick = () => select(null); el.querySelector('.del').onclick = removeSel;
+    const drawParams = () => {
+      $('fParams').innerHTML = t.params.filter((f) => !(VISIBLE[n.type] && VISIBLE[n.type](n.params, f.key) === false)).map((f) => {
+        const v = n.params[f.key], id = `p_${f.key}`;
+        let ctl;
+        if (f.kind === 'select') ctl = `<select id="${id}">${f.options.map((o) => `<option value="${esc(o[0])}" ${o[0] === v ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
+        else if (f.kind === 'step') ctl = `<select id="${id}"><option value="">(고르세요)</option>${others.map((o) => `<option ${o.name === v ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>`;
+        else if (f.kind === 'number') ctl = `<input id="${id}" type="number" min="${f.min}" max="${f.max}" value="${esc(v)}">`;
+        else if (f.kind === 'time') ctl = `<input id="${id}" type="time" value="${esc(v)}">`;
+        else if (f.kind === 'area') ctl = `<textarea id="${id}" rows="${f.rows || 3}" ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>${esc(v)}</textarea>`;
+        else ctl = `<input id="${id}" type="text" value="${esc(v)}" ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>`;
+        const tpl = f.kind === 'text' || f.kind === 'area';
+        return `<label><span>${esc(f.label)}</span>${ctl}</label>${tpl && f.key !== 'field' && f.key !== 'user' && f.key !== 'id' ? chips(id, others) : ''}`;
+      }).join('');
+      for (const f of t.params) {
+        const c = $(`p_${f.key}`); if (!c) continue;
+        c.onfocus = () => { lastField = c; };
+        c.oninput = c.onchange = () => {
+          n.params[f.key] = f.kind === 'number' ? (c.value === '' ? f.def : Number(c.value)) : c.value;
+          const nd = document.querySelector(`.node[data-id="${n.id}"] .nd`); if (nd) nd.textContent = wf.describe(n) || ' ';
+          mark(); if (c.tagName === 'SELECT' && VISIBLE[n.type]) drawParams(); // 고른 값에 따라 보이는 칸이 바뀐다
+        };
+      }
+      el.querySelectorAll('.chips button').forEach((b) => (b.onclick = () => insertAt(b.dataset.f, b.dataset.v)));
+    };
+    drawParams();
+  }
+  const chips = (fid, others) => `<div class="chips"><button type="button" data-f="${fid}" data-v="{{today}}">오늘</button>${others.slice(0, 8).map((o) => `<button type="button" data-f="${fid}" data-v="${esc(`{{steps.${o.name}}}`)}">${esc(o.name)}</button>`).join('')}</div>`;
+  function insertAt(fid, text) { // 칸의 커서 자리에 {{…}} 를 넣는다
+    const c = $(fid); if (!c) return; const a = c.selectionStart ?? c.value.length, b = c.selectionEnd ?? a;
+    c.value = c.value.slice(0, a) + text + c.value.slice(b); c.focus(); c.selectionStart = c.selectionEnd = a + text.length; c.dispatchEvent(new Event('input'));
+  }
+
+  // ---------- 실행 · 기록 ----------
+  async function loadRuns() {
+    if (!cur) return; const id = cur.id, r = await jfetch(`/api/workflows/${id}/runs`).catch(() => null);
+    if (!r || !r.ok || !cur || cur.id !== id) return;
+    runs = r.j.items; running = !!r.j.running;
+    if (runs[0] && runs[0].id !== seenRun) { seenRun = runs[0].id; opened.add(runs[0].id); } // 새 실행은 자동으로 펼친다
+    $('bRun').disabled = running || !cur; $('bRun').textContent = running ? '⏳ 실행 중…' : '▶ 실행';
+    renderNodes(); drawEdges(); renderRuns();
+  }
+  const fmtT = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`; };
+  const STATUS = { ok: '✅ 성공', error: '❌ 실패', running: '⏳ 실행 중' };
+  function renderRuns() {
+    $('histSub').textContent = runs.length ? `최근 ${runs.length}번` : '';
+    $('runs').innerHTML = !cur ? '' : runs.length ? runs.map((r) => {
+      const secs = r.endedAt ? ((Date.parse(r.endedAt) - Date.parse(r.startedAt)) / 1000).toFixed(1) + '초' : '';
+      return `<details class="run ${r.status}" data-id="${r.id}" ${opened.has(r.id) ? 'open' : ''}><summary><span class="rs">${STATUS[r.status] || r.status}</span><span>${r.trigger === 'manual' ? '▶ 손으로' : '⏰ 시계가'} 시작</span><small>${fmtT(r.startedAt)}${secs ? ` · ${secs}` : ''}</small></summary><div class="steps">${(r.steps || []).map((s) => {
+        const body = s.status === 'error' ? s.error : s.out;
+        return `<div class="st ${s.status}"><span class="si">${s.status === 'running' ? '<i class="spin">⏵</i>' : ICON[s.status] || ''}</span><span class="sn">${esc(s.name)}<small>${esc((T[s.type] || {}).label || s.type)}</small></span><span class="sm">${s.status === 'ok' || s.status === 'error' ? `${s.ms}ms` : s.status === 'skipped' ? '건너뜀' : s.status === 'pending' ? '대기' : '실행 중'}</span>${body ? `<pre>${esc(body)}</pre>` : ''}</div>`;
+      }).join('')}</div></details>`;
+    }).join('') : '<div class="none">아직 실행한 적이 없어요. 위의 <b>▶ 실행</b>을 눌러 보세요.</div>';
+    $('runs').querySelectorAll('details').forEach((d) => d.addEventListener('toggle', () => (d.open ? opened.add(d.dataset.id) : opened.delete(d.dataset.id))));
+  }
+  $('bRun').onclick = async () => {
+    if (!cur || running) return;
+    if (dirty && !(await save())) return warn('저장하지 못해서 실행하지 않았어요. 위의 이유를 먼저 고쳐 주세요.', true);
+    $('bRun').disabled = true; const r = await jfetch(`/api/workflows/${cur.id}/run`, { method: 'POST', body: '{}' });
+    if (!r.ok) { $('bRun').disabled = false; return warn(r.j.error || '실행하지 못했어요.', true); }
+    running = true; $('bRun').textContent = '⏳ 실행 중…'; warn(''); await loadRuns();
+  };
+  $('auto').onchange = async () => {
+    if (!cur) return; const want = $('auto').checked;
+    if (dirty && !(await save())) { $('auto').checked = !want; return; }
+    const r = await jfetch(`/api/workflows/${cur.id}/enable`, { method: 'POST', body: JSON.stringify({ on: want }) });
+    if (!r.ok) { $('auto').checked = !want; return warn(r.j.error || '바꾸지 못했어요.', true); }
+    cur.enabled = r.j.enabled; const f = flows.find((x) => x.id === cur.id); if (f) f.enabled = cur.enabled; loadList(true);
+    warn(cur.enabled ? '자동 실행을 켰어요. 시작 노드가 정한 때에 4편의 시계가 돌려요.' : '자동 실행을 껐어요.');
+  };
+  $('bNew').onclick = async () => { if (dirty) await save(); const r = await jfetch('/api/workflows', { method: 'POST', body: JSON.stringify({ name: '새 워크플로' }) }); if (!r.ok) return warn(r.j.error || '만들지 못했어요.', true); flows.push(r.j); await loadList(false); open(r.j.id); };
+  $('bDel').onclick = async () => {
+    if (!cur || !confirm(`「${cur.name}」 워크플로와 실행 기록을 지울까요?`)) return;
+    const r = await jfetch(`/api/workflows/${cur.id}`, { method: 'DELETE' }); if (!r.ok) return warn(r.j.error || '지우지 못했어요.', true);
+    cur = null; dirty = false; await loadList(false);
+  };
+  $('pick').onchange = async () => { if (dirty) await save(); open($('pick').value); };
+  $('wname').oninput = (e) => { if (cur) { cur.name = e.target.value; mark(); } };
+
+  buildPalette(); render(); loadList(false);
+  db.watch('workflowruns', () => { loadRuns(); }); // 단계가 바뀔 때마다 기록 파일이 바뀐다 → 실시간
+  db.watch('workflows', () => { if (!dirty && !saving) loadList(true); }); // 비서가 만든 워크플로가 바로 목록에 뜬다
+</script>
+</body>
+</html>

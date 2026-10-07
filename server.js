@@ -170,7 +170,7 @@ function loadCollection(name) { // 파일이 없으면 빈 목록, 깨져 있으
 // 파일이 바뀌면(우리가 썼든 AI 가 직접 고쳤든) 열려 있는 화면(/api/events)에 "<이름> 이 바뀜"을 알린다
 const streams = new Set();
 const READONLY_DB = new Set(['rooms', 'meetings', 'bookings']); // 회의실·회의록: 읽기는 모두, 고치기는 회의록 화면의 서버 주소로만 (일반 업무 자료 주소의 PUT·DELETE 는 403)
-const GUARDED_DB = new Set(['approvals', 'mandays']); // 공수 기록(mandays): "내 기록"은 그 사람만 봐야 해서 같은 길로 막는다 (아래 공수 부분). 결재 문서: 일반 업무 자료 주소(/api/db)로는 열리지 않는다 (서명은 결재 주소에서만 남기고, 보는 사람은 기안자·결재선뿐). 바뀌었다는 알림(이름만)은 보내서 열려 있는 결재 화면·대시보드가 다시 읽게 한다
+const GUARDED_DB = new Set(['approvals', 'mandays', 'workflows', 'workflowruns']); // 공수 기록(mandays): "내 기록"은 그 사람만 봐야 해서 같은 길로 막는다 (아래 공수 부분). 결재 문서: 일반 업무 자료 주소(/api/db)로는 열리지 않는다 (서명은 결재 주소에서만 남기고, 보는 사람은 기안자·결재선뿐). 바뀌었다는 알림(이름만)은 보내서 열려 있는 결재 화면·대시보드가 다시 읽게 한다
 const PRIVATE_DB = new Set(['channels', 'messages']); // 메신저 자료: 일반 업무 자료 주소(/api/db)로는 열리지 않고, 바뀌었다는 알림도 안 보낸다 (채널 멤버만 받는 메신저 전용 연결이 있다)
 const pending = new Map(); // 한 번 쓸 때 이벤트가 여러 번 오므로 50ms 안의 것은 하나로 합친다
 function emitDb(name) { if (PRIVATE_DB.has(name)) return; for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name })}\n\n`); } // 열려 있는 화면에 "<이름> 이 바뀜"
@@ -427,7 +427,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', 'connector.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json']; // (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
+const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', 'connector.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**', 'db/approvals.json', '결재파일/**', 'db/mandays.json', 'db/workflows.json', 'db/workflowruns.json']; // (워크플로: 서버 권한으로 자동 실행되는 것이라 비서는 초안 파일만 놓고 서버가 검사해 만든다 — 직접 고치면 "자동 실행"을 몰래 켜거나 검사를 건너뛸 수 있다) (공수 기록도: 사람마다 자기 것만 봐야 한다) 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다. 결재 문서도 기안자·결재선만 봐야 하고 서명을 비서가 꾸미지 못해야 해서 같이 막는다 — 비서는 users/<아이디>/approval-draft.json 에 초안만 놓고, 서버가 검사해 작성중 기안으로 만든다)
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
 const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json', 'selfmod-log.json', '.rollback.json', 'logs/**']; // (8편: 자기 수정 기록·감시자가 남기는 되돌림 표시·로그도 비서가 꾸미지 못하게) // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
@@ -557,7 +557,7 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
 // 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
-const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs·approval·okr)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
+const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs·approval·okr·workflow)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
 // 여러 사람이 쓰므로 누구의 비서인지도 알려 준다: 개인 폴더(기억·예약·일지가 있는 곳)와 역할. 지침에 적힌 memory.md·schedule.json·journal/ 은 이 폴더 안의 것이다
 const userHint = (u) => `이 사람의 개인 폴더: users/${u.username}/ (작업 폴더 기준). 지침의 memory.md·schedule.json·journal/ 은 모두 이 폴더 안의 것이다: users/${u.username}/memory.md · users/${u.username}/schedule.json · users/${u.username}/journal/<날짜>.md. data/ 바로 아래의 memory.md·schedule.json·journal/ 은 쓰지 않는다. 다른 사람의 폴더(users/ 아래 다른 이름)는 열지 않는다. 역할: ${isAdmin(u) ? '관리자' : '일반 사용자'}${u.dept ? `, 부서: ${u.dept}` : ''}.`;
 const brainCtx = (u, d = new Date()) => `주인 이름: ${u.name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${userHint(u)} ${SKILL_HINT}${kbHint()}`;
@@ -813,7 +813,7 @@ function streamReply(res, chat, content, user, atts = []) {
   const gateFile = gate ? path.join(os.tmpdir(), `sancho-gate-${crypto.randomBytes(8).toString('hex')}.json`) : null;
   if (gateFile) fs.writeFileSync(gateFile, JSON.stringify({ tools: gate.tools, emails: gate.emails, once: gate.once }));
   const boxBefore = boxSnap();
-  try { fs.rmSync(skillDraftFile(user), { force: true }); } catch { /* 묵은 스킬 초안은 이번 차례 것이 아니니 치운다 (이번 차례에 놓은 것만 저장되게) */ }
+  try { fs.rmSync(skillDraftFile(user), { force: true }); fs.rmSync(wfDraftFile(user), { force: true }); } catch { /* 묵은 스킬·워크플로 초안은 이번 차례 것이 아니니 치운다 (이번 차례에 놓은 것만 저장되게) */ }
   chat.messages.push({ role: 'user', content, at: nowIso(), ...(atts.length ? { attachments: atts } : {}) });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
   saveChat(user, chat);
@@ -862,6 +862,8 @@ function streamReply(res, chat, content, user, atts = []) {
     if (drafted) emit(`${gap()}${drafted}`);
     let skilled = ''; try { skilled = takeSkillDraft(user, content, aborted); } catch (e) { skilled = `⚠ 스킬 초안을 처리하지 못했어요: ${e.message}`; } // 비서가 "스킬로 저장해"로 놓고 간 초안 → 검사해서 스킬로
     if (skilled) emit(`${gap()}${skilled}`);
+    let flowed = ''; try { flowed = takeWorkflowDraft(user, content, aborted); } catch (e) { flowed = `⚠ 워크플로 초안을 처리하지 못했어요: ${e.message}`; } // 비서가 "워크플로 만들어줘"로 놓고 간 초안 → 검사해서 자동 실행 꺼짐으로
+    if (flowed) emit(`${gap()}${flowed}`);
     if (sm && sm.ok) { // 자기 수정: 비서의 답이 끝났으니 바뀐 파일을 검사한다 (몇 분 걸릴 수 있어, 이 사이 이 대화는 "답하는 중")
       const ok = !aborted && !!result && !result.is_error;
       return selfmodAfter({ user, content, ok, emit, gap }).then(complete, (e) => { emit(`${gap()}⚠ 자기 수정 처리 중 오류: ${e.message}`); complete({}); });
@@ -1143,6 +1145,7 @@ async function runScheduled(e, u) { // u: 이 예약의 주인. 그 사람의 �
 
 function scheduleTick() { // 사람마다 자기 예약 파일을 본다. 한 사람의 파일이 이상해도 다른 사람 것은 계속 돈다
   for (const u of readJson(USERS_FILE, [])) { try { scheduleTickFor(u); } catch (e) { console.error(`${u && u.username} 의 예약 점검 오류:`, e.message); } }
+  try { workflowTick(); } catch (e) { console.error('워크플로 점검 오류:', e.message); } // 같은 시계로 켜 둔 워크플로의 시작 노드도 본다
 }
 function scheduleTickFor(u) {
   const rel = `data/users/${u.username}/schedule.json`;
@@ -1165,6 +1168,202 @@ function scheduleTickFor(u) {
     runScheduled(e, u); // 끝나기를 기다리지 않는다
   }
   if (dirty) writeJson(scheduleFile(u), list); // 읽기→쓰기 사이에 기다림이 없어서 비서가 고친 내용을 덮어쓸 틈이 거의 없다
+}
+
+// ---------- 워크플로 (data/db/workflows.json · data/db/workflowruns.json): 노드를 이어 붙인 자동화. 관리자만 ----------
+// 노드 규칙·검사·값 넣기는 public/m/workflow-calc.js(화면과 같은 파일), 실행은 workflow.js(엔진). 여기는 파일 읽고 쓰기·바깥 일(io)·시계·API 만 한다.
+// 서버 권한으로 도는 자동화(자료 읽기·쓰기, 웹 호출, 메신저·텔레그램)라서: 관리자 전용 · 읽을 자료와 쓸 자료는 허용 목록뿐(결재·공수·메신저는 못 읽음, 쓰기는 지우기 없음) ·
+// 웹 호출은 이 PC 안·사내망 주소와 리다이렉트를 막음 · 비서가 만든 워크플로는 늘 "자동 실행 꺼짐"으로 시작 · 비서는 이 파일을 직접 못 읽고 못 고침(초안 파일만)
+const net = require('net'), dns = require('dns');
+const wfLib = require('./public/m/workflow-calc.js'), wfEngine = require('./workflow.js');
+const WF_READ = new Set(wfLib.SOURCES.map((s) => s[0]).filter((s) => s !== 'wbs-delayed')), WF_WRITE = new Set(wfLib.WRITABLE.map((s) => s[0]));
+const WF_MAX = 50, WF_RUNS_PER = 30, WF_RUNS_ALL = 200, WF_HTTP_MAX = 100_000;
+const WF_LOCAL_OK = process.env.SANCHO_WORKFLOW_LOCAL_OK || ''; // 점검에서만: 이 주소 하나(예: http://127.0.0.1:8794)는 사설 주소여도 부를 수 있게. 평소엔 비어 있다
+const wfRunning = new Set(); // 지금 도는 워크플로 id — 같은 것이 겹쳐 돌지 않게
+const loadWorkflows = () => loadCollection('workflows');
+const r1 = (x) => Math.round(Number(x) * 10) / 10;
+
+function wbsDelayedItems() { // WBS 지연 작업(WBS 화면의 "지연"과 같은 기준 — 계획보다 10%p 넘게 느림): 담당자별로 알릴 수 있게 owner 를 담는다
+  const day = wfLib.ymd(new Date()), out = [];
+  for (const p of readList('projects')) {
+    if (!p || typeof p !== 'object') continue;
+    const doc = wbsDoc(p.id); if (!doc) continue;
+    for (const r of wbsCalc.compute(doc, day).rows) if (r.leaf && r.status === '지연')
+      out.push({ project: String(p.name || ''), project_id: p.id, code: r.code, title: r.name, owner: r.owner || '', end: r.end, planned: r1(r.plan), actual: r1(r.actual), behind: r1(r.plan - r.actual),
+        line: `${p.name || ''} ${r.code} ${r.name} — 종료 ${r.end}, 계획 ${r1(r.plan)}% / 실제 ${r1(r.actual)}%${r.owner ? `, 담당 ${r.owner}` : ''}` });
+  }
+  return out;
+}
+async function wfHttp({ method, url, body }) { // { status, text } — 못 가는 곳이면 쉬운 한국어 이유로 던진다
+  let u; try { u = new URL(url); } catch { throw new Error('주소가 올바르지 않아요. (https://… 모양)'); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('http:// 나 https:// 주소만 부를 수 있어요.');
+  if (u.username || u.password) throw new Error('주소에 아이디·비밀번호를 넣을 수 없어요.');
+  if (!(WF_LOCAL_OK && u.origin === new URL(WF_LOCAL_OK).origin)) {
+    const host = u.hostname.replace(/^\[|\]$/g, '');
+    let addrs; try { addrs = net.isIP(host) ? [host] : (await dns.promises.lookup(host, { all: true })).map((a) => a.address); } catch { throw new Error(`"${host}" 주소를 찾지 못했어요.`); }
+    // ponytail: 이름을 풀어 검사한 뒤 fetch 가 다시 풀기 때문에, 아주 짧은 순간 주소를 바꿔치는 공격(DNS 리바인딩)은 못 막는다. 필요하면 검사한 주소로 직접 연결하게 바꾼다
+    if (!addrs.length || addrs.some(wfEngine.isPrivateAddress)) throw new Error('이 PC 안이나 사내망 주소는 부를 수 없어요. (밖의 공개 주소만 돼요)');
+  }
+  const isJson = typeof body === 'string' && /^\s*[{[]/.test(body);
+  const r = await fetch(u, { method, headers: body ? { 'Content-Type': isJson ? 'application/json' : 'text/plain; charset=utf-8' } : {}, body: method === 'POST' && body ? body : undefined, redirect: 'manual', signal: AbortSignal.timeout(10_000) })
+    .catch((e) => { throw new Error(e.name === 'TimeoutError' ? '10초 안에 답이 오지 않았어요.' : `연결하지 못했어요. (${e.cause && e.cause.code ? e.cause.code : e.message})`); });
+  const chunks = []; let size = 0; // 답이 아주 커도 100KB 까지만 받는다
+  if (r.body) for await (const c of r.body) { chunks.push(c); size += c.length; if (size >= WF_HTTP_MAX) break; }
+  return { status: r.status, text: Buffer.concat(chunks).toString('utf8').slice(0, WF_HTTP_MAX) };
+}
+function wfIo(flow, u) { // 엔진이 바깥 일을 맡기는 함수들. 모두 그 워크플로 주인(관리자)의 권한으로
+  const users = () => readJson(USERS_FILE, []);
+  const table = (name) => { try { return loadCollection(name); } catch { throw new Error(`data/db/${name}.json 이 올바른 목록이 아니에요.`); } };
+  return {
+    owner: u.username,
+    read: async (src) => {
+      if (src === 'wbs-delayed') return wbsDelayedItems();
+      if (!WF_READ.has(src)) throw new Error(`"${src}" 자료는 읽을 수 없어요.`);
+      const items = table(src); return src === 'notices' ? items.filter((n) => n && (!n.owner || n.owner === u.username)) : items;
+    },
+    write: async (coll, mode, id, fields) => {
+      if (!WF_WRITE.has(coll)) throw new Error(`"${coll}" 에는 쓸 수 없어요.`);
+      if (coll === 'events' && 'roomId' in fields) throw new Error('일정에 회의실(roomId)은 넣을 수 없어요. 회의록 메뉴의 예약표를 쓰세요.');
+      const items = table(coll);
+      if (mode === 'add') { const item = { id: crypto.randomBytes(4).toString('hex'), ...fields }; items.push(item); writeJson(dbFile(coll), items); return { id: item.id }; }
+      const i = items.findIndex((x) => x && String(x.id) === id);
+      if (i < 0) throw new Error(`id "${String(id).slice(0, 30)}" 항목을 찾지 못했어요.`);
+      items[i] = { ...items[i], ...fields, id: items[i].id }; writeJson(dbFile(coll), items); return { id: items[i].id };
+    },
+    ask: (prompt) => askBrainOnce(prompt, `${brainCtx(u)} 이 실행은 워크플로("${flow.name}")의 한 단계가 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 정리한다.`, u),
+    http: wfHttp,
+    telegram: (t) => sendTelegram(t),
+    bell: async (username, title, text) => addNotice(title, text.replace(/\s+/g, ' ').slice(0, 120), '안내', text, username),
+    messenger: async (username, text) => { // 만든 관리자와 그 사람의 1:1 대화에 🤖 산초 이름으로 (나와의 1:1 은 없어서 엔진이 나에게는 🔔 로 돌린다)
+      const list = ensureChannels(), pair = [u.username, username].sort();
+      let ch = list.find((c) => c && c.kind === 'dm' && pair.every((n) => (c.members || []).includes(n)));
+      if (!ch) { ch = { id: `c${crypto.randomBytes(4).toString('hex')}`, kind: 'dm', members: pair, createdAt: nowIso(), createdBy: u.username }; list.push(ch); writeJson(dbFile('channels'), list); }
+      addMessage(ch, { from: 'sancho', name: '산초', bot: true, askedBy: u.username, text: cleanText(text).slice(0, MSG_TEXT_MAX) });
+    },
+    resolveUser: (name) => { const x = users().find((y) => y.name === name || y.username === name); return x ? x.username : null; },
+    userExists: (un) => users().some((y) => y.username === un),
+    sleep: (ms) => new Promise((ok) => setTimeout(ok, ms)),
+  };
+}
+function saveWfRun(rec) { // 단계가 바뀔 때마다 기록 파일에 (열려 있는 화면은 db.watch('workflowruns') 로 바로 따라 바뀐다). 워크플로마다 30개·전체 200개만 남긴다
+  let items; try { items = loadCollection('workflowruns'); } catch { return; } // 깨져 있으면 덮어쓰지 않는다
+  const i = items.findIndex((x) => x && x.id === rec.id);
+  if (i < 0) items.push(rec); else items[i] = rec;
+  const keep = new Map(), out = [];
+  for (const x of [...items].reverse()) { if (!x || !x.id) continue; const n = keep.get(x.workflowId) || 0; if (n >= WF_RUNS_PER || out.length >= WF_RUNS_ALL) continue; keep.set(x.workflowId, n + 1); out.push(x); }
+  writeJson(dbFile('workflowruns'), out.reverse());
+}
+function startWorkflow(flow, startId, trigger) { // 끝나기를 기다리지 않고 바로 { runId } (첫 기록은 이미 파일에 있다) | { error }
+  if (wfRunning.has(flow.id)) return { error: '이미 실행 중이에요. 끝난 뒤에 다시 눌러 주세요.' };
+  const u = readJson(USERS_FILE, []).find((x) => x.username === flow.owner && isAdmin(x));
+  if (!u) return { error: '이 워크플로를 만든 관리자를 찾지 못했어요.' };
+  const { wf: clean, errors } = wfLib.normalize(flow); // 파일에서 읽은 것도 실행 전에 다시 검사한다
+  if (errors.length) return { error: `워크플로가 올바르지 않아요: ${errors[0]}` };
+  clean.id = flow.id; clean.owner = flow.owner;
+  const runId = `r${crypto.randomBytes(4).toString('hex')}`;
+  wfRunning.add(flow.id);
+  wfEngine.run(clean, startId, wfIo(clean, u), { trigger, runId, onUpdate: saveWfRun })
+    .then((rec) => { if (rec.status === 'error' && trigger === 'schedule') { const bad = rec.steps.find((s) => s.status === 'error'); addNotice(`워크플로 실패: ${clean.name}`, bad ? `${bad.name}: ${bad.error}` : '실패했어요', '주의', undefined, u.username); } })
+    .catch((e) => console.error('워크플로 실행 오류:', e))
+    .finally(() => wfRunning.delete(flow.id));
+  return { runId };
+}
+function workflowTick() { // 4편의 시계(30초)가 부른다: 켜 둔 워크플로의 시계 노드(매일 시각·N분마다)가 때가 되면 그 노드에서 시작. 규칙은 예약과 같다(scheduler.js)
+  let list; try { list = loadWorkflows(); } catch { return warnOnce('wf:file', '워크플로 파일을 읽지 못했어요', 'data/db/workflows.json 이 올바른 JSON 목록이 아니에요. 고칠 때까지 자동 실행이 멈춰 있어요.'); }
+  const now = new Date(); let dirty = false;
+  for (const flow of list) {
+    if (!flow || typeof flow !== 'object' || flow.enabled !== true) continue;
+    const { wf: clean, errors } = wfLib.normalize(flow);
+    if (errors.length) { warnOnce(`wf:${flow.id}:${errors[0]}`, '워크플로 하나를 건너뛰었어요', `"${String(flow.name).slice(0, 30)}": ${errors[0]}`); continue; }
+    if (!wfLib.isObj(flow.triggerRuns)) { flow.triggerRuns = {}; dirty = true; }
+    for (const n of clean.nodes) {
+      const w = wfLib.schedOf(n); if (!w) continue;
+      const last = flow.triggerRuns[n.id];
+      if (!last || Date.parse(last) - now > CLOCK_SLACK_MS) { flow.triggerRuns[n.id] = now.toISOString(); dirty = true; continue; } // 처음 보는 시계(또는 시계가 되돌아감)는 지금부터 센다 — 켜자마자 돌지 않게
+      if (wfRunning.has(flow.id) || !sched.isDue({ id: n.id, 지시문: '-', 언제: w, 켬: true, 마지막실행: last }, now)) continue;
+      flow.triggerRuns[n.id] = now.toISOString(); dirty = true; // 시작한 것으로 지금 적는다 — 실패해도 되풀이해 돌지 않는다
+      startWorkflow({ ...clean, id: flow.id, owner: flow.owner }, n.id, 'schedule');
+    }
+  }
+  if (dirty) writeJson(dbFile('workflows'), list);
+}
+const wfView = (f) => ({ id: f.id, name: f.name, enabled: f.enabled === true, owner: f.owner, nodes: f.nodes, edges: f.edges, updatedAt: f.updatedAt || '', running: wfRunning.has(f.id) });
+const hasClock = (nodes) => nodes.some((n) => wfLib.schedOf(n));
+async function workflowApi(req, res, user, p) { // /api/workflows[/<id>[/run|/enable|/runs]] — 처리했으면 true. 모두 관리자만
+  const M = req.method, done = (status, body) => { send(res, status, body); return true; };
+  const m = p.match(/^\/api\/workflows(?:\/(w[0-9a-f]{8})(?:\/(run|enable|runs))?)?$/); if (!m) return false;
+  if (!isAdmin(user)) return done(403, { error: '워크플로는 관리자만 쓸 수 있어요.' });
+  const [, id, act] = m;
+  let body = {}; if (M === 'POST' || M === 'PUT') { try { body = await readBody(req, 300_000); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } if (!wfLib.isObj(body)) body = {}; }
+  // 아래 읽기→고치기→쓰기는 await 없이 한 번에 한다 (시계가 같은 파일을 쓰는 순간과 겹치지 않게)
+  let list; try { list = loadWorkflows(); } catch { return done(500, { error: 'data/db/workflows.json 이 올바른 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  const save = () => writeJson(dbFile('workflows'), list), now = nowIso();
+  if (!id) {
+    if (M === 'GET') return done(200, { items: list.filter(wfLib.isObj).map(wfView) });
+    if (M !== 'POST') return false;
+    if (list.length >= WF_MAX) return done(400, { error: `워크플로는 ${WF_MAX}개까지예요. 안 쓰는 것을 지우고 다시 만들어 주세요.` });
+    const name = wfLib.clip(body.name, wfLib.LIMITS.name).trim() || '새 워크플로';
+    const flow = { id: `w${crypto.randomBytes(4).toString('hex')}`, name, enabled: false, owner: user.username, nodes: [{ id: 'n1', type: 'manual', name: '수동 시작', x: 40, y: 60, params: {} }], edges: [], triggerRuns: {}, createdAt: now, updatedAt: now };
+    list.push(flow); save(); return done(200, wfView(flow));
+  }
+  const i = list.findIndex((x) => x && x.id === id), flow = list[i];
+  if (!flow) return done(404, { error: '없는 워크플로예요.' });
+  if (!act) {
+    if (M === 'GET') return done(200, wfView(flow));
+    if (M === 'PUT') {
+      const r = wfLib.normalize({ ...body, id });
+      if (r.errors.length) return done(400, { error: r.errors[0], errors: r.errors });
+      const old = new Map((Array.isArray(flow.nodes) ? flow.nodes : []).map((n) => [n.id, JSON.stringify(wfLib.schedOf(n))])), runs = wfLib.isObj(flow.triggerRuns) ? { ...flow.triggerRuns } : {};
+      for (const n of r.wf.nodes) if (wfLib.schedOf(n) && old.get(n.id) !== JSON.stringify(wfLib.schedOf(n))) runs[n.id] = now; // 새 시계·바뀐 시각은 지금부터 센다
+      for (const k of Object.keys(runs)) if (!r.wf.nodes.some((n) => n.id === k)) delete runs[k];
+      // 자동 실행 스위치는 PUT 으로 못 바꾼다(enable 주소로만). 시계 노드가 모두 사라지면 저절로 꺼진다
+      list[i] = { ...flow, name: r.wf.name, nodes: r.wf.nodes, edges: r.wf.edges, enabled: flow.enabled === true && hasClock(r.wf.nodes), triggerRuns: runs, updatedAt: now };
+      save(); return done(200, { ...wfView(list[i]), warns: r.warns });
+    }
+    if (M === 'DELETE') {
+      list.splice(i, 1); save();
+      try { const runs = loadCollection('workflowruns').filter((x) => !x || x.workflowId !== id); writeJson(dbFile('workflowruns'), runs); } catch { /* 기록 파일이 깨졌으면 그대로 둔다 */ }
+      return done(200, { ok: true });
+    }
+    return false;
+  }
+  if (act === 'run' && M === 'POST') {
+    const norm = wfLib.normalize(flow), start = norm.wf && (norm.wf.nodes.find((n) => n.type === 'manual') || norm.wf.nodes.find((n) => wfLib.TYPES[n.type].trigger));
+    if (!start) return done(400, { error: '시작 노드(수동 시작·매일 시각·N분마다)가 없어요.' });
+    const r = startWorkflow({ ...flow, id }, start.id, 'manual');
+    return r.error ? done(409, { error: r.error }) : done(202, { runId: r.runId });
+  }
+  if (act === 'enable' && M === 'POST') {
+    const on = body.on === true, norm = wfLib.normalize(flow);
+    if (on && (norm.errors.length || !hasClock(norm.wf.nodes))) return done(400, { error: norm.errors.length ? `워크플로가 올바르지 않아요: ${norm.errors[0]}` : '자동으로 돌리려면 "매일 시각"이나 "N분마다" 시작 노드가 있어야 해요.' });
+    flow.enabled = on; flow.triggerRuns = {};
+    if (on) for (const n of norm.wf.nodes) if (wfLib.schedOf(n)) flow.triggerRuns[n.id] = now; // 지금부터 센다 (켜자마자 놓친 회차가 돌지 않게)
+    flow.updatedAt = now; save(); return done(200, wfView(flow));
+  }
+  if (act === 'runs' && M === 'GET') {
+    let runs = []; try { runs = loadCollection('workflowruns'); } catch { /* 기록 파일이 깨졌으면 빈 목록 */ }
+    return done(200, { items: runs.filter((x) => x && x.workflowId === id).reverse().slice(0, 15), running: wfRunning.has(id) });
+  }
+  return false;
+}
+// 비서의 "…하는 워크플로 만들어줘": 비서는 users/<아이디>/workflow-draft.json 에 초안(이름·노드·선)만 놓고, 말이 끝나면 서버가 검사해 "자동 실행 꺼짐"으로 만든다 (스킬 초안과 같은 방식).
+const wfDraftFile = (u) => userFile(u, 'workflow-draft.json');
+const asksWorkflow = (s) => /워크플로/.test(s) && /(만들|짜|추가|등록|생성|세워)/.test(s); // 주인이 이번 말에서 직접 시켰는가 (웹 페이지·파일 속 글이 시켜서 만들어지지 않게)
+function takeWorkflowDraft(user, content, drop) { // → 채팅에 덧붙일 글 ('' 이면 초안이 없었음). 파일은 한 번 보고 지운다
+  const file = wfDraftFile(user); let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return ''; }
+  fs.rmSync(file, { force: true });
+  if (drop) return '';
+  if (!asksWorkflow(content)) { addNotice('워크플로를 시키지 않았는데 초안이 생겼어요', `${user.name} 님의 대화 중 비서가 워크플로 초안을 놓았지만, 말에 워크플로 만들기 요청이 없어서 만들지 않았어요. 웹 페이지나 파일 속 글이 시킨 것일 수 있어요.`, '주의', undefined, user.username); return '⚠ 워크플로 만들기를 시키지 않아서 만들지 않았어요.'; }
+  if (!isAdmin(user)) return '⚠ 워크플로는 관리자만 만들 수 있어요. 만들지 않았어요.';
+  let j; try { if (raw.length > 60_000) throw new Error('too big'); j = JSON.parse(raw.replace(/^﻿/, '')); } catch { return '⚠ 비서가 적어 둔 워크플로 초안이 JSON 모양이 아니라 만들지 못했어요. 한 번 더 시켜 주세요.'; }
+  const r = wfLib.normalize(j);
+  if (r.errors.length) return `⚠ 워크플로 초안이 올바르지 않아 만들지 못했어요: ${r.errors.slice(0, 3).join(' / ')} — 한 번 더 시켜 주세요.`;
+  let list; try { list = loadWorkflows(); } catch { return '⚠ data/db/workflows.json 이 올바른 목록이 아니라 만들지 못했어요. (덮어쓰지 않았어요)'; }
+  if (list.length >= WF_MAX) return `⚠ 워크플로가 ${WF_MAX}개예요. 안 쓰는 것을 지우고 다시 시켜 주세요.`;
+  const now = nowIso(), flow = { id: `w${crypto.randomBytes(4).toString('hex')}`, name: r.wf.name, enabled: false, owner: user.username, nodes: r.wf.nodes, edges: r.wf.edges, triggerRuns: {}, createdAt: now, updatedAt: now };
+  list.push(flow); writeJson(dbFile('workflows'), list);
+  return `🔀 워크플로를 만들었어요: 「${flow.name}」 (노드 ${flow.nodes.length}개) — 왼쪽 메뉴 **워크플로**에서 확인하고 ▶ 실행해 보세요. 자동 실행은 꺼져 있어요 (확인한 뒤에 직접 켜 주세요).${r.warns.length ? `\n⚠ ${r.warns[0]}` : ''}`;
 }
 
 // /api/schedule[/<id>[/enable|/run]] — 화면의 예약 칸이 쓴다. 처리했으면 true (아니면 404 로 넘어간다)
@@ -2291,6 +2490,7 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, added: Object.fromEntries(names.map((n) => [n, sample[n].length])) });
     }
 
+    if (p.startsWith('/api/workflows') && await workflowApi(req, res, user, p)) return;
     const kb = p.match(/^\/api\/(wiki|skills)(?:\/([^/]+))?$/);
     if (kb) return kbApi(req, res, user, kb[1], kb[2]);
     if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory(user).map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });
@@ -2346,6 +2546,7 @@ async function handle(req, res) {
       res.end(data);
     });
   }
+  if (p === '/m/workflow.html' && user && !isAdmin(user)) return send(res, 403, '워크플로는 관리자만 쓸 수 있어요.');
   if (p.startsWith('/m/') && !user && p !== '/m/wbs-calc.js') return send(res, 401, '로그인이 필요합니다.'); // 업무 화면(public/m/)은 로그인한 사람만 (계산 코드 wbs-calc.js 만 공유 화면이 쓰도록 예외)
   return serveFile(res, p);
 }
@@ -2371,6 +2572,15 @@ server.listen(PORT, listenHost, () => {
       if (Object.keys(m).length) writeJson(runningFile(u), {});
     }
   } catch (e) { console.error('끊긴 예약 확인 오류:', e.message); }
+  try { // 지난번에 도는 도중에 서버가 꺼진 워크플로 실행: 계속 "실행 중"으로 남지 않게 닫고 알린다
+    const runs = loadCollection('workflowruns'); let hit = false;
+    for (const r of runs) {
+      if (!r || r.status !== 'running') continue; hit = true; r.status = 'error'; r.endedAt = nowIso();
+      for (const st of r.steps || []) { if (st.status === 'running') { st.status = 'error'; st.error = '서버가 꺼지면서 중단됐어요.'; } else if (st.status === 'pending') { st.status = 'skipped'; st.out = '서버가 꺼져서 실행하지 못했어요'; } }
+      addNotice(`워크플로가 중간에 끊겼어요: ${String(r.name).slice(0, 30)}`, '서버(컴퓨터)가 꺼지면서 끝나지 못했어요. 이미 한 단계는 되돌리지 않아요. 필요하면 ▶ 로 다시 실행해 주세요.', '주의', undefined, (readJson(USERS_FILE, []).find((x) => isAdmin(x)) || {}).username);
+    }
+    if (hit) writeJson(dbFile('workflowruns'), runs);
+  } catch (e) { console.error('끊긴 워크플로 확인 오류:', e.message); }
   try { // 감시자(supervisor.js)가 서버를 이전 정상 버전으로 되돌린 적이 있으면 한 번 알린다 (감시자가 남긴 표시 파일)
     const f = path.join(DATA_DIR, '.rollback.json'), r = readJson(f, null);
     if (r && typeof r === 'object') {

@@ -155,6 +155,18 @@ async function run(msg) {
     const text = body.replace(/\\n/g, '\n');
     fs.writeFileSync(`users/${home}/skill-draft.md`, flags.includes('/앞머리없음') ? text || '앞머리 없는 글' : `---\nname: ${name}\ndescription: ${desc}\n${flags.includes('/훅') ? 'allowed-tools: Bash(*)\nhooks:\n  PreToolUse: evil\n' : ''}---\n\n${text}\n`);
   }
+  if (msg.startsWith('워크플로 만들어줘') || msg.includes('/몰래워크플로')) { // 워크플로 만들기 흉내(10편): users/<아이디>/workflow-draft.json 에 초안만 놓는다. /깨짐 → JSON 아님 · /순환 → 빙 도는 선 · /이름중복 → 노드 이름이 겹침 · /몰래워크플로 → 주인이 시키지 않았는데 놓은 초안
+    const flags = msg.match(/\/(깨짐|순환|이름중복|몰래워크플로)/g) || [], name = msg.replace(/^워크플로 만들어줘[:：]?/, '').replace(/\/(깨짐|순환|이름중복|몰래워크플로)/g, '').trim() || '시험 워크플로';
+    let text;
+    if (flags.includes('/깨짐')) text = '{ 깨짐';
+    else {
+      const d = { name, nodes: [{ id: 'n1', type: 'manual', name: '시작', params: {} }, { id: 'n2', type: 'set', name: '값', params: { fields: '{"인사":"안녕 {{today}}"}' } }, { id: 'n3', type: 'if', name: '확인', params: { left: '{{steps.값.인사}}', op: 'notempty', right: '' } },
+        { id: 'n4', type: 'notice', name: flags.includes('/이름중복') ? '값' : '알림', params: { via: 'bell', to: 'me', title: '시험', text: '{{steps.값.인사}}' } }], edges: [{ from: 'n1', to: 'n2' }, { from: 'n2', to: 'n3' }, { from: 'n3', to: 'n4', branch: 'true' }] };
+      if (flags.includes('/순환')) d.edges.push({ from: 'n4', to: 'n2' });
+      text = JSON.stringify(d);
+    }
+    fs.writeFileSync(`users/${home}/workflow-draft.json`, text);
+  }
   if (msg === '/ctx') { const t = `CTX ${arg('--append-system-prompt')}`; delta(t); out({ type: 'result', subtype: 'success', is_error: false, result: t }); return; } // 두뇌에 알려 준 글(스킬 목록·위키 문서 이름)을 그대로 돌려준다
   if (msg.startsWith('기억해:')) fs.appendFileSync(home ? `users/${home}/memory.md` : 'memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내
   const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | tools=[${arg('--tools')}] | nopersist=${a.includes('--no-session-persistence') ? 'Y' : 'N'} | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
