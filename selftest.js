@@ -2938,7 +2938,7 @@ async function runHelp(ck, { CM }) {
 
   // ---- 모든 메뉴가 열림
   const noBranch = menus.filter((m) => !main.includes(`current === '${m}'`));
-  check(`왼쪽 메뉴 ${menus.length}개(${menus.join('·')}) 모두 화면에 연결됨 — "준비 중" 자리표시가 하나도 없음(주소에 #알림 을 직접 쳐도 🔔 창이 열림) · 옛 주소 #메일 은 메일정리로`, noBranch.length === 0 && !menus.includes('메일') && main.includes("MENU_ALIAS = { 메일: '메일정리' }") && menus.includes('도움말') && menus.length === 15);
+  check(`왼쪽 메뉴 ${menus.length}개(${menus.join('·')}) 모두 화면에 연결됨 — "준비 중" 자리표시가 하나도 없음(주소에 #알림 을 직접 쳐도 🔔 창이 열림) · 옛 주소 #메일 은 메일정리로`, noBranch.length === 0 && !menus.includes('메일') && main.includes("MENU_ALIAS = { 메일: '메일정리' }") && menus.includes('도움말') && menus.length === 16);
   const pages = [...new Set([...main.matchAll(/src="(\/m\/[A-Za-z0-9_-]+\.html)/g)].map((m) => m[1]))], scripts = [...new Set([...main.matchAll(/<script src="(\/[A-Za-z0-9_./-]+\.js)"/g)].map((m) => m[1]))];
   const bad = [];
   for (const p of pages) {
