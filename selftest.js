@@ -3962,6 +3962,20 @@ function runGit() {
   const TOKEN = '[0-9]{8,10}:[A-Za-z0-9_-]{35}', revs = git('rev-list', '--all').out.split('\n').filter(Boolean);
   check(`git 의 지금 파일과 지난 기록(${revs.length}개 커밋) 어디에도 진짜 모양의 텔레그램 봇 토큰(숫자 8~10자리:글자 35자)이 없음`,
     git('grep', '-qE', TOKEN).code === 1 && (revs.length === 0 || git('grep', '-qE', TOKEN, ...revs).code === 1));
+  // 공개 전 점검 (10편 마무리): 저장소를 공개해도 비밀·실제 정보가 나가지 않게. 검사식이 진짜 그런 글을 잡는지(양성 대조)도 같이 본다 — 안 잡으면 "없음"이 의미 없으니
+  // ponytail: 모양으로만 찾는다(실명·회사 이름 목록은 두지 않음 — 목록 자체가 저장소에 남으면 그게 새는 길이 된다). 새 종류의 키가 생기면 SECRET 에 한 줄 더한다
+  const SECRET = 'sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{15,}\\.[A-Za-z0-9_-]{10,}|scrypt\\$[0-9a-f]{20,}';
+  const PERSONAL = '[A-Za-z]:[\\\\/]Users[\\\\/][^\\\\/ "]+|01[016789][- .][0-9]{3,4}[- .][0-9]{4}|[0-9]{6}-[1-4][0-9]{6}';
+  const EMAIL = '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', fake = (e) => /(\.example|@example\.com)$/i.test(e);
+  const R = (p) => new RegExp(p), caught = ['AKIA' + 'ABCDEFGHIJKLMNOP', `ghp_${'a'.repeat(36)}`, '-----BEGIN RSA ' + 'PRIVATE KEY-----', `scrypt$${'ab'.repeat(16)}`].every((s) => R(SECRET).test(s)) && ['C:\\Users\\someone\\x', 'D:' + '/Users/a/b', '010-' + '1234-5678', '900101-' + '1234567'].every((s) => R(PERSONAL).test(s)); // 시험용 글은 쪼개 두었다 — 이 파일 자체가 검사에 걸리지 않게
+  check(`공개 전 점검 ①: 지금 파일과 지난 기록(${revs.length}개 커밋) 어디에도 API 키·토큰·개인 키·비밀번호 해시 모양의 글이 없음 (검사식이 그런 글을 실제로 잡는지도 확인)`,
+    caught && git('grep', '-qE', SECRET).code === 1 && (revs.length === 0 || git('grep', '-qE', SECRET, ...revs).code === 1));
+  check('공개 전 점검 ②: 지금 파일과 지난 기록 어디에도 이 PC 의 사용자 폴더 경로(C:\\Users\\이름)·전화번호·주민등록번호 모양이 없음',
+    git('grep', '-qE', PERSONAL).code === 1 && (revs.length === 0 || git('grep', '-qE', PERSONAL, ...revs).code === 1));
+  const mails = [...git('grep', '-ohIE', EMAIL).out.split('\n'), ...(revs.length ? git('grep', '-ohIE', EMAIL, ...revs).out.split('\n').map((l) => l.replace(/^[0-9a-f]{40}:/, '')) : [])].filter(Boolean);
+  check(`공개 전 점검 ③: 저장소 파일(지난 기록 포함)의 이메일 주소 ${new Set(mails).size}가지는 모두 가짜(.example·example.com) — 실제 주소 없음`, mails.length > 0 && mails.every(fake));
+  check('공개 전 점검 ④: data/ 는 지난 기록에서도 한 번도 커밋된 적 없음 · 커밋 작성자 이메일은 실제 주소가 아님(GitHub noreply·localhost)',
+    !git('log', '--all', '--format=', '--name-only').out.split('\n').some((f) => f.startsWith('data/')) && git('log', '--all', '--format=%ae%n%ce').out.split('\n').filter(Boolean).every((e) => /@users\.noreply\.github\.com$|@localhost$/.test(e)));
 }
 
 // 외부 접속 (9편 둘째 단계): 기본은 이 PC 안에서만 · 켜면 0.0.0.0 · 밖에서 온 요청은 접속 토큰(+로그인) · 켜면 위험 스위치 자동 꺼짐 · 터널 주소 표시. 전용 서버(포트 8802)로
