@@ -1,10 +1,11 @@
 // PWA 아이콘 만들기: node make-icons.js  → public/icons/icon-192.png, icon-512.png (Node 내장 zlib 만 사용)
-// 파란 바탕에 흰 "S". 글자는 바탕 한가운데 60% 안에 있어서, 폰이 모서리를 둥글게/동그랗게 잘라도(maskable) 안 잘린다.
+// 화면 왼쪽 위 로고와 같은 모양: 파랑→보라 바탕에 흰 "S", S 의 두 끝에 점(노드), 오른쪽 위에 금빛 반짝이.
+// 그림은 모두 바탕 한가운데 원(반지름 40%) 안에 있어서, 폰이 모서리를 둥글게/동그랗게 잘라도(maskable) 안 잘린다.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const BG = [47, 111, 237], FG = [255, 255, 255]; // 화면의 --blue(#2f6fed) 와 흰색
+const BG1 = [37, 99, 235], BG2 = [124, 58, 237], FG = [255, 255, 255], GOLD = [253, 230, 138]; // #2563eb → #7c3aed (왼쪽 위 → 오른쪽 아래), 흰색, #fde68a
 const SS = 4; // 한 픽셀을 4x4 로 쪼개 그려서 가장자리를 부드럽게
 
 const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
@@ -32,16 +33,22 @@ function sDist(x, y, n) { // (x, y) 에서 S 의 가장자리까지 거리 (안�
     return Math.min(e(from), e(to));
   };
   // 위 고리: 맨 아래(90°)에서 왼쪽·위를 돌아 오른쪽 위(330°)까지 / 아래 고리: 맨 위(270°)에서 오른쪽·아래를 돌아 왼쪽 아래(150°)까지
-  return Math.min(ring(cx, cy - r, 90, 330), ring(cx, cy + r, 270, 150));
+  const dot = (d, oy) => Math.hypot(x - (cx + r * Math.cos((d * Math.PI) / 180)), y - (oy + r * Math.sin((d * Math.PI) / 180))) - 0.062 * n; // S 의 두 끝(330°·150°)의 점
+  return Math.min(ring(cx, cy - r, 90, 330), ring(cx, cy + r, 270, 150), dot(330, cy - r), dot(150, cy + r));
 }
+// 네 갈래 반짝이: |u|^q + |v|^q <= s^q (q < 1 이면 가운데가 오목한 별 모양)
+const sparkle = (x, y, n) => { const u = Math.abs(x - 0.73 * n), v = Math.abs(y - 0.27 * n), s = 0.07 * n, q = 0.55; return u ** q + v ** q <= s ** q; };
 
 function icon(n) {
   const rgb = Buffer.alloc(n * n * 3);
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    let hit = 0;
-    for (let sy = 0; sy < SS; sy++) for (let sx = 0; sx < SS; sx++) if (sDist(x + (sx + 0.5) / SS, y + (sy + 0.5) / SS, n) <= 0) hit++;
-    const k = hit / (SS * SS);
-    for (let c = 0; c < 3; c++) rgb[(y * n + x) * 3 + c] = Math.round(BG[c] + (FG[c] - BG[c]) * k);
+    let hit = 0, gold = 0;
+    for (let sy = 0; sy < SS; sy++) for (let sx = 0; sx < SS; sx++) {
+      const px = x + (sx + 0.5) / SS, py = y + (sy + 0.5) / SS;
+      if (sDist(px, py, n) <= 0) hit++; else if (sparkle(px, py, n)) gold++;
+    }
+    const k = hit / (SS * SS), g = gold / (SS * SS), t = (x + y) / (2 * n); // t: 바탕 그러데이션 위치
+    for (let c = 0; c < 3; c++) { const bg = BG1[c] + (BG2[c] - BG1[c]) * t; rgb[(y * n + x) * 3 + c] = Math.round(bg + (FG[c] - bg) * k + (GOLD[c] - bg) * g); }
   }
   return png(n, rgb);
 }
