@@ -272,6 +272,27 @@
   .tghelp li { margin-bottom: 5px; }
   .tghelp p { margin: 0 0 6px; font-size: 13px; }
   .tghelp code, .card p code { padding: 1px 5px; border-radius: 5px; background: #eef0f3; font: 12px Consolas, monospace; }
+  /* 설정 위쪽 탭(일반 · 사용자) */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .tabs a { padding: 8px 16px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--sub); text-decoration: none; font-weight: 600; }
+  .tabs a:hover { color: var(--text); }
+  .tabs a.on { color: var(--blue); border-bottom-color: var(--blue); }
+  /* 사용자: 목록 표 + 추가 폼 */
+  .utable { overflow-x: auto; margin-bottom: 8px; }
+  .utable table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .utable th, .utable td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  .utable th { color: var(--sub); font-size: 13px; font-weight: 600; }
+  .utable .role { padding: 1px 8px; border-radius: 999px; background: #f2f4f7; color: var(--sub); font-size: 12px; }
+  .utable .role.admin { background: var(--blue-bg); color: var(--blue); }
+  .utable .first { color: #b54708; font-size: 12px; }
+  .uform { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; align-items: end; }
+  .uform label { display: block; font-size: 13px; font-weight: 600; color: #344054; }
+  .uform input, .uform select { display: block; width: 100%; margin-top: 4px; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 10px; font: inherit; font-weight: 400; background: #fff; }
+  .uform input:focus, .uform select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, .12); }
+  .uform input.mask { -webkit-text-security: disc; }
+  .uform .show { display: flex; align-items: center; gap: 6px; font-weight: 400; color: var(--sub); }
+  .uform .show input { width: auto; margin: 0; }
+  #userMsg { margin-top: 10px; font-size: 14px; min-height: 1.5em; } #userMsg.err { color: #b42318; }
 
   /* 휴대폰 */
   @media (max-width: 800px) {
@@ -316,6 +337,18 @@
       <div class="mbody" id="vBody"></div>
     </div>
   </div>
+  <div class="modal" id="pwModal" hidden>
+    <form class="mcard" id="pwForm" style="width:min(420px,100%)" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+      <div class="mhead"><div class="mt"><h2 id="pwTitle">비밀번호를 바꿔 주세요</h2><div class="meta">관리자가 정해 준 임시 비밀번호로 처음 들어오셨어요. 나만 아는 새 비밀번호를 정하면 바로 쓸 수 있어요.</div></div></div>
+      <div class="mbody uform" style="grid-template-columns:1fr">
+        <label>임시 비밀번호 (지금 비밀번호)<input id="pwCur" type="password" autocomplete="current-password" required></label>
+        <label>새 비밀번호 (8자 이상)<input id="pwNew" type="password" autocomplete="new-password" required minlength="8"></label>
+        <label>새 비밀번호 확인<input id="pwNew2" type="password" autocomplete="new-password" required></label>
+        <button class="btn" id="pwBtn" type="submit">바꾸고 시작하기</button>
+        <div id="pwMsg" style="color:#b42318;font-size:14px;min-height:1.4em" role="alert"></div>
+      </div>
+    </form>
+  </div>
   <div class="body">
     <nav id="nav"></nav>
     <main id="main"></main>
@@ -327,6 +360,7 @@
 <script src="/m/inbox.js"></script>
 <script>
   const MENUS = ['대시보드', '일정', '프로젝트', 'WBS', '메일', '메일정리', '메신저', '알림', '회의록', '결재', '목표', '공수', '지식노트', '워크플로', '설정'];
+  const ADMIN_ONLY = ['설정']; // 일반 사용자에게는 메뉴에도 안 보이고, 주소로 들어와도 대시보드로 보낸다 (서버도 막는다)
   const $ = (id) => document.getElementById(id);
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -374,12 +408,13 @@
 
   // ---------- 메뉴 ----------
   let current = '';
+  const menus = () => MENUS.filter((m) => myRole === 'admin' || !ADMIN_ONLY.includes(m));
   function renderNav() {
-    $('nav').innerHTML = MENUS.map((m) => `<a href="#${m}" class="${m === current ? 'on' : ''}">${m}</a>`).join('');
+    $('nav').innerHTML = menus().map((m) => `<a href="#${m}" class="${m === current ? 'on' : ''}">${m}</a>`).join('');
   }
   function route() {
     const [h, arg] = decodeURIComponent(location.hash.slice(1)).split('/'); // "#WBS/프로젝트id" 처럼 메뉴 뒤에 붙은 /… 는 그 화면이 쓴다
-    current = MENUS.includes(h) ? h : '대시보드';
+    current = menus().includes(h) ? h : '대시보드';
     stopDash(); // 대시보드를 떠나면 파일 감시도 끈다 (showChat 이 다시 켠다)
     document.body.classList.remove('menu');
     renderNav();
@@ -388,7 +423,7 @@
     else if (current === '프로젝트') showProjects();
     else if (current === 'WBS') showWbs(arg);
     else if (current === '메일정리') showMail();
-    else if (current === '설정') showSettings();
+    else if (current === '설정') showSettings(arg);
     else $('main').innerHTML = `<div class="soon"><h2>${current}</h2><p>준비 중입니다. 앞으로 만들어 갈 화면이에요.</p></div>`;
   }
   window.addEventListener('hashchange', route);
@@ -652,7 +687,7 @@
 
   // ---------- 대시보드 (채팅 위): 자료는 db.js 로 받고, 파일이 바뀌면 바로 다시 그린다 ----------
   const DASH_DATA = ['events', 'projects', 'tasks']; // 알림(notices)은 🔔 가 받아 두고 대시보드 카드도 그걸 쓴다 (아래 "🔔 알림")
-  let me = '', dashData = { bad: [] }, dashSeq = 0, dashOff = [];
+  let me = '', myRole = 'user', dashData = { bad: [] }, dashSeq = 0, dashOff = [];
   const safe = (v) => esc(String(v ?? '')); // 파일에서 온 글자는 화면에 넣기 전에 꼭 거른다
 
   async function loadDash() {
@@ -776,11 +811,11 @@
     $('schN').textContent = schedItems.length ? `(${schedItems.length})` : '';
     el.innerHTML = schedErr ? `<div class="none">⚠ ${safe(schedErr)}</div>` : schedItems.length ? schedItems.map((e, i) => {
       const id = typeof e.id === 'string' ? e.id : '', on = e.켬 !== false, run = !!e.running;
-      const ph = e.휴대폰 === true, sub = e.error ? `⚠ ${e.error}` : run ? '⏳ 실행 중…' : inbox.scheduleText(e.언제) + (ph && !schedTelegram ? ' · ⚠ 텔레그램 설정 필요' : '');
+      const admin = myRole === 'admin', ph = admin && e.휴대폰 === true, sub = e.error ? `⚠ ${e.error}` : run ? '⏳ 실행 중…' : inbox.scheduleText(e.언제) + (ph && !schedTelegram ? ' · ⚠ 텔레그램 설정 필요' : '');
       return `<div class="sitem ${on ? '' : 'off'} ${e.error ? 'bad' : ''}" title="${safe(e.지시문)}">
         <label class="sw" title="${on ? '켜짐 (누르면 끔)' : '꺼짐 (누르면 켬)'}"><input type="checkbox" data-i="${i}" ${on ? 'checked' : ''} ${id ? '' : 'disabled'}><span></span></label>
         <div class="st"><b>${safe(e.이름 || id || '(이름 없음)')}</b><small>${safe(sub)}</small></div>
-        <label class="ph" title="${ph ? '결과 요약을 휴대폰(텔레그램)으로도 보냄 (누르면 끔)' : '휴대폰(텔레그램)으로도 보내기 (누르면 켬)'}"><input type="checkbox" data-phone="${i}" ${ph ? 'checked' : ''} ${id ? '' : 'disabled'} aria-label="휴대폰으로도 보내기"><span>📱</span></label>
+        ${admin ? `<label class="ph" title="${ph ? '결과 요약을 휴대폰(텔레그램)으로도 보냄 (누르면 끔)' : '휴대폰(텔레그램)으로도 보내기 (누르면 켬)'}"><input type="checkbox" data-phone="${i}" ${ph ? 'checked' : ''} ${id ? '' : 'disabled'} aria-label="휴대폰으로도 보내기"><span>📱</span></label>` : ''}
         <button data-run="${i}" title="지금 한 번 실행 (예약 시각은 그대로)" aria-label="지금 실행" ${id && !e.error && !run ? '' : 'disabled'}>▶</button>
         <button data-del="${i}" title="이 예약 지우기" aria-label="이 예약 지우기" ${id ? '' : 'disabled'}>✕</button></div>`;
     }).join('') : '<div class="none">아직 예약이 없어요. 채팅에서 "매일 아침 8시 반에 … 해 줘" 라고 말해 보세요.</div>';
@@ -815,6 +850,7 @@
   ];
   let perm = {};
   async function loadPerm() { // 켜진 권한을 받아 입력창 왼쪽 표시를 그린다 (못 받으면 마지막 값 그대로)
+    if (myRole !== 'admin') { if ($('permBadge')) $('permBadge').hidden = true; return; } // 일반 사용자에게는 권한 스위치도 그 표시도 없다
     try { const r = await api('/api/settings'); if (r.ok) perm = (await r.json()).permissions || {}; } catch {}
     const el = $('permBadge'); if (!el) return;
     const on = PERMS.filter(([k]) => perm[k]), names = on.map((p) => p[1]).join(', ');
@@ -844,9 +880,19 @@
   // ---------- 설정 ----------
   const LABELS = { events: '일정', projects: '프로젝트', tasks: '할 일', notices: '알림' };
   const countText = (o) => Object.entries(o).map(([k, n]) => `${LABELS[k] || k} ${n}개`).join(' · ');
-  function showSettings() {
+  function showSettings(tab) {
+    const t = tab === '사용자' ? '사용자' : '일반';
     $('main').innerHTML = `
       <section class="settings"><h2>설정</h2>
+        <div class="tabs"><a href="#설정" class="${t === '일반' ? 'on' : ''}">일반</a><a href="#설정/사용자" class="${t === '사용자' ? 'on' : ''}">사용자</a></div>
+        ${t === '사용자' ? usersHtml() : generalHtml()}</section>`;
+    if (t === '사용자') return showUsers();
+    $('seedBtn').onclick = () => seed(false);
+    showPerm();
+    showTelegram();
+  }
+  function generalHtml() {
+    return `
         <div class="card"><h3>연습용 예시 데이터</h3>
           <p>가상 회사 "가나다전자"의 일정·프로젝트·할 일·알림을 넣어 화면을 연습해 볼 수 있어요. 실제 업무 자료가 아닙니다.</p>
           <button class="btn" id="seedBtn">예시 데이터 넣기</button><div id="seedMsg"></div></div>
@@ -878,11 +924,51 @@
               <p>그다음 채팅 왼쪽 <b>예약 칸의 📱</b> 를 켠 예약만 휴대폰으로도 갑니다. 보내는 것은 결과 <b>요약(400자까지)</b>이고, 텔레그램 서버를 거쳐 회사 밖으로 나갑니다. 민감한 내용을 다루는 예약에는 켜지 마세요.</p>
             </aside>
           </div>
-        </div>
-      </section>`;
-    $('seedBtn').onclick = () => seed(false);
-    showPerm();
-    showTelegram();
+        </div>`;
+  }
+
+  // ---------- 설정 › 사용자 (관리자만): 목록 + 계정 추가 ----------
+  const usersHtml = () => `
+    <div class="card"><h3>사용자 <small>(관리자만 볼 수 있어요)</small></h3>
+      <p>같은 비서를 여러 사람이 씁니다. 대화 기록·기억·예약은 사람마다 따로 보관되고(<code>data/users/아이디/</code>), 일정·프로젝트·WBS 같은 업무 자료는 함께 씁니다. 일반 사용자는 설정·사용자 관리·권한 스위치가 보이지 않아요.</p>
+      <div class="utable" id="userList">불러오는 중…</div></div>
+    <div class="card"><h3>새 사용자 추가</h3>
+      <p>임시 비밀번호는 만든 사람이 직접 전해 주세요. 새 사용자는 <b>처음 로그인할 때 비밀번호를 꼭 바꿔야</b> 쓸 수 있어요.</p>
+      <form class="uform" id="userForm" autocomplete="off">
+        <label>이름<input id="uName" maxlength="50" required></label>
+        <label>아이디 <span style="font-weight:400;color:var(--sub)">(영문 소문자·숫자)</span><input id="uId" maxlength="32" autocapitalize="off" spellcheck="false" required></label>
+        <label>임시 비밀번호 (8자 이상)<input id="uPw" class="mask" type="text" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" required></label>
+        <label>부서<input id="uDept" maxlength="30" placeholder="예: 설계"></label>
+        <label>역할<select id="uRole"><option value="user">일반</option><option value="admin">관리자</option></select></label>
+        <div><label class="show"><input type="checkbox" id="uShow">임시 비밀번호 보이기</label><button class="btn" id="uBtn" type="submit" style="margin-top:6px">추가</button></div>
+      </form>
+      <div id="userMsg" role="status" aria-live="polite"></div></div>`;
+  async function loadUsers() {
+    const el = $('userList'); if (!el) return;
+    try {
+      const r = await api('/api/users'), j = await r.json();
+      if (!r.ok) throw new Error(j.error || '목록을 읽지 못했어요.');
+      el.innerHTML = `<table><thead><tr><th>이름</th><th>아이디</th><th>부서</th><th>역할</th><th>상태</th></tr></thead><tbody>${j.map((u) => `<tr>
+        <td>${safe(u.name)}</td><td>${safe(u.username)}</td><td>${safe(u.dept) || '-'}</td>
+        <td><span class="role ${u.role === 'admin' ? 'admin' : ''}">${u.role === 'admin' ? '관리자' : '일반'}</span></td>
+        <td>${u.mustChange ? '<span class="first">처음 로그인 전 (비밀번호 변경 필요)</span>' : '사용 중'}</td></tr>`).join('')}</tbody></table>`;
+    } catch (e) { if (e.message !== 'login' && $('userList')) $('userList').textContent = `⚠ ${e.message}`; }
+  }
+  function showUsers() {
+    loadUsers();
+    const msg = (t, err) => { const m = $('userMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
+    $('uShow').onchange = (e) => $('uPw').classList.toggle('mask', !e.target.checked);
+    $('userForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = $('uBtn'); btn.disabled = true; msg('');
+      try {
+        const body = { name: $('uName').value.trim(), username: $('uId').value.trim(), password: $('uPw').value, dept: $('uDept').value.trim(), role: $('uRole').value };
+        const r = await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || '추가하지 못했어요.');
+        $('userForm').reset(); $('uPw').classList.add('mask'); msg(`✓ ${j.user.name}(${j.user.username}) 님을 추가했어요. 임시 비밀번호를 직접 전해 주세요.`); loadUsers();
+      } catch (er) { if (er.message !== 'login') msg(`⚠ ${er.message === 'Failed to fetch' ? '서버에 연결할 수 없습니다.' : er.message}`, true); }
+      btn.disabled = false;
+    };
   }
   // 텔레그램 배달 칸: 값은 화면으로 오지 않는다 (서버가 "저장돼 있는지"만 알려 줌). 입력 칸은 늘 비어 있고, 새 값을 넣고 [저장]하면 바뀐다
   const tgMsg = (t, err) => { const m = $('tgMsg'); if (m) { m.textContent = t; m.className = err ? 'err' : ''; } };
@@ -935,8 +1021,28 @@
 
   // ---------- 시작 ----------
   $('who').onclick = async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.replace('/'); };
+  // 임시 비밀번호로 처음 들어왔으면 이 창을 먼저 띄우고, 바꾸기 전에는 아무 화면도 열지 않는다 (서버도 막는다)
+  function askNewPassword() {
+    $('pwModal').hidden = false; $('pwCur').focus();
+    $('pwForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = (t) => { $('pwMsg').textContent = t; };
+      if ($('pwNew').value !== $('pwNew2').value) return msg('새 비밀번호 확인이 서로 다릅니다.');
+      $('pwBtn').disabled = true; msg('');
+      try {
+        const r = await fetch('/api/auth/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: $('pwCur').value, next: $('pwNew').value }) });
+        if (r.ok) return location.reload();
+        msg((await r.json().catch(() => ({}))).error || '바꾸지 못했어요.');
+      } catch { msg('서버에 연결할 수 없습니다.'); }
+      $('pwBtn').disabled = false;
+    };
+  }
   fetch('/api/me').then((r) => (r.ok ? r.json() : Promise.reject()))
-    .then((u) => { me = u.name; $('whoName').textContent = u.name; loadNotices(); db.watch('notices', loadNotices); route(); })
+    .then((u) => {
+      me = u.name; myRole = u.role; $('whoName').textContent = u.dept ? `${u.name} · ${u.dept}` : u.name; $('who').title = `${u.role === 'admin' ? '관리자' : '일반 사용자'} · 누르면 로그아웃`;
+      if (u.mustChange) return askNewPassword();
+      loadNotices(); db.watch('notices', loadNotices); route();
+    })
     .catch(() => location.replace('/'));
 </script>
 </body>

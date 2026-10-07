@@ -12,6 +12,7 @@ const DATA_DIR = process.env.SANCHO_DATA || path.join(__dirname, 'data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const USERS_DIR = path.join(DATA_DIR, 'users'); // 사람마다 개인 폴더 data/users/<아이디>/ — 대화(chats/)·기억(memory.md)·예약(schedule.json)·일지(journal/). 업무 데이터(db/)는 모두가 함께 쓴다
 
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30일
 const MAX_FAILS = 10; // 10번까지는 틀려도 되고, 11번째 틀리면 잠금
@@ -88,6 +89,20 @@ function recordFail(username) {
   fails.set(username, f);
 }
 
+// ---------- 사람들 (data/users.json) 과 개인 폴더 ----------
+// 사람: { id, name, username, dept(부서), role('admin'|'user'), password(해시), mustChange(true 면 처음 로그인에 비밀번호를 바꿔야 함), createdAt }
+const USER_RE = /^[a-z0-9_-][a-z0-9_.-]{1,30}[a-z0-9_-]$/; // 폴더 이름이 되므로 점으로 시작·끝나는 것(".." 같은)은 안 된다
+const RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/; // 윈도우 장치 이름은 폴더로 못 만든다
+const isAdmin = (u) => !!u && u.role === 'admin';
+const userDir = (u) => { if (!USER_RE.test(u.username)) throw new Error(`아이디 "${u.username}" 은(는) 폴더 이름으로 쓸 수 없어요.`); return path.join(USERS_DIR, u.username); };
+const userFile = (u, ...p) => path.join(userDir(u), ...p);
+const pubUser = (u) => ({ username: u.username, name: u.name, dept: u.dept || '', role: isAdmin(u) ? 'admin' : 'user', mustChange: !!u.mustChange, createdAt: u.createdAt });
+function usernameProblem(username) { // 아이디가 안 되는 이유(쉬운 한국어), 괜찮으면 ''
+  if (!USER_RE.test(username) || RESERVED_NAME.test(username)) return '아이디는 영문 소문자·숫자·_ . - 로 3~32자이고, 점(.)으로 시작하거나 끝나면 안 됩니다. (con·nul 같은 윈도우 예약 이름도 안 됩니다)';
+  return '';
+}
+const badText = (s, max) => !s || s.length > max || /[\u0000-\u001f\u007f]/.test(s); // 비었거나 너무 길거나 줄바꿈 같은 특수 문자가 있으면 true
+
 // ---------- 도우미 ----------
 function send(res, status, body, headers = {}) {
   const isObj = typeof body === 'object' && !Buffer.isBuffer(body);
@@ -120,20 +135,19 @@ function serveFile(res, urlPath) {
   });
 }
 
-// ---------- 대화 (data/chats/<id>.json, 로그인한 본인 것만) ----------
-const CHATS_DIR = path.join(DATA_DIR, 'chats');
-fs.mkdirSync(CHATS_DIR, { recursive: true });
+// ---------- 대화 (data/users/<아이디>/chats/<id>.json — 사람마다 따로, 그 사람 폴더에서만 찾는다) ----------
 const nowIso = () => new Date().toISOString();
-const chatFile = (id) => path.join(CHATS_DIR, `${id}.json`);
-function saveChat(chat) { chat.updatedAt = nowIso(); writeJson(chatFile(chat.id), chat); }
-function loadChat(id, userId) {
-  const c = readJson(chatFile(id), null);
-  return c && c.userId === userId ? c : null;
+const chatsDir = (u) => userFile(u, 'chats');
+function saveChat(u, chat) { chat.updatedAt = nowIso(); fs.mkdirSync(chatsDir(u), { recursive: true }); writeJson(path.join(chatsDir(u), `${chat.id}.json`), chat); }
+function loadChat(id, u) {
+  const c = readJson(path.join(chatsDir(u), `${id}.json`), null);
+  return c && c.userId === u.id ? c : null;
 }
-function listChats(userId) {
-  return fs.readdirSync(CHATS_DIR).filter((f) => f.endsWith('.json'))
-    .map((f) => readJson(path.join(CHATS_DIR, f), null))
-    .filter((c) => c && c.userId === userId)
+function listChats(u) {
+  let names = []; try { names = fs.readdirSync(chatsDir(u)); } catch { /* 아직 대화가 없다 */ }
+  return names.filter((f) => f.endsWith('.json'))
+    .map((f) => readJson(path.join(chatsDir(u), f), null))
+    .filter((c) => c && c.userId === u.id)
     .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -356,13 +370,41 @@ function sampleWbs(now = new Date()) {
   };
 }
 
-function readMemory() { try { return fs.readFileSync(MEMORY_FILE, 'utf8').split(/\r?\n/); } catch { return []; } }
+const memoryFile = (u) => userFile(u, 'memory.md'); // 그 사람의 기억 (한 줄에 사실 하나: "- 날짜 내용")
+function readMemory(u) { try { return fs.readFileSync(memoryFile(u), 'utf8').split(/\r?\n/); } catch { return []; } }
+
+// ---------- 개인 폴더 만들기 · 옛 구조에서 옮기기 ----------
+const watchedUsers = new Set();
+function ensureUserDir(u) { // 개인 폴더·대화 폴더·기억 파일(없을 때만)을 만들고, 예약 파일이 바뀌면 화면에 알리게 지켜본다
+  fs.mkdirSync(path.join(userDir(u), 'chats'), { recursive: true });
+  if (!fs.existsSync(memoryFile(u))) fs.writeFileSync(memoryFile(u), '# 기억\n');
+  if (!watchedUsers.has(u.username)) { watchedUsers.add(u.username); watchJson(userDir(u), /^(schedule)\.json$/, ''); } // 화면의 예약 칸은 db.watch('schedule') 로 받는다 (비서가 파일을 직접 고쳐도 따라 바뀌게)
+}
+// 여러 사람이 쓰기 전의 구조(data/chats·memory.md·schedule.json·schedule-running.json·journal/)를 첫 관리자(주인)의 개인 폴더로 옮긴다.
+// 옮기기만 하고 지우지 않는다. 이미 있는 파일은 덮어쓰지 않는다. 대화는 만든 사람(userId)의 폴더로 간다
+function migrateLegacy() {
+  const users = readJson(USERS_FILE, []), owner = users[0];
+  if (!owner) return;
+  const moveFree = (from, to) => { if (fs.existsSync(from) && !fs.existsSync(to)) { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.renameSync(from, to); } };
+  const moveDir = (dir, to) => { // 폴더 안 파일을 하나씩 옮기고, 비었으면 빈 폴더만 치운다
+    let names = []; try { names = fs.readdirSync(dir); } catch { return; }
+    for (const f of names) to(f) && moveFree(path.join(dir, f), to(f));
+    try { fs.rmdirSync(dir); } catch { /* 남은 파일이 있으면 그대로 둔다 */ }
+  };
+  moveDir(path.join(DATA_DIR, 'chats'), (f) => { // 대화 한 개 = 파일 하나
+    if (!f.endsWith('.json')) return null;
+    const c = readJson(path.join(DATA_DIR, 'chats', f), null), u = (c && users.find((x) => x.id === c.userId)) || owner;
+    return userFile(u, 'chats', f);
+  });
+  for (const f of ['memory.md', 'schedule.json', 'schedule-running.json']) moveFree(path.join(DATA_DIR, f), userFile(owner, f));
+  moveDir(path.join(DATA_DIR, 'journal'), (f) => userFile(owner, 'journal', f));
+}
 
 // ---------- 두뇌: 이 PC 에 설치된 Claude Code (내 구독 로그인, API 키 없음) ----------
 const SYSTEM_FILE = path.join(DATA_DIR, '.system.md'); // 비서의 성격·기억 규칙 (templates/system.md 에서 처음 한 번 복사)
-const MEMORY_FILE = path.join(DATA_DIR, 'memory.md'); // 비서의 기억 (한 줄에 사실 하나: "- 날짜 내용")
 if (!fs.existsSync(SYSTEM_FILE)) fs.copyFileSync(path.join(__dirname, 'templates', 'system.md'), SYSTEM_FILE);
-if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '# 기억\n');
+try { migrateLegacy(); } catch (e) { console.error('옛 자료를 개인 폴더로 옮기지 못했어요:', e.message); }
+for (const u of readJson(USERS_FILE, [])) { try { ensureUserDir(u); } catch (e) { console.error(`${u.username} 의 개인 폴더를 만들지 못했어요:`, e.message); } }
 // 비서에게 업무 규칙을 가르치는 스킬들(platform: data/db 형식, wbs: 공정표). 두뇌의 작업 폴더가 data/ 라서 data/.claude/skills/<이름>/SKILL.md 에 둔다.
 // 원본은 templates/skills/ 쪽이다. 서버를 켤 때 내용이 다르거나 없으면 다시 복사해, 새 규칙(예: WBS)이 기존 설치에도 반영된다 (비서는 이 파일을 못 고친다)
 const SKILLS_SRC = path.join(__dirname, 'templates', 'skills');
@@ -378,7 +420,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
   const text = fs.readFileSync(path.join(ADD_DIR, f), 'utf8'), marker = text.split(/\r?\n/)[0].trim(), cur = fs.readFileSync(SYSTEM_FILE, 'utf8');
   if (marker.startsWith('<!--') && !cur.includes(marker)) fs.appendFileSync(SYSTEM_FILE, (cur.endsWith('\n') ? '' : '\n') + '\n' + text);
 }
-const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰은 두뇌도 못 보게 막는다
+const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', '임시비밀번호.txt']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호는 두뇌도 못 보게 막는다
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
 const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json'];
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
@@ -402,6 +444,8 @@ const BRAIN_TOOLS = ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebSearch', 'WebF
 const PERM_KEYS = ['연결된앱', '명령실행', '홈폴더'];
 const permsOf = (st) => Object.fromEntries(PERM_KEYS.map((k) => [k, !!(st && st.권한 && st.권한[k] === true)])); // { 연결된앱, 명령실행, 홈폴더 } 모두 true/false (true 가 아니면 꺼짐)
 function readPerms() { try { return permsOf(loadSettings()); } catch { return permsOf(null); } } // 파일이 없거나 깨졌으면 전부 꺼짐 (안전한 쪽)
+// 이 스위치들은 주인(관리자)의 Gmail·이 PC 를 여는 열쇠라서 관리자의 비서에게만 적용한다. 일반 사용자의 비서는 스위치가 켜져 있어도 늘 꺼짐
+const permsFor = (u) => (isAdmin(u) ? readPerms() : permsOf(null));
 // 연결된 앱(Gmail·캘린더·드라이브)의 도구 이름. 이 PC 의 claude 2.1.291 이 시작할 때 알려 준 이름 그대로다 (mcp__claude_ai_<서버>__<도구>).
 // use: 켜면 바로 쓰는 것(읽기·초안·일정/문서 만들기·고치기) / send: 메일 보내기, 주인이 "보낼까요?"에 "네" 한 바로 그 차례에만 / block: 늘 막음(삭제·휴지통·공유·덮어쓰기·초대 응답·스팸·꼬리표)
 // 목록에 없는 새 도구는 허용 목록에 없으니 저절로 막힌다
@@ -438,8 +482,11 @@ function confirmedGate(chat, content) { // null | { kind, tools, once, emails(�
 }
 
 // unattended: 주인이 보고 있지 않은 실행(예약·메일정리 단추). 메일 속 지시 같은 것 때문에 명령이 돌지 않게 명령 실행 도구는 권한이 켜져 있어도 주지 않는다 (5편 점검)
-function brainArgs({ gate = null, unattended = false } = {}) { // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
-  const P = readPerms(), apps = P.연결된앱, sh = P.명령실행 && !unattended ? SHELL_TOOLS : [];
+// 다른 사람의 개인 폴더(대화·기억·예약)는 읽지도 고치지도 못하게 한다 — 사람마다 따로라는 약속이 비서를 통해 새지 않게
+const othersDeny = (u) => readJson(USERS_FILE, []).filter((o) => o.username !== u.username && USER_RE.test(o.username))
+  .flatMap((o) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./users/${o.username}/**)`));
+function brainArgs({ gate = null, unattended = false, user } = {}) { // claude 를 띄울 때마다 지금 권한으로 새로 만든다 (스위치를 바꾸면 다음 말부터 적용)
+  const P = permsFor(user), apps = P.연결된앱, sh = P.명령실행 && !unattended ? SHELL_TOOLS : [];
   const gated = apps && gate ? gate.tools : [], held = [...appNames('send'), ...appNames('confirm')].filter((t) => !gated.includes(t));
   return [
     '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', 'sonnet',
@@ -459,7 +506,7 @@ function brainArgs({ gate = null, unattended = false } = {}) { // claude 를 띄
     ...(P.홈폴더 ? ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/**)`) : []), // 홈 폴더는 읽기만 (고치기·쓰기는 ./** 밖이라 안 됨)
     ...(apps ? [...appNames('use'), ...gated] : []),
     '--disallowedTools', ...(P.명령실행 ? [] : ['Bash', 'PowerShell']), ...PRIVATE_FILES.flatMap((f) => ['Read', 'Edit', 'Write'].map((t) => `${t}(./${f})`)),
-    ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)),
+    ...READONLY_FILES.flatMap((f) => ['Edit', 'Write'].map((t) => `${t}(./${f})`)), ...othersDeny(user),
     // 명령을 켜면 셸로 비밀 파일을 열거나 지침을 고칠 수 있다. 이름이 드러난 명령은 막는다 (ponytail: 이름을 돌려 쓰는 꼼수까지는 못 막는다 — 8편 안전장치에서 더 조인다)
     // 'claude' 가 든 명령도 막는다: 명령 창에서 claude 를 또 띄우면 이 모든 제한이 없는 비서가 되어 메일까지 보낼 수 있다 (5편 점검)
     ...sh.flatMap((t) => [...PRIVATE_FILES, '.system.md', '.claude', 'claude', 'CLAUDE'].map((f) => `${t}(*${f}*)`)),
@@ -498,7 +545,9 @@ function killTree(child) { // 윈도우에서는 자식의 자식까지 같이 �
 // 실행할 때마다 두뇌에게 알려 주는 주인 이름·날짜·시각 (예약 시각을 말로 계산하려면 지금 시각을 알아야 한다)
 // 스킬 문서의 정확한 위치도 알려 준다: 예전에는 상위 my-agent 폴더에서 찾다가 "읽기 권한 없음"으로 못 읽었다
 const SKILL_HINT = `작업 폴더: ${DATA_DIR}. 스킬 문서(platform·wbs·mail·office-docs)는 작업 폴더 안 .claude/skills/<이름>/SKILL.md 에 있으니 Read 도구로 읽는다 (예: ${path.join(DATA_DIR, '.claude', 'skills', 'platform', 'SKILL.md')}). 작업 폴더 밖은 읽을 수 없다.`;
-const brainCtx = (name, d = new Date()) => `주인 이름: ${name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${SKILL_HINT}`;
+// 여러 사람이 쓰므로 누구의 비서인지도 알려 준다: 개인 폴더(기억·예약·일지가 있는 곳)와 역할. 지침에 적힌 memory.md·schedule.json·journal/ 은 이 폴더 안의 것이다
+const userHint = (u) => `이 사람의 개인 폴더: users/${u.username}/ (작업 폴더 기준). 지침의 memory.md·schedule.json·journal/ 은 모두 이 폴더 안의 것이다: users/${u.username}/memory.md · users/${u.username}/schedule.json · users/${u.username}/journal/<날짜>.md. data/ 바로 아래의 memory.md·schedule.json·journal/ 은 쓰지 않는다. 다른 사람의 폴더(users/ 아래 다른 이름)는 열지 않는다. 역할: ${isAdmin(u) ? '관리자' : '일반 사용자'}${u.dept ? `, 부서: ${u.dept}` : ''}.`;
+const brainCtx = (u, d = new Date()) => `주인 이름: ${u.name}. 오늘 날짜: ${d.toLocaleDateString('sv-SE')} (${d.toLocaleDateString('ko-KR', { weekday: 'long' })}). 현재 시각: ${d.toTimeString().slice(0, 5)}. ${userHint(u)} ${SKILL_HINT}`;
 
 // 두뇌가 실패했을 때 이유를 쉬운 한국어로 — 대화(streamReply)와 예약(askBrainOnce)이 같이 쓴다
 const STALE_SESSION_MSG = '이전 대화의 기억을 찾지 못했습니다. 같은 말을 한 번 더 보내시면 새 기억으로 시작합니다.';
@@ -620,10 +669,10 @@ function streamReply(res, chat, content, user, atts = []) {
   const boxBefore = boxSnap();
   chat.messages.push({ role: 'user', content, at: nowIso(), ...(atts.length ? { attachments: atts } : {}) });
   if (chat.title === '새 대화') chat.title = content.replace(/\s+/g, ' ').slice(0, 30);
-  saveChat(chat);
+  saveChat(user, chat);
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
 
-  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ gate }), '--append-system-prompt', brainCtx(user.name)];
+  const args = [...BRAIN_CMD.slice(1), ...(chat.sessionId ? ['--resume', chat.sessionId] : []), ...brainArgs({ gate, user }), '--append-system-prompt', brainCtx(user)];
   let sent = '', errText = '', buf = '', result = null, limit = null, spawnErr = null, cap = null, child = null;
   let finished = false, aborted = false, timedOut = false;
 
@@ -637,7 +686,7 @@ function streamReply(res, chat, content, user, atts = []) {
   function onLine(line) {
     let ev; try { ev = JSON.parse(line); } catch { return; }
     if (ev.session_id && (ev.type === 'system' || ev.type === 'result') && ev.session_id !== chat.sessionId) {
-      chat.sessionId = ev.session_id; saveChat(chat); // 다음 말에 --resume 으로 이어가려고 저장
+      chat.sessionId = ev.session_id; saveChat(user, chat); // 다음 말에 --resume 으로 이어가려고 저장
     }
     if (ev.type === 'stream_event' && !ev.parent_tool_use_id) {
       const e = ev.event || {};
@@ -664,7 +713,7 @@ function streamReply(res, chat, content, user, atts = []) {
     if (!sent.trim()) sent = '(중지했습니다.)';
     let files = []; try { files = boxNew(boxBefore); } catch { /* 파일함을 못 읽으면 카드만 없다 */ }
     chat.messages.push({ role: 'assistant', content: sent, at: nowIso(), ...(files.length ? { files } : {}) }); // 중지해도 지금까지 받은 만큼 저장
-    saveChat(chat);
+    saveChat(user, chat);
     running.delete(chat.id);
     if (gateFile) for (const f of [gateFile, `${gateFile}.used`]) fs.rmSync(f, { force: true });
     if (!res.destroyed) { if (files.length) res.write(`event: files\ndata: ${JSON.stringify(files)}\n\n`); res.write('event: done\ndata: {}\n\n'); res.end(); }
@@ -688,32 +737,33 @@ function streamReply(res, chat, content, user, atts = []) {
   res.on('close', () => { if (!finished) { aborted = true; killTree(child); } }); // ■ 중지 → claude 끄기
 }
 
-// ---------- 예약 (data/schedule.json): 30초마다 시계를 보고, 때가 된 예약의 지시문을 새 세션의 두뇌에 보낸다 ----------
-// 시각 계산·형식 검사는 scheduler.js. 여기는 파일 읽고 쓰기, 두뇌 실행, 일지(data/journal/<날짜>.md)·알림(notices) 쌓기만 한다.
+// ---------- 예약 (data/users/<아이디>/schedule.json — 사람마다 따로): 30초마다 시계를 보고, 때가 된 예약의 지시문을 그 사람의 새 세션 두뇌에 보낸다 ----------
+// 시각 계산·형식 검사는 scheduler.js. 여기는 파일 읽고 쓰기, 두뇌 실행, 일지(그 사람 폴더의 journal/<날짜>.md)·알림(notices) 쌓기만 한다.
 const sched = require('./scheduler.js');
-const SCHEDULE_FILE = path.join(DATA_DIR, 'schedule.json');
-const JOURNAL_DIR = path.join(DATA_DIR, 'journal');
+const scheduleFile = (u) => userFile(u, 'schedule.json');
+const runningFile = (u) => userFile(u, 'schedule-running.json');
+const skey = (u, id) => `${u.username}/${id}`; // 사람이 달라도 예약 id 가 같을 수 있어서 "아이디/예약id" 로 센다
 const TICK_MS = Number(process.env.SANCHO_TICK_MS) || 30_000; // 점검에서만 짧게 줄인다
-const schedRunning = new Set(); // 지금 도는 예약 id — 같은 예약이 겹쳐 돌지 않게
+const schedRunning = new Set(); // 지금 도는 예약(skey) — 같은 예약이 겹쳐 돌지 않게
 const warned = new Set(); // 이미 알림으로 알린 문제 (30초마다 같은 알림이 쌓이지 않게)
-const wasOff = new Set(); // 꺼 둔 걸 본 예약 id — 다시 켜진 순간을 알아보려고
-const RUNNING_FILE = path.join(DATA_DIR, 'schedule-running.json'); // 지금 도는 예약 { id: { 이름, 시작 } } — 도는 도중에 서버(컴퓨터)가 꺼졌는지 다음에 켤 때 알아보려고
-const markRunning = (id, info) => { const m = readJson(RUNNING_FILE, {}); if (info) m[id] = info; else delete m[id]; writeJson(RUNNING_FILE, m); };
+const wasOff = new Set(); // 꺼 둔 걸 본 예약(skey) — 다시 켜진 순간을 알아보려고
+// 지금 도는 예약 { id: { 이름, 시작 } } (사람 폴더의 schedule-running.json) — 도는 도중에 서버(컴퓨터)가 꺼졌는지 다음에 켤 때 알아보려고
+const markRunning = (u, id, info) => { const m = readJson(runningFile(u), {}); if (info) m[id] = info; else delete m[id]; writeJson(runningFile(u), m); };
 const CLOCK_SLACK_MS = 10 * 60 * 1000; // 마지막실행이 지금보다 이만큼 넘게 "미래"면 시계가 되돌아간 것으로 본다
 const DETAIL_MAX = 20_000; // 알림에 담는 결과 전체의 한도. 화면이 알림을 고쳐 저장할 때 보내는 크기 제한(200KB)을 넘지 않게. 전체는 일지에 있다
-watchJson(DATA_DIR, /^(schedule)\.json$/, ''); // 화면의 예약 칸은 db.watch('schedule') 로 받는다 (비서가 파일을 직접 고쳐도 따라 바뀌게)
-
-function addNotice(title, body, level, detail) { // 알림(data/db/notices.json)에 한 줄 — 열려 있는 대시보드는 파일 감시로 바로 따라 바뀐다. detail 은 "누르면 보이는 결과 전체"
+// 알림(data/db/notices.json)에 한 줄 — 열려 있는 대시보드는 파일 감시로 바로 따라 바뀐다. detail 은 "누르면 보이는 결과 전체".
+// owner(아이디)가 있으면 그 사람에게만 보인다 (예약 결과에는 개인 내용이 있어서). 없으면 모두에게 보이는 공지
+function addNotice(title, body, level, detail, owner) {
   let items; try { items = loadCollection('notices'); } catch { return console.error('data/db/notices.json 이 올바른 목록이 아니라 알림을 넣지 못했어요. (덮어쓰지 않았어요)'); }
-  const n = { id: crypto.randomBytes(4).toString('hex'), title, body, level, at: nowIso(), read: false };
+  const n = { id: crypto.randomBytes(4).toString('hex'), title, body, level, at: nowIso(), read: false, ...(owner ? { owner } : {}) };
   if (detail) n.detail = detail.length > DETAIL_MAX ? `${detail.slice(0, DETAIL_MAX)}\n\n…(길어서 여기까지만 담았어요. 전체는 일지 파일에 있어요.)` : detail;
   items.push(n);
   writeJson(dbFile('notices'), items);
 }
-function warnOnce(key, title, body) { if (!warned.has(key)) { warned.add(key); addNotice(title, body, '주의'); } }
+function warnOnce(key, title, body, owner) { if (!warned.has(key)) { warned.add(key); addNotice(title, body, '주의', undefined, owner); } }
 
-function loadSchedule() { // 파일이 없으면 빈 목록, 깨져 있으면 예외 (모르고 덮어써서 예약을 잃지 않게)
-  let raw; try { raw = fs.readFileSync(SCHEDULE_FILE, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+function loadSchedule(u) { // 파일이 없으면 빈 목록, 깨져 있으면 예외 (모르고 덮어써서 예약을 잃지 않게)
+  let raw; try { raw = fs.readFileSync(scheduleFile(u), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }
   const v = JSON.parse(raw.replace(/^﻿/, ''));
   if (!Array.isArray(v)) throw new Error('not an array');
   return v;
@@ -722,7 +772,7 @@ function loadSchedule() { // 파일이 없으면 빈 목록, 깨져 있으면 �
 // 화면 없이 두뇌에 한 번 묻고 끝 결과만 받는다. 대화와 같은 두뇌·같은 도구 제한(brainArgs), 새 세션(--resume 없음). 절대 reject 하지 않는다
 // 주인이 없으니 메일 보내기·캘린더 등록은 늘 막히고(확인 문 없음), 명령 실행 도구도 주지 않는다 (unattended)
 // ponytail: 띄우고 줄 읽는 부분이 streamReply 와 닮았다. 대화는 점검이 촘촘해서 건드리지 않았다. 고칠 곳이 세 군데가 되면 spawnBrain 으로 합친다
-function askBrainOnce(prompt, ctx) {
+function askBrainOnce(prompt, ctx, user) {
   return new Promise((resolve) => {
     let buf = '', errText = '', result = null, limit = null, spawnErr = null, timedOut = false, child = null, cap = null, settled = false;
     const onLine = (line) => {
@@ -737,7 +787,7 @@ function askBrainOnce(prompt, ctx) {
     };
     const planted = disarmPlanted();
     if (planted) { spawnErr = new Error(planted); return end(); }
-    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...brainArgs({ unattended: true }), '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
+    try { child = spawn(BRAIN_CMD[0], [...BRAIN_CMD.slice(1), ...brainArgs({ unattended: true, user }), '--append-system-prompt', ctx], { cwd: DATA_DIR, env: brainEnv(), windowsHide: true }); } catch (e) { spawnErr = e; return end(); }
     cap = setTimeout(() => { timedOut = true; killTree(child); }, BRAIN_MAX_MS);
     child.stdout.setEncoding('utf8'); // 조각 경계에서 한글(3바이트)이 깨지지 않게
     child.stdout.on('data', (d) => { buf += d; let k; while ((k = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, k)); buf = buf.slice(k + 1); } });
@@ -829,74 +879,82 @@ async function settingsApi(req, res, sub, test) {
   return false;
 }
 
-async function runScheduled(e) {
-  schedRunning.add(e.id); // 첫 await 전에 넣는다 (다음 점검이 끼어들기 전에)
+async function runScheduled(e, u) { // u: 이 예약의 주인. 그 사람의 두뇌·일지·알림으로 돈다
+  const key = skey(u, e.id);
+  schedRunning.add(key); // 첫 await 전에 넣는다 (다음 점검이 끼어들기 전에)
   emitDb('schedule'); // 화면의 예약 칸이 "실행 중"을 보이게
-  const name = String(e.이름 || e.id), t0 = new Date(), owner = readJson(USERS_FILE, [])[0];
-  markRunning(e.id, { 이름: name, 시작: t0.toISOString() }); // 끝나면 지운다. 남아 있으면 도중에 꺼진 것
+  const name = String(e.이름 || e.id), t0 = new Date();
+  markRunning(u, e.id, { 이름: name, 시작: t0.toISOString() }); // 끝나면 지운다. 남아 있으면 도중에 꺼진 것
   let r;
   try {
-    r = await askBrainOnce(e.지시문, `${brainCtx(owner ? owner.name : '주인', t0)} 이 실행은 예약("${name}")이 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 요약한다.`);
+    r = await askBrainOnce(e.지시문, `${brainCtx(u, t0)} 이 실행은 예약("${name}")이 시작했다. 주인은 지금 보고 있지 않아 되물을 수 없다. 허락이 필요한 일(삭제 등)은 하지 말고 못 한 일로 적는다. 끝에 결과를 짧게 요약한다.`, u);
   } catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
-  finally { schedRunning.delete(e.id); markRunning(e.id, null); emitDb('schedule'); }
-  const day = t0.toLocaleDateString('sv-SE'), file = path.join(JOURNAL_DIR, `${day}.md`), text = r.text || '(결과 글이 없어요)', title = `${r.ok ? '예약 결과' : '예약 실패'}: ${name}`;
+  finally { schedRunning.delete(key); markRunning(u, e.id, null); emitDb('schedule'); }
+  const day = t0.toLocaleDateString('sv-SE'), file = userFile(u, 'journal', `${day}.md`), text = r.text || '(결과 글이 없어요)', title = `${r.ok ? '예약 결과' : '예약 실패'}: ${name}`;
   try {
-    fs.mkdirSync(JOURNAL_DIR, { recursive: true });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.appendFileSync(file, `${fs.existsSync(file) ? '' : `# ${day} 일지\n\n`}## ${t0.toTimeString().slice(0, 5)} ${r.ok ? '' : '⚠ '}${name}\n\n지시: ${e.지시문.replace(/\s+/g, ' ')}\n\n${text}\n\n`);
-    addNotice(title, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의', text);
+    addNotice(title, text.replace(/\s+/g, ' ').slice(0, 120), r.ok ? '안내' : '주의', text, u.username);
   } catch (err) { console.error('예약 결과를 적지 못했어요:', err.message); }
-  if (e.휴대폰 === true) { // "휴대폰으로도 보내기"를 켠 예약만: 결과 요약을 텔레그램으로. 못 보내도 예약 결과는 이미 알림·일지에 있으니, 이유만 하루에 한 번 알린다
+  // 텔레그램은 관리자의 휴대폰 하나에 연결돼 있어서, 다른 사람의 예약 결과를 거기로 보내지 않는다
+  if (e.휴대폰 === true && isAdmin(u)) { // "휴대폰으로도 보내기"를 켠 예약만: 결과 요약을 텔레그램으로. 못 보내도 예약 결과는 이미 알림·일지에 있으니, 이유만 하루에 한 번 알린다
     const s = await sendTelegram(`${r.ok ? '🔔' : '⚠'} ${title}\n\n${plainSummary(text, TG_SUMMARY_MAX)}\n\n(전체는 컴퓨터의 알림에서 볼 수 있어요)`);
-    if (!s.ok) warnOnce(`tg:${day}:${s.error}`, '텔레그램으로 보내지 못했어요', `"${name}": ${s.error}`);
+    if (!s.ok) warnOnce(`tg:${day}:${s.error}`, '텔레그램으로 보내지 못했어요', `"${name}": ${s.error}`, u.username);
   }
 }
 
-function scheduleTick() {
-  let list; try { list = loadSchedule(); warned.delete('file'); } catch { return warnOnce('file', '예약 파일을 읽지 못했어요', 'data/schedule.json 이 올바른 JSON 목록이 아니에요. 고칠 때까지 예약이 멈춰 있어요. (파일은 덮어쓰지 않았어요)'); }
+function scheduleTick() { // 사람마다 자기 예약 파일을 본다. 한 사람의 파일이 이상해도 다른 사람 것은 계속 돈다
+  for (const u of readJson(USERS_FILE, [])) { try { scheduleTickFor(u); } catch (e) { console.error(`${u && u.username} 의 예약 점검 오류:`, e.message); } }
+}
+function scheduleTickFor(u) {
+  const rel = `data/users/${u.username}/schedule.json`;
+  let list; try { list = loadSchedule(u); warned.delete(`${u.username}:file`); } catch { return warnOnce(`${u.username}:file`, '예약 파일을 읽지 못했어요', `${rel} 이 올바른 JSON 목록이 아니에요. 고칠 때까지 예약이 멈춰 있어요. (파일은 덮어쓰지 않았어요)`, u.username); }
   const now = new Date(); let dirty = false;
   for (const e of list) {
     const why = sched.check(e);
-    if (why) { warnOnce(`${e && e.id}:${why}`, '예약 하나를 건너뛰었어요', `"${(e && (e.이름 || e.id)) || '이름 없음'}": ${why} data/schedule.json 에서 고쳐 주세요.`); continue; }
-    if (e.켬 === false) { wasOff.add(e.id); continue; }
+    if (why) { warnOnce(`${u.username}:${e && e.id}:${why}`, '예약 하나를 건너뛰었어요', `"${(e && (e.이름 || e.id)) || '이름 없음'}": ${why} ${rel} 에서 고쳐 주세요.`, u.username); continue; }
+    const key = skey(u, e.id);
+    if (e.켬 === false) { wasOff.add(key); continue; }
     // 쉬던 예약을 다시 켰다(화면 스위치든 비서가 파일을 고쳤든): 지금부터 센다 — 쉬는 동안 놓친 회차가 켜자마자 돌지 않게
     // 마지막실행이 한참 미래다(컴퓨터 시계를 앞으로 잘못 맞췄다가 고침): 그대로 두면 그 시각까지 조용히 안 도니, 지금부터 다시 센다
-    if (wasOff.delete(e.id) || Date.parse(e.마지막실행) - now > CLOCK_SLACK_MS) { e.마지막실행 = now.toISOString(); dirty = true; continue; }
+    if (wasOff.delete(key) || Date.parse(e.마지막실행) - now > CLOCK_SLACK_MS) { e.마지막실행 = now.toISOString(); dirty = true; continue; }
     // 처음 보는 예약(마지막실행 없음)은 지금부터 센다 — 아침 9시 예약을 오후 3시에 만들었다고 바로 돌지 않게. 한 번만 하는 예약(once)은 시각이 지났으면 바로 돈다
     if (!e.마지막실행 && e.언제.종류 !== 'once') { e.마지막실행 = now.toISOString(); dirty = true; continue; }
-    if (schedRunning.has(e.id) || !sched.isDue(e, now)) continue; // 실행 중이면 건너뛴다
+    if (schedRunning.has(key) || !sched.isDue(e, now)) continue; // 실행 중이면 건너뛴다
     // 이번 회차는 "시작한 것"으로 지금 적는다 — 도중에 서버가 꺼지거나 실패해도 되풀이해 돌지 않는다 (실패는 알림으로 알린다)
     // ponytail: 여러 예약이 한꺼번에 때가 되면 claude 가 동시에 여러 개 뜬다. 한도에 자주 닿으면 한 줄로 세운다
     e.마지막실행 = now.toISOString(); dirty = true;
-    runScheduled(e); // 끝나기를 기다리지 않는다
+    runScheduled(e, u); // 끝나기를 기다리지 않는다
   }
-  if (dirty) writeJson(SCHEDULE_FILE, list); // 읽기→쓰기 사이에 기다림이 없어서 비서가 고친 내용을 덮어쓸 틈이 거의 없다
+  if (dirty) writeJson(scheduleFile(u), list); // 읽기→쓰기 사이에 기다림이 없어서 비서가 고친 내용을 덮어쓸 틈이 거의 없다
 }
 
 // /api/schedule[/<id>[/enable|/run]] — 화면의 예약 칸이 쓴다. 처리했으면 true (아니면 404 로 넘어간다)
 //   GET /api/schedule → { items: [예약 + error(형식 이유|null) + running] }   DELETE /<id> → 지우기
 //   POST /<id>/enable { on: true|false } → 켬/끔   POST /<id>/run → 지금 한 번 실행 (끝나기를 기다리지 않고 바로 답한다. 결과는 알림으로)
-async function scheduleApi(req, res, id, act) {
+async function scheduleApi(req, res, id, act, user) { // 로그인한 사람 자신의 예약만 본다
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
   let b = {};
   if (id && (act === 'enable' || act === 'phone') && M === 'POST') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
   // 여기부터는 await 없이 한 번에: 읽기→고치기→쓰기 사이에 서버 시계(scheduleTick)가 끼어들지 못한다
-  let list; try { list = loadSchedule(); } catch { return done(500, { error: 'data/schedule.json 이 올바른 JSON 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  if (act === 'phone' && !isAdmin(user)) return done(403, { error: '휴대폰(텔레그램) 배달은 관리자만 쓸 수 있어요.' }); // 텔레그램은 관리자의 휴대폰 하나에 연결돼 있다
+  let list; try { list = loadSchedule(user); } catch { return done(500, { error: `data/users/${user.username}/schedule.json 이 올바른 JSON 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
   const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-  if (!id) return M === 'GET' ? done(200, { telegram: !!tgConf(), items: list.map((e) => ({ ...(isObj(e) ? e : {}), error: sched.check(e), running: isObj(e) && schedRunning.has(e.id) })) }) : false; // telegram: 연결 설정이 있는지(값은 안 보냄)
+  if (!id) return M === 'GET' ? done(200, { telegram: isAdmin(user) && !!tgConf(), items: list.map((e) => ({ ...(isObj(e) ? e : {}), error: sched.check(e), running: isObj(e) && schedRunning.has(skey(user, e.id)) })) }) : false; // telegram: 연결 설정이 있는지(값은 안 보냄)
   const i = list.findIndex((e) => isObj(e) && e.id === id);
   if (i < 0) return done(404, { error: '없는 예약입니다.' });
   const e = list[i];
-  if (!act && M === 'DELETE') { list.splice(i, 1); writeJson(SCHEDULE_FILE, list); return done(200, { ok: true }); } // 지우기 전 확인은 화면이 한다
+  if (!act && M === 'DELETE') { list.splice(i, 1); writeJson(scheduleFile(user), list); return done(200, { ok: true }); } // 지우기 전 확인은 화면이 한다
   if ((act === 'enable' || act === 'phone') && M === 'POST') { // 켬/끔, 휴대폰(텔레그램)으로도 보내기 체크
     if (typeof b.on !== 'boolean') return done(400, { error: 'on 은 true 또는 false 여야 합니다.' });
-    e[act === 'enable' ? '켬' : '휴대폰'] = b.on; writeJson(SCHEDULE_FILE, list); // 다시 켠 순간 "지금부터 센다"는 서버 시계(scheduleTick)가 챙긴다
+    e[act === 'enable' ? '켬' : '휴대폰'] = b.on; writeJson(scheduleFile(user), list); // 다시 켠 순간 "지금부터 센다"는 서버 시계(scheduleTick)가 챙긴다
     return done(200, { ok: true });
   }
   if (act === 'run' && M === 'POST') { // 지금 한 번 — 예약 시각·마지막실행은 건드리지 않는다 (시험 삼아 돌려 보는 용도). 꺼 둔 예약도 돌릴 수 있다
     const why = sched.check(e);
     if (why) return done(400, { error: `이 예약은 형식이 맞지 않아 실행할 수 없어요: ${why}` });
-    if (schedRunning.has(id)) return done(409, { error: '이미 실행 중이에요. 끝나면 알림으로 알려 드려요.' });
-    runScheduled(e); // 기다리지 않는다
+    if (schedRunning.has(skey(user, id))) return done(409, { error: '이미 실행 중이에요. 끝나면 알림으로 알려 드려요.' });
+    runScheduled(e, user); // 기다리지 않는다
     return done(200, { ok: true });
   }
   return false;
@@ -909,7 +967,7 @@ async function scheduleApi(req, res, id, act) {
 const SAMPLE_MAILS = path.join(DB_DIR, 'sample-mails.json');
 if (!fs.existsSync(SAMPLE_MAILS)) fs.copyFileSync(path.join(__dirname, 'templates', 'sample-mails.json'), SAMPLE_MAILS);
 const mailJob = { running: null, last: null }; // running: 'organize' | 'draft' | null — 한 번에 하나만 / last: { kind, ok, text, at, mode } 마지막 결과 (화면이 보여 준다)
-const mailMode = () => (readPerms().연결된앱 ? 'Gmail' : '연습');
+const mailMode = (u) => (permsFor(u).연결된앱 ? 'Gmail' : '연습'); // 관리자의 Gmail 은 관리자의 비서만 읽는다
 
 // 비서가 쓴 mails.json 다듬기: 아는 칸만 남기고 글자 수를 자른다. "본문"·"원문" 같은 모르는 칸이나 긴 글이 끼어도 여기서 지워져서 원문이 파일에 남지 않는다
 const MAIL_LEN = { 원본id: 120, 보낸사람: 60, 제목: 120, 요약: 160, 할일: 160, 일정장소: 80, 초안위치: 40, 일정id: 64, 할일id: 64 };
@@ -956,7 +1014,7 @@ const MAIL_ASK = {
 async function runMail(kind, prompt, mode, before, user, id) { // 끝나기를 기다리지 않고 불러도 된다. 절대 던지지 않는다. running 은 첫 await 전에 켠다 (두 번 눌러도 하나만 돈다)
   mailJob.running = kind;
   let r;
-  try { r = await askBrainOnce(prompt, `${brainCtx(user.name)} 이 실행은 메일정리 화면의 단추가 시작했다. 주인은 화면에서 기다리고 있어 되물을 수 없다. 끝나면 한 줄로 결과만 보고한다.`); }
+  try { r = await askBrainOnce(prompt, `${brainCtx(user)} 이 실행은 메일정리 화면의 단추가 시작했다. 주인은 화면에서 기다리고 있어 되물을 수 없다. 끝나면 한 줄로 결과만 보고한다.`, user); }
   catch (err) { r = { ok: false, text: `실행하지 못했어요: ${err.message}` }; }
   let ok = r.ok, text = r.text || (r.ok ? '(보고 글이 없어요)' : '');
   try {
@@ -972,13 +1030,13 @@ async function runMail(kind, prompt, mode, before, user, id) { // 끝나기를 �
 //   GET status → { mode: "연습"|"Gmail", running, last } · POST organize → 시작(끝나기를 기다리지 않고 바로 답함) · POST draft { id } → 그 메일의 답장 초안
 async function mailApi(req, res, act, user) {
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
-  if (act === 'status') return M === 'GET' ? done(200, { mode: mailMode(), running: mailJob.running, last: mailJob.last }) : false;
+  if (act === 'status') return M === 'GET' ? done(200, { mode: mailMode(user), running: mailJob.running, last: mailJob.last }) : false;
   if (M !== 'POST') return false;
   let b = {}; if (act === 'draft') { try { b = await readBody(req); } catch { return done(400, { error: '요청이 올바르지 않습니다.' }); } }
   // 여기부터는 await 없이: 실행 중인지 보고 → 시작
   if (mailJob.running) return done(409, { error: '지금 다른 메일 작업이 돌고 있어요. 끝난 뒤에 눌러 주세요.' });
   let before; try { before = loadCollection('mails'); } catch { return done(500, { error: 'data/db/mails.json 이 올바른 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
-  const mode = mailMode();
+  const mode = mailMode(user);
   if (mode === '연습' && !fs.existsSync(SAMPLE_MAILS)) fs.copyFileSync(path.join(__dirname, 'templates', 'sample-mails.json'), SAMPLE_MAILS); // 지웠으면 다시 둔다
   let prompt, id = '';
   if (act === 'draft') {
@@ -1016,10 +1074,11 @@ async function handle(req, res) {
       const username = String(b.username || '').trim().toLowerCase();
       const password = String(b.password || '');
       if (!name || name.length > 50 || /[\u0000-\u001f\u007f]/.test(name)) return send(res, 400, { error: '이름을 1~50자로 적어 주세요. (줄바꿈 같은 특수 문자는 안 됩니다)' });
-      if (!/^[a-z0-9_.-]{3,32}$/.test(username)) return send(res, 400, { error: '아이디는 영문 소문자·숫자·_ . - 로 3~32자여야 합니다.' });
+      if (usernameProblem(username)) return send(res, 400, { error: usernameProblem(username) });
       if (password.length < 8) return send(res, 400, { error: '비밀번호는 8자 이상이어야 합니다.' });
-      const u = { id: crypto.randomUUID(), name, username, role: 'admin', password: hashPassword(password), createdAt: new Date().toISOString() };
+      const u = { id: crypto.randomUUID(), name, username, dept: '', role: 'admin', password: hashPassword(password), createdAt: new Date().toISOString() };
       writeJson(USERS_FILE, [u]);
+      ensureUserDir(u);
       return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000) });
     }
     if (req.method === 'POST' && p === '/api/auth/login') {
@@ -1031,7 +1090,7 @@ async function handle(req, res) {
       const ok = verifyPassword(String(b.password || ''), u ? u.password : DUMMY_HASH) && !!u;
       if (!ok) { recordFail(username); return send(res, 401, { error: '아이디 또는 비밀번호가 맞지 않습니다.' }); }
       fails.delete(username);
-      return send(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000) });
+      return send(res, 200, { ok: true, mustChange: !!u.mustChange }, { 'Set-Cookie': cookieHeader(createSession(u.id), SESSION_MS / 1000) });
     }
     if (req.method === 'POST' && p === '/api/auth/logout') {
       const t = getToken(req);
@@ -1048,7 +1107,50 @@ async function handle(req, res) {
     }
     // 여기부터는 로그인해야만 쓸 수 있다
     if (!user) return send(res, 401, { error: '로그인이 필요합니다.' });
-    if (p === '/api/me' && req.method === 'GET') return send(res, 200, { name: user.name, username: user.username });
+    if (p === '/api/me' && req.method === 'GET') return send(res, 200, { name: user.name, username: user.username, dept: user.dept || '', role: isAdmin(user) ? 'admin' : 'user', mustChange: !!user.mustChange });
+    // 관리자가 정해 준 임시 비밀번호로 처음 들어온 사람은 비밀번호를 바꾸기 전에는 아무것도 못 한다 (바꾸기·내 정보·로그아웃만)
+    if (user.mustChange && p !== '/api/auth/password') return send(res, 403, { error: '먼저 비밀번호를 바꿔 주세요.', mustChange: true });
+    if (req.method === 'POST' && p === '/api/auth/password') { // { current, next } — 맞는 현재 비밀번호를 대야 한다. 바꾸면 이 사람의 다른 로그인(다른 기기·브라우저)은 모두 풀린다
+      let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+      const left = lockedLeftMs(user.username);
+      if (left) return send(res, 429, { error: `비밀번호를 너무 많이 틀렸습니다. ${Math.ceil(left / 60000)}분 뒤에 다시 시도하세요.` });
+      const users = readJson(USERS_FILE, []), me = users.find((x) => x.id === user.id), cur = String(b.current || ''), next = String(b.next || '');
+      if (!me || !verifyPassword(cur, me.password)) { recordFail(user.username); return send(res, 401, { error: '지금 비밀번호가 맞지 않습니다.' }); }
+      if (next.length < 8) return send(res, 400, { error: '새 비밀번호는 8자 이상이어야 합니다.' });
+      if (next === cur) return send(res, 400, { error: '지금 비밀번호와 다른 것으로 정해 주세요.' });
+      fails.delete(user.username);
+      me.password = hashPassword(next); delete me.mustChange;
+      writeJson(USERS_FILE, users);
+      const mine = sha(getToken(req));
+      for (const [h, ss] of Object.entries(sessions)) if (ss.userId === me.id && h !== mine) delete sessions[h];
+      writeJson(SESSIONS_FILE, sessions);
+      return send(res, 200, { ok: true });
+    }
+
+    // 사용자 관리·설정·예시 데이터는 관리자만 (일반 사용자는 화면에서도 안 보인다)
+    const adminOnly = /^\/api\/(users|settings|seed)(\/|$)/.test(p);
+    if (adminOnly && !isAdmin(user)) return send(res, 403, { error: '관리자만 쓸 수 있어요.' });
+    // GET /api/users → 사람 목록(비밀번호 없이) · POST /api/users { name, username, password(임시), dept, role } → 새 계정. 임시 비밀번호로는 처음 로그인할 때 바꿔야 한다
+    if (p === '/api/users') {
+      if (req.method === 'GET') return send(res, 200, readJson(USERS_FILE, []).map(pubUser));
+      if (req.method === 'POST') {
+        let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
+        const name = String(b.name || '').trim(), username = String(b.username || '').trim().toLowerCase(), password = String(b.password || ''), dept = String(b.dept || '').trim(), role = b.role === undefined ? 'user' : b.role;
+        if (badText(name, 50)) return send(res, 400, { error: '이름을 1~50자로 적어 주세요. (줄바꿈 같은 특수 문자는 안 됩니다)' });
+        if (usernameProblem(username)) return send(res, 400, { error: usernameProblem(username) });
+        if (password.length < 8) return send(res, 400, { error: '임시 비밀번호는 8자 이상이어야 합니다.' });
+        if (dept && badText(dept, 30)) return send(res, 400, { error: '부서는 30자까지, 줄바꿈 없이 적어 주세요.' });
+        if (role !== 'admin' && role !== 'user') return send(res, 400, { error: '역할은 관리자 또는 일반이에요.' });
+        // 읽기→쓰기 사이에 await 가 없어서 같은 아이디가 동시에 두 번 만들어지지 않는다
+        const users = readJson(USERS_FILE, []);
+        if (users.some((x) => x.username === username)) return send(res, 409, { error: '이미 있는 아이디입니다.' });
+        const u = { id: crypto.randomUUID(), name, username, dept, role, password: hashPassword(password), mustChange: true, createdAt: nowIso() };
+        users.push(u); writeJson(USERS_FILE, users);
+        ensureUserDir(u);
+        return send(res, 200, { ok: true, user: pubUser(u) });
+      }
+      return send(res, 405, { error: '허용되지 않는 요청입니다.' });
+    }
 
     if (p === '/api/events' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -1068,7 +1170,8 @@ async function handle(req, res) {
       }
       let items; try { items = loadCollection(name); } catch { return send(res, 500, { error: `data/db/${name}.json 이 올바른 목록(JSON 배열)이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
       const at = () => items.findIndex((x) => x && String(x.id) === id);
-      if (!id && req.method === 'GET') return send(res, 200, items);
+      // 업무 데이터는 함께 쓰지만, 알림 중 owner(아이디)가 적힌 것(예약 결과 같은 개인 내용)은 그 사람에게만 보인다
+      if (!id && req.method === 'GET') return send(res, 200, name === 'notices' ? items.filter((n) => !n || !n.owner || n.owner === user.username) : items);
       // ponytail: 서버 안의 저장끼리는 이제 안 겹친다. 비서(다른 프로그램)가 파일을 쓰는 바로 그 순간과는 잠금이 없어 겹칠 수 있다. 자주 생기면 파일 잠금을 둔다
       if (id && req.method === 'PUT') { // 같은 id 가 있으면 통째로 바꾸고, 없으면 추가
         const item = { id, ...b }; item.id = id; // 주소의 id 가 항상 이긴다
@@ -1090,7 +1193,7 @@ async function handle(req, res) {
     if (wm && !/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(wm[1]) && await wbsApi(req, res, wm[1], wm[2], wm[3], wm[4])) return;
 
     const qm = p.match(/^\/api\/schedule(?:\/([A-Za-z0-9_-]{1,64})(?:\/(enable|phone|run))?)?$/);
-    if (qm && await scheduleApi(req, res, qm[1], qm[2])) return;
+    if (qm && await scheduleApi(req, res, qm[1], qm[2], user)) return;
     const gm = p.match(/^\/api\/settings(?:\/(telegram|permissions)(?:\/(test))?)?$/);
     if (gm && await settingsApi(req, res, gm[1], gm[2])) return;
     const mm = p.match(/^\/api\/mail\/(organize|draft|status)$/);
@@ -1122,26 +1225,26 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, added: Object.fromEntries(names.map((n) => [n, sample[n].length])) });
     }
 
-    if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory().map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });
+    if (p === '/api/memory' && req.method === 'GET') return send(res, 200, { items: readMemory(user).map((text, i) => ({ i, text })).filter((x) => x.text.startsWith('- ')) });
     if (p === '/api/memory/delete' && req.method === 'POST') {
       let b; try { b = await readBody(req); } catch { return send(res, 400, { error: '요청이 올바르지 않습니다.' }); }
-      const raw = fs.readFileSync(MEMORY_FILE, 'utf8'), eol = raw.includes('\r\n') ? '\r\n' : '\n', lines = raw.split(/\r?\n/);
+      const raw = fs.readFileSync(memoryFile(user), 'utf8'), eol = raw.includes('\r\n') ? '\r\n' : '\n', lines = raw.split(/\r?\n/);
       if (!Number.isInteger(b.i) || lines[b.i] !== b.text || !b.text.startsWith('- ')) return send(res, 409, { error: '그 사이에 기억이 바뀌었습니다. 목록을 새로 불러와 주세요.' });
       lines.splice(b.i, 1);
-      fs.writeFileSync(MEMORY_FILE + '.tmp', lines.join(eol)); fs.renameSync(MEMORY_FILE + '.tmp', MEMORY_FILE);
+      fs.writeFileSync(memoryFile(user) + '.tmp', lines.join(eol)); fs.renameSync(memoryFile(user) + '.tmp', memoryFile(user));
       return send(res, 200, { ok: true });
     }
 
     const cm = p.match(/^\/api\/chats(?:\/([0-9a-f-]{36}))?(\/messages)?$/);
     if (cm) {
       const [, id, isMsg] = cm;
-      if (!id && req.method === 'GET') return send(res, 200, listChats(user.id));
+      if (!id && req.method === 'GET') return send(res, 200, listChats(user));
       if (!id && req.method === 'POST') {
         const chat = { id: crypto.randomUUID(), userId: user.id, title: '새 대화', createdAt: nowIso(), updatedAt: nowIso(), messages: [] };
-        saveChat(chat);
+        saveChat(user, chat);
         return send(res, 200, { id: chat.id });
       }
-      const chat = id && loadChat(id, user.id);
+      const chat = id && loadChat(id, user);
       if (!chat) return send(res, 404, { error: '없는 대화입니다.' });
       if (!isMsg && req.method === 'GET') return send(res, 200, chat);
       if (isMsg && req.method === 'POST') {
@@ -1186,10 +1289,12 @@ server.listen(PORT, HOST, () => {
   console.log(`Sancho 서버 실행 중: http://${HOST}:${PORT}`);
   // 지난번에 도는 도중에 서버(컴퓨터)가 꺼진 예약: 결과 없이 끝났음을 알린다. 그 회차는 다시 돌리지 않는다(마지막실행이 이미 적혀 있다)
   try {
-    const m = readJson(RUNNING_FILE, {});
-    for (const [id, x] of Object.entries(m)) addNotice(`예약이 중간에 끊겼어요: ${(x && x.이름) || id}`,
-      `${x && x.시작 ? `${new Date(x.시작).toLocaleString('ko-KR')} 에 ` : ''}시작한 실행이 서버(컴퓨터)가 꺼지면서 끝나지 못했어요. 이 회차는 다시 돌리지 않아요. 필요하면 예약 칸의 ▶ 로 다시 실행해 주세요.`, '주의');
-    if (Object.keys(m).length) writeJson(RUNNING_FILE, {});
+    for (const u of readJson(USERS_FILE, [])) { // 사람마다 자기 실행 중 기록을 본다 (알림도 그 사람에게만)
+      const m = readJson(runningFile(u), {});
+      for (const [id, x] of Object.entries(m)) addNotice(`예약이 중간에 끊겼어요: ${(x && x.이름) || id}`,
+        `${x && x.시작 ? `${new Date(x.시작).toLocaleString('ko-KR')} 에 ` : ''}시작한 실행이 서버(컴퓨터)가 꺼지면서 끝나지 못했어요. 이 회차는 다시 돌리지 않아요. 필요하면 예약 칸의 ▶ 로 다시 실행해 주세요.`, '주의', undefined, u.username);
+      if (Object.keys(m).length) writeJson(runningFile(u), {});
+    }
   } catch (e) { console.error('끊긴 예약 확인 오류:', e.message); }
   const tick = () => { try { scheduleTick(); } catch (e) { console.error('예약 점검 오류:', e); } }; // 오류가 나도 서버가 죽지 않게
   tick(); // 켜자마자 한 번: 꺼져 있는 동안 놓친 예약은 여기서 한 번 돈다

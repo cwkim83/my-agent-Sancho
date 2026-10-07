@@ -5,11 +5,13 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const zlib = require('zlib');
+const crypto = require('crypto');
 
 const PORT = 8791;
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test-'));
 const PW = 'test-password-123';
+const UD = path.join(dir, 'users', 'tester'); // 첫 관리자(아이디 tester)의 개인 폴더: 대화·기억·예약·일지가 여기에 있다
 let pass = 0, failed = 0;
 
 function check(name, cond) {
@@ -92,7 +94,7 @@ async function run() {
     ['GET', '/api/wbs/p1'], ['PUT', '/api/wbs/p1'], ['GET', '/api/wbs/p1/revs'], ['POST', '/api/wbs/p1/revs'], ['GET', '/api/wbs/p1/revs/1'], ['POST', '/api/wbs/p1/revs/1/restore'],
     ['GET', '/api/wbs/p1/share'], ['POST', '/api/wbs/p1/share'], ['DELETE', '/api/wbs/p1/share'],
     ['GET', '/api/schedule'], ['POST', '/api/schedule/x/run'], ['POST', '/api/schedule/x/enable'], ['POST', '/api/schedule/x/phone'], ['DELETE', '/api/schedule/x'],
-    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions'], ['GET', '/api/mail/status'], ['POST', '/api/mail/organize'], ['POST', '/api/mail/draft'], ['POST', '/api/uploads'], ['GET', '/api/files/uploads/x'], ['POST', '/api/files/open']];
+    ['GET', '/api/settings'], ['PUT', '/api/settings/telegram'], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'], ['PUT', '/api/settings/permissions'], ['GET', '/api/users'], ['POST', '/api/users'], ['POST', '/api/auth/password'], ['GET', '/api/mail/status'], ['POST', '/api/mail/organize'], ['POST', '/api/mail/draft'], ['POST', '/api/uploads'], ['GET', '/api/files/uploads/x'], ['POST', '/api/files/open']];
   for (const [m, u] of guarded)
     check(`로그인 없이 ${m} ${u.replace(chatId, '<대화>')} 는 401`, (await fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{"content":"x","i":1,"text":"- x"}' : undefined })).status === 401);
   check('두뇌의 파일 도구가 data/ 안(./**)으로만 허용됨', t1.includes('scope=ok'));
@@ -110,7 +112,7 @@ async function run() {
   // 성격 · 기억
   const sys = fs.readFileSync(path.join(dir, '.system.md'), 'utf8');
   check('data/.system.md 가 만들어지고 Sancho·기억 규칙이 들어 있음', sys.includes('Sancho') && sys.includes('기억해:') && sys.includes('잊어:') && sys.includes('(기억함)') && sys.includes('memory.md'));
-  check('data/memory.md 가 만들어짐', fs.existsSync(path.join(dir, 'memory.md')));
+  check('data/users/tester/memory.md(개인 폴더의 기억 파일)가 만들어지고, data/ 바로 아래에는 안 만들어짐', fs.existsSync(path.join(UD, 'memory.md')) && !fs.existsSync(path.join(dir, 'memory.md')));
   check('.system.md 에 업무 데이터 규칙이 있음(스킬 형식대로 직접 고침·무작위 id·한 줄 보고·날짜 정확히 계산·삭제는 먼저 물음)',
     ['platform 스킬', 'data/db/*.json 을 직접 고친다', '짧은 무작위 문자열', '한 줄로 알려', '오늘 날짜를 기준으로 정확히', '다음 주 화요일', '먼저 물어보고'].every((w) => sys.includes(w)));
   const skill = fs.readFileSync(path.join(dir, '.claude', 'skills', 'platform', 'SKILL.md'), 'utf8');
@@ -132,7 +134,7 @@ async function run() {
   check('제목 줄(- 로 시작 안 함)은 지울 수 없음', (await post('/api/memory/delete', { i: 0, text: '# 기억' }, ck)).status === 409);
   check('삭제 버튼: 그 줄이 지워짐', (await post('/api/memory/delete', { i: mem1[0].i, text: mem1[0].text }, ck)).status === 200
     && (await (await fetch(BASE + '/api/memory', { headers: H })).json()).items.length === 0);
-  check('삭제해도 파일의 제목 줄은 남음', fs.readFileSync(path.join(dir, 'memory.md'), 'utf8').startsWith('# 기억'));
+  check('삭제해도 파일의 제목 줄은 남음', fs.readFileSync(path.join(UD, 'memory.md'), 'utf8').startsWith('# 기억'));
   const rawToken = ck.split('=')[1];
   check('세션 파일에 쿠키 토큰 원문이 없음(해시만 저장)', !fs.readFileSync(path.join(dir, 'sessions.json'), 'utf8').includes(rawToken));
 
@@ -167,6 +169,7 @@ async function run() {
   await runMail(ck);
   await runFiles(ck);
   await runSafety5(ck);
+  await runUsers(ck);
   await post('/api/auth/logout', {}, ck);
   check('로그아웃하면 같은 쿠키로 /api/me 는 401', (await fetch(BASE + '/api/me', { headers: { Cookie: ck } })).status === 401);
 
@@ -956,7 +959,7 @@ function runScheduleCalc() {
 function schedKit(ck) { // 예약 점검 두 가지(runSchedule·runSchedApi)가 같이 쓰는 도우미
   const H = { 'Content-Type': 'application/json', Cookie: ck };
   const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
-  const file = path.join(dir, 'schedule.json'), runsLog = path.join(dir, 'wait-runs.log');
+  const file = path.join(UD, 'schedule.json'), runsLog = path.join(dir, 'wait-runs.log');
   const notices = async () => (await (await fetch(BASE + '/api/db/notices', { headers: H })).json());
   return {
     H, sleep, file, notices,
@@ -1015,7 +1018,7 @@ async function runSchedule(ck) {
   const badN = ns.filter((n) => n.title === '예약 하나를 건너뛰었어요');
   check('형식이 틀린 예약은 이름·이유와 함께 알림 한 번만(30초마다 되풀이 안 됨), 실행은 안 됨', badN.length === 1 && badN[0].level === '주의' && badN[0].body.includes('형식이 틀린 예약') && badN[0].body.includes('시각은 24시간'));
 
-  const jf = path.join(dir, 'journal', `${day}.md`), j = fs.existsSync(jf) ? fs.readFileSync(jf, 'utf8') : '';
+  const jf = path.join(UD, 'journal', `${day}.md`), j = fs.existsSync(jf) ? fs.readFileSync(jf, 'utf8') : '';
   const sections = (name) => j.split('\n').filter((l) => new RegExp(`^## \\d\\d:\\d\\d (⚠ )?${name}$`).test(l)).length;
   check('data/journal/<오늘>.md 에 실행마다 "## 시각 이름" 한 칸씩(제목 한 번, 각 예약 정확히 한 칸)', j.startsWith(`# ${day} 일지`) && j.split(`# ${day} 일지`).length === 2
     && ['놓친 한 번', '며칠 놓친 매일', '몇 주 놓친 주간', '간격 예약'].every((n) => sections(n) === 1) && sections('실패할 예약') === 1 && /## \d\d:\d\d ⚠ 실패할 예약/.test(j));
@@ -1104,7 +1107,7 @@ async function runSchedApi(ck) {
 
   // 결과가 아주 길 때: 알림에는 한도까지만, 전체는 일지에. 그 알림을 읽음으로 저장(화면이 하는 일)도 막히지 않아야 한다
   check('긴 결과(25000자)를 지금 실행', (await call('POST', '/cccc0005/run')).status === 200 && await until(async () => (await mine(/^예약 결과: 긴 결과$/)).length === 1));
-  const big = (await mine(/^예약 결과: 긴 결과$/))[0], jtext = fs.readFileSync(path.join(dir, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8');
+  const big = (await mine(/^예약 결과: 긴 결과$/))[0], jtext = fs.readFileSync(path.join(UD, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8');
   check('긴 결과: 알림 detail 은 2만 자까지+안내 문구, 요약은 120자 이하, 일지에는 전체(25000자)가 있음',
     big.detail.length < 20_300 && big.detail.includes('전체는 일지 파일에 있어요') && big.body.length <= 120 && jtext.includes('가'.repeat(25000)));
   const put = await fetch(`${BASE}/api/db/notices/${big.id}`, { method: 'PUT', headers: H, body: JSON.stringify({ ...big, read: true }) });
@@ -1185,7 +1188,7 @@ async function runTelegram(ck) {
   // 휴대폰 체크 켜고 끄는 API
   writeSched([mkE('dddd0010', '체크 점검', { 종류: 'every', 분: 600 }, '체크 지시', { 마지막실행: ago(1) })]);
   const call = (m, u, b) => fetch(BASE + '/api/schedule' + u, { method: m, headers: H, body: b === undefined ? undefined : JSON.stringify(b) });
-  const readS = () => JSON.parse(fs.readFileSync(path.join(dir, 'schedule.json'), 'utf8'));
+  const readS = () => JSON.parse(fs.readFileSync(path.join(UD, 'schedule.json'), 'utf8'));
   check('📱 체크 API: 켜면 휴대폰=true, 끄면 false 로 그 예약에만 저장, 이상한 값은 400, 없는 예약은 404',
     (await call('POST', '/dddd0010/phone', { on: true })).status === 200 && readS()[0].휴대폰 === true && (await call('POST', '/dddd0010/phone', { on: false })).status === 200 && readS()[0].휴대폰 === false
     && (await call('POST', '/dddd0010/phone', { on: 'yes' })).status === 400 && (await call('POST', '/nope0000/phone', { on: true })).status === 404);
@@ -1245,7 +1248,7 @@ async function runInbox(ck) {
   check('메인 화면: 대시보드 "안 읽은 알림" 카드와 🔔 는 같은 자료(noticeRaw)를 쓰고(대시보드가 따로 받지 않음), 카드·메뉴의 #알림 을 누르면 같은 목록이 열림',
     html.includes('notices: noticeRaw') && /DASH_DATA = \['events', 'projects', 'tasks'\]/.test(html) && html.includes(`closest('a[href="#알림"]')`) && html.includes('<a class="stat" href="#알림">'));
   check('설정 화면: "텔레그램 배달(선택)" 칸 — 봇 토큰·채팅 ID 는 ●●● 로 가린 일반 칸(비밀번호 칸이 아니라 브라우저가 토큰을 비밀번호로 저장하지 않음)·저장·시험 보내기·설정 지우기, 저장된 값은 ****, 옆에 BotFather 도움말(/newbot·@userinfobot·시작 누르기)',
-    !html.includes('type="password"') && ['텔레그램 배달', '(선택)', 'id="tgToken"', 'data-1p-ignore', 'id="tgChat"', 'text-security', 'id="tgSave"', 'id="tgTest"', 'id="tgClear"', '시험 보내기', '****', 'data/settings.json',
+    html.includes('id="tgToken" class="mask" type="text"') && html.includes('id="tgChat" class="mask" type="text"') && ['텔레그램 배달', '(선택)', 'id="tgToken"', 'data-1p-ignore', 'id="tgChat"', 'text-security', 'id="tgSave"', 'id="tgTest"', 'id="tgClear"', '시험 보내기', '****', 'data/settings.json',
       '@BotFather', '/newbot', '@userinfobot', '시작(Start)', '봇 토큰', '채팅 ID'].every((w) => html.includes(w)));
   check('설정 화면: 시험 보내기 전에 저장하지 않은 입력이 있으면 안내, 예약 칸에는 📱 체크(휴대폰으로도 보내기)와 "텔레그램 설정 필요" 표시가 있음',
     html.includes('아직 저장되지 않았어요') && html.includes('data-phone') && html.includes('휴대폰으로도 보내기') && html.includes('텔레그램 설정 필요'));
@@ -1806,6 +1809,161 @@ async function runSafety5(ck) {
   await setP({ 연결된앱: false, 명령실행: false, 홈폴더: false });
 }
 
+// 여러 사람이 쓰기: 계정 추가(관리자만)·처음 로그인 때 비밀번호 바꾸기·사람마다 따로(대화·기억·예약·일지·알림)·일반 사용자 제한·권한 스위치는 관리자의 비서에게만
+async function runUsers(ck) {
+  const call = (m, u, c, b) => fetch(BASE + u, { method: m, headers: { 'Content-Type': 'application/json', Cookie: c }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const add = (b, c = ck) => call('POST', '/api/users', c, b);
+  const login = async (username, password) => { const r = await post('/api/auth/login', { username, password }); return { r, c: cookieOf(r) }; };
+  const sayAs = async (c, id, content) => { const r = await call('POST', `/api/chats/${id}/messages`, c, { content }); return [...(await r.text()).matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join(''); };
+  const newChatAs = async (c) => (await (await call('POST', '/api/chats', c)).json()).id;
+  const notesOf = async (c) => (await call('GET', '/api/db/notices', c)).json();
+  const mem = async (c) => (await (await call('GET', '/api/memory', c)).json()).items;
+  const usersJson = () => JSON.parse(fs.readFileSync(path.join(dir, 'users.json'), 'utf8'));
+  const { until } = schedKit(ck);
+  const T1 = 'temp-minjun-pass', T2 = 'temp-seoyeon-pass', T3 = 'temp-chief-pass', N1 = 'new-minjun-pass-9', N2 = 'new-seoyeon-pass-9', N3 = 'new-chief-pass-9';
+  const today = new Date().toLocaleDateString('sv-SE');
+
+  const me0 = await (await call('GET', '/api/me', ck)).json();
+  check('여러 사람: 첫 관리자는 role=admin 이고 개인 폴더(users/tester/)에 기억 파일과 대화 폴더가 있음', me0.role === 'admin' && me0.mustChange === false && fs.existsSync(path.join(UD, 'memory.md')) && fs.existsSync(path.join(UD, 'chats')));
+
+  // 계정 추가 (관리자만): 입력 검사 → 성공 → 중복
+  const base = { name: '김민준', username: 'minjun', password: T1, dept: '설계', role: 'user' };
+  const bads = [{ name: '' }, { name: '가\u0000나' }, { username: 'ab' }, { username: 'Con' }, { username: 'bad.' }, { username: '.hidden' }, { username: 'a/b' }, { username: 'a b' }, { password: '1234567' }, { dept: '가'.repeat(31) }, { dept: '설\n계' }, { role: 'boss' }, { role: true }];
+  const badRes = await Promise.all(bads.map((o) => add({ ...base, ...o })));
+  check('계정 추가 입력 검사: 빈 이름·특수 문자 이름·짧거나 점으로 끝나는·윈도우 예약(con)·경로 글자 아이디·8자 미만 비밀번호·긴 부서·이상한 역할은 모두 400 이고 아무도 안 생김',
+    badRes.every((r) => r.status === 400) && usersJson().length === 1 && !fs.existsSync(path.join(dir, 'users', 'con')) && !fs.existsSync(path.join(dir, 'users', 'minjun')));
+  const a1 = await add(base), a1j = await a1.json();
+  check('관리자가 계정을 추가하면(이름·아이디·임시 비밀번호·부서·역할) 처음 로그인 전(mustChange) 으로 만들어지고, 개인 폴더·기억 파일·대화 폴더가 생김',
+    a1.status === 200 && a1j.user.username === 'minjun' && a1j.user.name === '김민준' && a1j.user.dept === '설계' && a1j.user.role === 'user' && a1j.user.mustChange === true
+    && fs.existsSync(path.join(dir, 'users', 'minjun', 'memory.md')) && fs.existsSync(path.join(dir, 'users', 'minjun', 'chats')));
+  check('같은 아이디(대문자를 섞어도)는 409', (await add({ ...base, username: 'MinJun' })).status === 409 && usersJson().length === 2);
+  const stored = fs.readFileSync(path.join(dir, 'users.json'), 'utf8'), listText = await (await call('GET', '/api/users', ck)).text();
+  check('임시 비밀번호는 users.json 에 해시로만 있고(평문 없음), 사용자 목록 API 에는 비밀번호 칸 자체가 없음',
+    !stored.includes(T1) && usersJson().find((u) => u.username === 'minjun').password.startsWith('scrypt$') && !listText.includes('scrypt') && !listText.includes('password') && JSON.parse(listText).length === 2);
+  check('일반 사용자도 더 추가해 둠(이서연 구매) · 관리자 역할 계정(chief)도 추가됨', (await add({ name: '이서연', username: 'seoyeon', password: T2, dept: '구매', role: 'user' })).status === 200
+    && (await add({ name: '최관리', username: 'chief', password: T3, dept: '경영', role: 'admin' })).status === 200 && usersJson().length === 4);
+
+  // 처음 로그인: 비밀번호를 바꾸기 전에는 아무것도 못 한다
+  const l1 = await login('minjun', T1), l1b = await login('minjun', T1);
+  check('임시 비밀번호로 로그인되고 mustChange=true 로 알려 줌', l1.r.status === 200 && (await l1.r.json()).mustChange === true);
+  const meM = await (await call('GET', '/api/me', l1.c)).json();
+  check('/api/me 가 이름·부서·역할·mustChange 를 알려 줌', meM.name === '김민준' && meM.dept === '설계' && meM.role === 'user' && meM.mustChange === true);
+  const blocked = await Promise.all([['GET', '/api/chats'], ['POST', '/api/chats'], ['GET', '/api/db/events'], ['GET', '/api/schedule'], ['GET', '/api/memory'], ['GET', '/api/events'], ['GET', '/api/mail/status']].map(([m, u]) => call(m, u, l1.c, m === 'POST' ? {} : undefined)));
+  check('비밀번호를 바꾸기 전에는 내 정보·바꾸기·로그아웃 말고 어떤 API 도 403(mustChange)', blocked.every((r) => r.status === 403) && (await blocked[0].json()).mustChange === true);
+  const chg = (cur, next, c = l1.c) => call('POST', '/api/auth/password', c, { current: cur, next });
+  check('로그인 없이는 비밀번호를 못 바꿈(401)', (await fetch(BASE + '/api/auth/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: T1, next: N1 }) })).status === 401);
+  check('비밀번호 바꾸기: 지금 비밀번호가 틀리면 401, 새 비밀번호가 8자 미만이면 400, 지금과 같으면 400 — 아무것도 안 바뀌어 임시 비밀번호로 계속 로그인됨',
+    (await chg('wrong-pass-xyz', N1)).status === 401 && (await chg(T1, 'short')).status === 400 && (await chg(T1, T1)).status === 400 && (await login('minjun', T1)).r.status === 200);
+  const ok1 = await chg(T1, N1), afterMe = await (await call('GET', '/api/me', l1.c)).json();
+  check('맞게 바꾸면 200 이고 그 로그인은 그대로 이어지며(mustChange=false), 이 사람의 다른 기기 로그인은 풀림', ok1.status === 200 && afterMe.mustChange === false && (await call('GET', '/api/me', l1b.c)).status === 401 && (await call('GET', '/api/chats', l1.c)).status === 200);
+  check('바꾼 뒤에는 옛 임시 비밀번호로 로그인 안 되고 새 비밀번호로 됨, users.json 에는 새 비밀번호 평문도 없고 mustChange 표시도 지워짐',
+    (await login('minjun', T1)).r.status === 401 && (await login('minjun', N1)).r.status === 200 && !fs.readFileSync(path.join(dir, 'users.json'), 'utf8').includes(N1) && !('mustChange' in usersJson().find((u) => u.username === 'minjun')));
+  const lS = await login('seoyeon', T2);
+  check('처음 로그인 중에도 로그아웃은 됨(비밀번호를 안 바꿔도 나갈 수 있음)', lS.r.status === 200 && (await call('POST', '/api/auth/logout', lS.c, {})).status === 200 && (await call('GET', '/api/me', lS.c)).status === 401);
+  const lS2 = await login('seoyeon', T2), lC = await login('chief', T3);
+  check('이서연·관리자(chief) 도 임시 비밀번호를 바꾸면 쓸 수 있음', (await chg(T2, N2, lS2.c)).status === 200 && (await chg(T3, N3, lC.c)).status === 200);
+  const CM = l1.c, CS = lS2.c, CC = lC.c;
+  check('관리자 역할로 추가한 사람은 사용자 목록·설정을 쓸 수 있음(200)', (await call('GET', '/api/users', CC)).status === 200 && (await call('GET', '/api/settings', CC)).status === 200);
+
+  // 일반 사용자는 설정·권한·예시 데이터·사용자 관리를 못 쓴다 (서버가 막는다)
+  const limited = [['GET', '/api/settings'], ['PUT', '/api/settings/permissions', { 명령실행: true }], ['PUT', '/api/settings/telegram', { chatId: '1' }], ['DELETE', '/api/settings/telegram'], ['POST', '/api/settings/telegram/test'],
+    ['POST', '/api/seed', {}], ['GET', '/api/users'], ['POST', '/api/users', { name: '몰래', username: 'sneaky', password: 'sneaky-pass-1', role: 'admin' }]];
+  const lr = await Promise.all(limited.map(([m, u, b]) => call(m, u, CM, b)));
+  check('일반 사용자는 설정(권한 스위치·텔레그램)·예시 데이터·사용자 목록과 추가를 서버에서 막힘(403) — 아무 설정도 사용자도 안 바뀜',
+    lr.every((r) => r.status === 403) && usersJson().length === 4 && (await (await call('GET', '/api/settings', ck)).json()).permissions.명령실행 === false && !fs.existsSync(path.join(dir, 'users', 'sneaky')));
+  check('일반 사용자도 대화·일정(업무 데이터)·예약·메일정리 화면은 그대로 씀(200)', (await Promise.all([['GET', '/api/chats'], ['GET', '/api/db/events'], ['GET', '/api/schedule'], ['GET', '/api/memory'], ['GET', '/api/mail/status']].map(([m, u]) => call(m, u, CM)))).every((r) => r.status === 200));
+
+  // 사람마다 따로: 대화·기억
+  const tchat = await newChatAs(ck); await sayAs(ck, tchat, '관리자만 아는 대화');
+  const mchat = await newChatAs(CM), mtext = await sayAs(CM, mchat, '기억해: 설계 검토는 월요일');
+  const mf = path.join(dir, 'users', 'minjun');
+  check('사람마다 따로(대화): 김민준의 대화는 users/minjun/chats/ 에만 저장되고, 관리자의 목록·열기에는 안 보이고(404) 김민준도 관리자의 대화를 못 엶(404, 보내기도 404)',
+    fs.existsSync(path.join(mf, 'chats', `${mchat}.json`)) && !fs.existsSync(path.join(UD, 'chats', `${mchat}.json`)) && fs.existsSync(path.join(UD, 'chats', `${tchat}.json`))
+    && !(await (await call('GET', '/api/chats', ck)).json()).some((c) => c.id === mchat) && !(await (await call('GET', '/api/chats', CM)).json()).some((c) => c.id === tchat)
+    && (await call('GET', `/api/chats/${mchat}`, ck)).status === 404 && (await call('GET', `/api/chats/${tchat}`, CM)).status === 404 && (await call('POST', `/api/chats/${tchat}/messages`, CM, { content: '엿보기' })).status === 404);
+  check('사람마다 따로(기억): "기억해:" 는 users/minjun/memory.md 에만 쌓이고, 관리자·이서연의 기억 목록에는 안 보이며, 이서연이 그 줄을 지우려 해도 안 지워짐(409)',
+    fs.readFileSync(path.join(mf, 'memory.md'), 'utf8').includes('설계 검토는 월요일') && !fs.readFileSync(path.join(UD, 'memory.md'), 'utf8').includes('설계 검토') && (await mem(CM)).length === 1
+    && (await mem(ck)).every((m) => !m.text.includes('설계 검토')) && (await mem(CS)).length === 0 && (await post('/api/memory/delete', { i: 1, text: (await mem(CM))[0].text }, CS)).status === 409 && (await mem(CM)).length === 1);
+  check('비서에게는 그 사람의 개인 폴더(memory.md·schedule.json·journal/)와 이름·부서·역할을 알려 주고, data/ 바로 아래 것은 쓰지 말라고 함',
+    mtext.includes('users/minjun/memory.md') && mtext.includes('users/minjun/schedule.json') && mtext.includes('주인 이름: 김민준') && mtext.includes('부서: 설계') && mtext.includes('일반 사용자') && mtext.includes('다른 사람의 폴더'));
+
+  // 사람마다 따로: 예약·일지·알림 (텔레그램은 관리자의 휴대폰 하나라서 일반 사용자의 결과는 거기로 안 간다)
+  await call('PUT', '/api/settings/telegram', ck, { token: '123456:SELFTEST_fake_token_for_tests_000', chatId: '424242' });
+  const mfile = path.join(mf, 'schedule.json');
+  fs.writeFileSync(mfile + '.t', JSON.stringify([{ id: 'mj000001', 이름: '민준 예약', 언제: { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, 지시문: '민준 예약 점검', 켬: true, 마지막실행: null, 휴대폰: true }], null, 2)); fs.renameSync(mfile + '.t', mfile);
+  const gotN = await until(async () => (await notesOf(CM)).some((n) => n.title === '예약 결과: 민준 예약'));
+  const mn = (await notesOf(CM)).find((n) => n.title === '예약 결과: 민준 예약') || { detail: '' };
+  check('사람마다 따로(예약): 김민준의 예약이 그 사람 폴더의 파일에서 돌고, 비서는 김민준의 개인 폴더·이름으로 실행되고, 결과 알림은 김민준에게만 보임(관리자·이서연 알림 목록에는 없음)',
+    gotN && mn.owner === 'minjun' && mn.detail.includes('users/minjun/') && mn.detail.includes('주인 이름: 김민준') && !(await notesOf(ck)).some((n) => n.title === '예약 결과: 민준 예약') && !(await notesOf(CS)).some((n) => n.title === '예약 결과: 민준 예약'));
+  const jm = path.join(mf, 'journal', `${today}.md`), ja = path.join(UD, 'journal', `${today}.md`);
+  check('일지도 그 사람 폴더에만: users/minjun/journal/<오늘>.md 에 적히고 관리자 일지에는 없음', fs.existsSync(jm) && fs.readFileSync(jm, 'utf8').includes('민준 예약') && !(fs.existsSync(ja) && fs.readFileSync(ja, 'utf8').includes('민준 예약')));
+  const sj = await (await call('GET', '/api/schedule', CM)).json(), st = await (await call('GET', '/api/schedule', ck)).json();
+  check('예약 칸도 사람마다 따로: 김민준 칸에만 보이고, 관리자·이서연이 그 예약을 지우거나 돌리려 하면 404', sj.items.some((e) => e.id === 'mj000001') && !st.items.some((e) => e.id === 'mj000001')
+    && (await call('DELETE', '/api/schedule/mj000001', ck)).status === 404 && (await call('POST', '/api/schedule/mj000001/run', CS)).status === 404 && (await call('POST', '/api/schedule/mj000001/enable', ck, { on: false })).status === 404);
+  check('텔레그램(휴대폰)은 관리자만: 일반 사용자가 켜려 하면 403 이고 칸에도 안 보이게 telegram=false, 파일에 휴대폰:true 가 있어도 그 결과는 텔레그램으로 안 나감',
+    (await call('POST', '/api/schedule/mj000001/phone', CM, { on: true })).status === 403 && sj.telegram === false && st.telegram === true && tgSeen.every((x) => !JSON.stringify(x.body).includes('민준 예약')));
+  check('알림은 owner 가 적힌 것만 그 사람에게 보이고, owner 없는 알림(공지)은 모두에게 보임', await (async () => {
+    await call('PUT', '/api/db/notices/pub-all-1', ck, { title: '모두에게 공지', body: '함께 보는 공지', level: '안내', at: new Date().toISOString(), read: false });
+    const [nm, ns, na] = [await notesOf(CM), await notesOf(CS), await notesOf(ck)];
+    return [nm, ns, na].every((l) => l.some((n) => n.title === '모두에게 공지')) && nm.every((n) => !n.owner || n.owner === 'minjun') && ns.every((n) => !n.owner || n.owner === 'seoyeon') && nm.some((n) => n.owner === 'minjun');
+  })());
+
+  // 업무 데이터(db)는 함께 쓴다
+  await call('PUT', '/api/db/events/shared-e1', ck, { title: '함께 보는 일정', kind: '회의', date: '2030-01-01', endDate: '2030-01-01', start: '09:00', end: '10:00', place: '', projectId: null });
+  const seenM = (await (await call('GET', '/api/db/events', CM)).json()).find((e) => e.id === 'shared-e1');
+  await call('PUT', '/api/db/events/shared-e1', CM, { ...seenM, title: '민준이 고친 일정' });
+  check('업무 데이터(db)는 함께 씀: 관리자가 넣은 일정을 김민준·이서연도 보고, 김민준이 고친 것이 관리자에게도 보임',
+    !!seenM && (await (await call('GET', '/api/db/events', CS)).json()).some((e) => e.id === 'shared-e1') && (await (await call('GET', '/api/db/events', ck)).json()).find((e) => e.id === 'shared-e1').title === '민준이 고친 일정');
+  await call('DELETE', '/api/db/events/shared-e1', ck); await call('DELETE', '/api/db/notices/pub-all-1', ck);
+
+  // 권한 스위치(연결된 앱·명령 실행·홈 폴더)는 관리자의 비서에게만, 다른 사람의 개인 폴더는 비서가 못 열게
+  const dumpAs = async (c) => { const t = await sayAs(c, await newChatAs(c), '/perm'), m = /^PERM (.*) \| allow=(.*) \| deny=(.*)$/.exec(t) || []; return { flags: m[1] || '', allow: (m[2] || '').split(','), deny: (m[3] || '').split(',') }; };
+  await call('PUT', '/api/settings/permissions', ck, { 연결된앱: true, 명령실행: true, 홈폴더: true });
+  const dm = await dumpAs(CM), da = await dumpAs(ck), status = async (c) => (await (await call('GET', '/api/mail/status', c)).json()).mode;
+  check('권한 스위치는 관리자의 비서에게만: 다 켜도 일반 사용자의 비서는 연결된 앱·명령·홈 폴더·도구 찾기가 모두 꺼진 그대로이고 명령 도구는 거절 목록에 있음(관리자의 비서는 켜짐)',
+    dm.flags.startsWith('apps=N ') && dm.flags.includes('shell=NN') && dm.flags.includes('toolsShell=N') && dm.flags.includes('home=off') && dm.flags.includes('ts=N') && dm.deny.includes('Bash') && !dm.allow.some((t) => t.startsWith('mcp__') || t.includes('~'))
+    && da.flags.startsWith('apps=Y ') && !da.flags.includes('shell=NN') && !da.flags.includes('home=off'));
+  check('메일정리: 연결된 앱이 켜져 있어도 일반 사용자는 연습 모드(관리자의 Gmail 을 읽을 수 없음), 관리자는 Gmail', (await status(CM)) === '연습' && (await status(ck)) === 'Gmail');
+  await call('PUT', '/api/settings/permissions', ck, { 연결된앱: false, 명령실행: false, 홈폴더: false }); await call('DELETE', '/api/settings/telegram', ck);
+  const dmDeny = (who) => ['Read', 'Edit', 'Write'].every((t) => dm.deny.includes(`${t}(./users/${who}/**)`)), daDeny = (who) => ['Read', 'Edit', 'Write'].every((t) => da.deny.includes(`${t}(./users/${who}/**)`));
+  check('다른 사람의 개인 폴더는 비서가 읽지도 고치지도 못함: 김민준의 비서는 관리자·이서연·chief 폴더가 막히고 자기 폴더(minjun)는 안 막힘, 관리자의 비서는 김민준·이서연 폴더가 막힘',
+    ['tester', 'seoyeon', 'chief'].every(dmDeny) && !dm.deny.some((x) => x.includes('./users/minjun/')) && ['minjun', 'seoyeon'].every(daDeny) && !da.deny.some((x) => x.includes('./users/tester/')));
+  check('연습용 임시 비밀번호 파일(임시비밀번호.txt)도 비서가 읽지·고치지 못함', ['Read', 'Edit', 'Write'].every((t) => dm.deny.includes(`${t}(./임시비밀번호.txt)`) && da.deny.includes(`${t}(./임시비밀번호.txt)`)));
+
+  // 화면
+  const html = await (await fetch(BASE + '/', { headers: { Cookie: CM } })).text();
+  check('화면: 설정에 일반·사용자 탭과 계정 추가 폼, 닫을 수 없는 비밀번호 바꾸기 창이 있고, 설정 메뉴는 관리자 전용(ADMIN_ONLY)',
+    ['#설정/사용자', 'id="pwModal"', "ADMIN_ONLY = ['설정']", 'showUsers', '/api/auth/password', '임시 비밀번호', '새 사용자 추가', 'id="uRole"'].every((w) => html.includes(w)) && !html.includes('id="pwModal" hidden></div>'));
+}
+
+// 여러 사람이 쓰기 전의 data/ (chats·memory.md·schedule.json·journal/ 이 data/ 바로 아래) 를 첫 관리자의 개인 폴더로 옮기는가: 옮기기만 하고 지우지 않고, 이미 있는 건 덮어쓰지 않는다
+async function runMigrate() {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test4-')), B4 = 'http://127.0.0.1:8795', OWN = path.join(d, 'users', 'olduser');
+  const hash = (pw) => { const salt = crypto.randomBytes(16); return `scrypt$${salt.toString('hex')}$${crypto.scryptSync(pw, salt, 64).toString('hex')}`; };
+  const owner = { id: crypto.randomUUID(), name: '옛주인', username: 'olduser', role: 'admin', password: hash(PW), createdAt: new Date().toISOString() }; // 옛 계정: dept·mustChange 칸이 없다
+  const w = (rel, text) => { fs.mkdirSync(path.dirname(path.join(d, rel)), { recursive: true }); fs.writeFileSync(path.join(d, rel), text); };
+  const chat = (id, userId, title) => JSON.stringify({ id, userId, title, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', messages: [{ role: 'user', content: title, at: '2026-01-01T00:00:00.000Z' }] });
+  const c1 = crypto.randomUUID(), c2 = crypto.randomUUID(), LEG = [{ id: 'legacy01', 이름: '옛 예약', 언제: { 종류: 'daily', 시각: '08:30' }, 지시문: '옛 지시', 켬: false, 마지막실행: null }];
+  w('users.json', JSON.stringify([owner]));
+  w(`chats/${c1}.json`, chat(c1, owner.id, '옛 대화 하나')); w(`chats/${c2}.json`, chat(c2, 'ghost-user-id', '주인을 모르는 옛 대화')); w('chats/메모.txt', '대화 폴더에 있던 다른 파일');
+  w('memory.md', '# 기억\n- 2026-01-01 옛 기억 한 줄\n'); w('journal/2026-01-01.md', '# 2026-01-01 일지\n\n옛 일지\n');
+  w('schedule.json', JSON.stringify(LEG)); w('users/olduser/schedule.json', '[]'); // 이미 새 자리에 파일이 있으면 덮어쓰지 않는다
+  const s4 = startServer(8795, d, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js') });
+  await s4.ready;
+  const lg = await fetch(B4 + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'olduser', password: PW }) }), H4 = { 'Content-Type': 'application/json', Cookie: cookieOf(lg) };
+  const chats = await (await fetch(B4 + '/api/chats', { headers: H4 })).json(), me = await (await fetch(B4 + '/api/me', { headers: H4 })).json(), mem = (await (await fetch(B4 + '/api/memory', { headers: H4 })).json()).items;
+  check('옛 구조 이전: 옛 계정(부서·mustChange 칸 없음)이 그대로 로그인되고 관리자로 보임', lg.status === 200 && me.role === 'admin' && me.dept === '' && me.mustChange === false);
+  check('옛 구조 이전: data/chats 의 대화가 첫 관리자 폴더(users/olduser/chats/)로 옮겨져 화면에 보임 — 만든 사람을 모르는 대화도 지우지 않고 그 폴더에 둠(목록에는 안 보임)',
+    chats.length === 1 && chats[0].id === c1 && fs.existsSync(path.join(OWN, 'chats', `${c1}.json`)) && fs.existsSync(path.join(OWN, 'chats', `${c2}.json`)) && !fs.existsSync(path.join(d, 'chats', `${c1}.json`)) && !fs.existsSync(path.join(d, 'chats', `${c2}.json`)));
+  check('옛 구조 이전: 대화 폴더에 있던 다른 파일은 그 자리에 남고(지우지 않음), 기억·일지는 개인 폴더로 옮겨져 기억 목록에 보임, 비어 버린 옛 journal/ 폴더만 치워짐',
+    fs.readFileSync(path.join(d, 'chats', '메모.txt'), 'utf8') === '대화 폴더에 있던 다른 파일' && !fs.existsSync(path.join(d, 'memory.md')) && mem.length === 1 && mem[0].text.includes('옛 기억 한 줄')
+    && fs.readFileSync(path.join(OWN, 'journal', '2026-01-01.md'), 'utf8').includes('옛 일지') && !fs.existsSync(path.join(d, 'journal')));
+  check('옛 구조 이전: 새 자리에 이미 있는 파일(users/olduser/schedule.json)은 덮어쓰지 않고, 옛 data/schedule.json 은 그대로 남음',
+    fs.readFileSync(path.join(OWN, 'schedule.json'), 'utf8') === '[]' && JSON.stringify(JSON.parse(fs.readFileSync(path.join(d, 'schedule.json'), 'utf8'))) === JSON.stringify(LEG));
+  s4.kill();
+  fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+}
+
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
 function startServer(port, dataDir, env) {
   const s = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
@@ -1822,11 +1980,12 @@ const filesUnder = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e)
 // 서버를 껐다 켜기 (4편 점검): 놓친 회차는 한 번만, 도는 도중에 꺼진 예약은 알림으로, 실행 실패(시간 초과·갑자기 죽음·로그인 풀림)는 알림에 이유가 남는지,
 // 시계가 되돌아가 마지막실행이 "미래"가 된 예약이 조용히 멈추지 않는지. 별도 폴더·포트(8794)의 서버를 실제로 껐다 켠다
 async function runRestart() {
-  const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test3-')), B3 = 'http://127.0.0.1:8794';
+  const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test3-')), B3 = 'http://127.0.0.1:8794', UD3 = path.join(d3, 'users', 'three'); // 곧 만들 관리자 "three" 의 개인 폴더
+  fs.mkdirSync(UD3, { recursive: true });
   const env3 = { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), SANCHO_TICK_MS: '200', SANCHO_BRAIN_MAX_MS: '4000' }; // 실행 시간 한도를 4초로 (30초 걸리는 "/slow" 가 걸린다)
   const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
   const until = async (fn, ms = 15000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
-  const sfile = path.join(d3, 'schedule.json'), rfile = path.join(d3, 'schedule-running.json');
+  const sfile = path.join(UD3, 'schedule.json'), rfile = path.join(UD3, 'schedule-running.json');
   const write = (list) => { fs.writeFileSync(sfile + '.t', JSON.stringify(list, null, 2)); fs.renameSync(sfile + '.t', sfile); }, read = () => JSON.parse(fs.readFileSync(sfile, 'utf8'));
   const runs = () => { const f = path.join(d3, 'wait-runs.log'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0; };
   const mk = (id, 이름, 언제, 지시문, extra = {}) => ({ id, 이름, 언제, 지시문, 켬: true, 마지막실행: null, ...extra }), PAST = { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' };
@@ -1848,7 +2007,7 @@ async function runRestart() {
     && ft.body.includes('너무 오래 걸려 중단') && fc.body.includes('오류로 끝났습니다') && fc.detail.includes('boom') && fg.body.includes('로그인되어 있지 않습니다'));
   const sch3 = await (await fetch(B3 + '/api/schedule', { headers: H3 })).json();
   check('시간이 넘어 끊은 예약도 "실행 중"에서 풀리고(목록 running=false), 실행 중 기록 파일에서도 지워짐', sch3.items.every((e) => e.running === false) && Object.keys(JSON.parse(fs.readFileSync(rfile, 'utf8'))).length === 0);
-  const j3 = fs.readFileSync(path.join(d3, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8');
+  const j3 = fs.readFileSync(path.join(UD3, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8');
   check('실패한 예약도 일지에 "⚠ 이름" 칸과 이유가 적힘', ['시간 초과 예약', '갑자기 죽는 예약', '로그인 풀린 예약'].every((n) => j3.includes(`⚠ ${n}`)) && j3.includes('너무 오래 걸려'));
 
   // 2) 도는 도중에 서버를 끈다
@@ -1896,12 +2055,13 @@ function runGit() {
 
 // claude 프로그램이 아예 없는 PC 를 흉내: PATH 를 빈 폴더로 바꾼 서버를 하나 더 켠다
 async function runNoClaude() {
-  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-'));
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test2-')), UD2 = path.join(dir2, 'users', 'two'); // 곧 만들 관리자 "two" 의 개인 폴더
+  fs.mkdirSync(UD2, { recursive: true });
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-empty-'));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k) && k !== 'SANCHO_BRAIN_SCRIPT'));
   // 예약도 하나 걸어 둔다: claude 가 없으면 예약 실행이 "예약 실패" 알림으로 이유를 남겨야 한다 (켜자마자 한 번 시계를 본다)
-  fs.writeFileSync(path.join(dir2, 'schedule.json'), JSON.stringify([{ id: 'nocl0001', 이름: 'claude 없는 예약', 언제: { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, 지시문: '안녕', 켬: true, 마지막실행: null }]));
-  const s2 = startServer(8792, dir2, { ...env, PATH: empty });
+  fs.writeFileSync(path.join(UD2, 'schedule.json'), JSON.stringify([{ id: 'nocl0001', 이름: 'claude 없는 예약', 언제: { 종류: 'once', 날짜: '2000-01-01', 시각: '00:00' }, 지시문: '안녕', 켬: true, 마지막실행: null }]));
+  const s2 = startServer(8792, dir2, { ...env, PATH: empty, SANCHO_TICK_MS: '200' }); // 계정을 만든 뒤 시계가 곧 한 번 보게 (켜는 순간에는 아직 계정이 없어서)
   await s2.ready;
   const B2 = 'http://127.0.0.1:8792';
   const r = await fetch(B2 + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '둘', username: 'two', password: PW }) });
@@ -1913,7 +2073,7 @@ async function runNoClaude() {
   let nf = null;
   for (let i = 0; i < 50 && !nf; i++) { nf = (await (await fetch(B2 + '/api/db/notices', { headers: H2 })).json()).find((n) => n.title === '예약 실패: claude 없는 예약'); if (!nf) await new Promise((ok) => setTimeout(ok, 100)); }
   check('claude 가 없는 PC 에서 예약이 돌면 "예약 실패" 알림(주의)에 쉬운 이유가 남고, 일지에도 ⚠ 와 함께 적힘', !!nf && nf.level === '주의' && nf.body.includes('claude 프로그램을 찾을 수 없습니다') && nf.detail.includes('Claude Code 가 설치')
-    && fs.readFileSync(path.join(dir2, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8').includes('⚠ claude 없는 예약'));
+    && fs.readFileSync(path.join(UD2, 'journal', `${new Date().toLocaleDateString('sv-SE')}.md`), 'utf8').includes('⚠ claude 없는 예약'));
   s2.kill();
   fs.rmSync(dir2, { recursive: true, force: true }); fs.rmSync(empty, { recursive: true, force: true });
 }
@@ -1947,6 +2107,7 @@ srv.ready.then(async () => {
     await run();
     await runNoClaude();
     await runRestart();
+    await runMigrate();
     runGit();
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
     check('서버 로그에 비밀번호 평문이 없음', !srv.log.includes(PW));
