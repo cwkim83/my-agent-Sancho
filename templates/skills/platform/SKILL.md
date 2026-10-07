@@ -28,6 +28,11 @@ description: 일정(events)·할 일(tasks)·프로젝트(projects) 같은 업�
 | `memo` | 메모 |
 | `projectId` | 연결된 프로젝트의 `id`. 확실하지 않으면 `null` |
 
+### 회의실 예약 — `data/db/bookings.json` (읽기만 한다. 고칠 수 없다)
+
+일정과 같은 칸(`id`·`title`·`date`·`start`·`end`·`place`…)에 `roomId`(회의실)·`bookedBy`(예약한 사람 아이디)·`bookedByName` 이 더 있다. 화면의 일정 목록에는 함께 보이니, 오늘 일정을 말할 때는 이 파일도 같이 읽는다.
+회의실 예약·시간 바꾸기·취소는 서버가 겹침을 막아야 해서 주인이 **회의록 메뉴의 회의실 예약표**에서 직접 한다고 안내한다. `events.json` 에 `roomId` 를 붙여 예약을 흉내 내지 않는다.
+
 ### 할 일 — `data/db/tasks.json`
 
 | 필드 | 뜻 |

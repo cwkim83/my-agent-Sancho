@@ -113,7 +113,7 @@ async function run(msg) {
   if (msg.startsWith('/tool ')) { out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: msg.slice(6), id: 't9' } } }); delta('끝'); out({ type: 'result', subtype: 'success', is_error: false, result: '끝' }); return; } // 화면에 뜨는 도구 이름표 점검용
   const home = (/users\/([a-z0-9_.-]+)\/memory\.md/.exec(arg('--append-system-prompt') || '') || [])[1]; // 서버가 알려 준 "이 사람의 개인 폴더"
   if (msg.startsWith('기억해:')) fs.appendFileSync(home ? `users/${home}/memory.md` : 'memory.md', `- 2000-01-01 ${msg.slice(4).trim()}\n`); // 진짜 비서가 하는 일을 흉내
-  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | tools=[${arg('--tools')}] | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
+  const reply = `에코: ${msg} | resume=${ri >= 0 ? a[ri + 1] : 'none'} | env=${leak} | cwd=${require('path').basename(process.cwd())} | stdin=ok | sys=${sysOk} | deny=${deny} | scope=${scope} | iso=${iso} | tools=[${arg('--tools')}] | nopersist=${a.includes('--no-session-persistence') ? 'Y' : 'N'} | perm=${perm} | ctx=${arg('--append-system-prompt')}`;
   for (let i = 0; i < reply.length; i += 20) { delta(reply.slice(i, i + 20)); await sleep(5); } // 여러 조각으로 흘려보낸다(윈도우는 5ms 가 실제 15ms 쯤이라 조각을 너무 잘게 하면 느려진다)
   out({ type: 'result', subtype: 'success', is_error: false, result: reply });
 }

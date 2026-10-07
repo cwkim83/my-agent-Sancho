@@ -2148,7 +2148,7 @@ async function runMeeting(ck, { CM, CS, CC }) { // CM 김민준(일반) · CS �
   // ---- 예약
   const r1 = await book(CM), b1 = await J(r1);
   const evs = await list('events');
-  check('예약하면 일정(db/events.json)에도 들어감: 회의실 이름·시각·예약자가 적히고 일정 메뉴가 읽는 같은 자료에서 보임', r1.status === 200 && evs.some((e) => e.id === b1.event.id && e.roomId === 'room1' && e.kind === '회의' && e.date === '2030-03-04' && e.start === '10:00' && e.end === '11:00' && e.place === '본사 3층 대회의실' && e.bookedBy === 'minjun' && e.bookedByName === '김민준' && e.title === '주간 설계 회의'));
+  check('예약하면 일정 목록에도 들어감: 회의실 이름·시각·예약자가 적히고 일정 메뉴가 읽는 같은 자료에서 보임', r1.status === 200 && evs.some((e) => e.id === b1.event.id && e.roomId === 'room1' && e.kind === '회의' && e.date === '2030-03-04' && e.start === '10:00' && e.end === '11:00' && e.place === '본사 3층 대회의실' && e.bookedBy === 'minjun' && e.bookedByName === '김민준' && e.title === '주간 설계 회의'));
   const bads = [{ roomId: 'nope' }, { date: '2030-02-31' }, { date: '' }, { title: '  ' }, { title: '가'.repeat(61) }, { start: '10:15' }, { end: '11:20' }, { start: '11:00', end: '10:30' }, { start: '10:00', end: '10:00' }, { start: '07:30', end: '08:30' }, { start: '18:30', end: '19:30' }, { projectId: 'nope' }, { start: 'x' }];
   const badR = await Promise.all(bads.map((o) => book(CS, { start: '14:00', end: '15:00', ...o })));
   check('예약 입력 검사: 없는 회의실·없는 날·빈 제목·긴 제목·30분 단위 아님·끝이 시작보다 빠름·운영 시간(08:00~19:00) 밖·없는 프로젝트는 모두 400 이고 예약이 안 생김', badR.every((r) => r.status === 400) && (await list('events')).filter((e) => e.roomId).length === 1);
@@ -2270,6 +2270,149 @@ async function runMigrate() {
     fs.readFileSync(path.join(OWN, 'schedule.json'), 'utf8') === '[]' && JSON.stringify(JSON.parse(fs.readFileSync(path.join(d, 'schedule.json'), 'utf8'))) === JSON.stringify(LEG));
   s4.kill();
   fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+}
+
+// 6편 점검: 여러 사람이 함께 쓰는 규칙을 시험용 계정(qa-…, 시험 전용 비밀번호 — 실제 사용자 비밀번호 아님)으로 따로 켠 서버(8796)에서 확인한다
+//   ① 채널 멤버만 그 채널 메시지를 받는다(목록·읽기·실시간·첨부) ② 공지는 관리자만 쓴다 ③ 삭제는 쓴 사람과 관리자만 ④ 회의실 예약은 겹치지 않는다(어느 길로도) ⑤ @산초는 물어본 그 채널만 읽는다
+async function runAudit6() {
+  const d6 = fs.mkdtempSync(path.join(os.tmpdir(), 'sancho-test6-')), B6 = 'http://127.0.0.1:8796', QPW = 'qa-only-password-1', TMP = 'qa-temp-pass-0'; // 시험 전용 비밀번호
+  // 옛 방식(일정에 roomId 를 붙여 둔 회의실 예약)이 남아 있는 PC 를 흉내: 서버를 켜면 예약 파일(db/bookings.json)로 옮겨져야 한다
+  fs.mkdirSync(path.join(d6, 'db'), { recursive: true });
+  fs.writeFileSync(path.join(d6, 'db', 'events.json'), JSON.stringify([
+    { id: 'legacy-bk1', title: '옛 예약', kind: '회의', date: '2030-05-06', endDate: '2030-05-06', start: '09:00', end: '10:00', place: '본사 3층 대회의실', projectId: null, roomId: 'room1', bookedBy: 'qa-admin', bookedByName: '시험관리자' },
+    { id: 'plain-1', title: '보통 일정', kind: '회의', date: '2030-05-06', endDate: '2030-05-06', start: '09:00', end: '10:00', place: '', projectId: null }]));
+  const s6 = startServer(8796, d6, { ...process.env, SANCHO_BRAIN_SCRIPT: path.join(__dirname, 'test', 'fake-claude.js'), SANCHO_PING_MS: '300' });
+  await s6.ready;
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), until = async (fn, ms = 8000) => { for (const t = Date.now(); Date.now() - t < ms; await sleep(100)) if (await fn()) return true; return false; };
+  const req = (m, u, c, b) => fetch(B6 + u, { method: m, headers: { 'Content-Type': 'application/json', ...(c ? { Cookie: c } : {}) }, body: b === undefined ? undefined : JSON.stringify(b) });
+  const J = (r) => r.json();
+  const sse = (cookie) => { // 실시간 연결을 열어 받은 사건을 모아 둔다
+    const s = { events: [], ended: false, status: 0, ac: new AbortController() };
+    (async () => {
+      try {
+        const r = await fetch(B6 + '/api/messenger/stream', { headers: { Cookie: cookie }, signal: s.ac.signal }); s.status = r.status;
+        const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+        for (;;) { const { done, value } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }); let k; while ((k = buf.indexOf('\n\n')) >= 0) { const ev = buf.slice(0, k); buf = buf.slice(k + 2); const t = /^event: (.+)$/m.exec(ev), dd = /^data: (.+)$/m.exec(ev); if (t && dd) s.events.push({ type: t[1], data: JSON.parse(dd[1]) }); } }
+      } catch { /* 닫음 */ }
+      s.ended = true;
+    })();
+    return s;
+  };
+  const texts = (s) => s.events.filter((e) => e.type === 'message').map((e) => e.data.text);
+  const chans = async (c) => J(await req('GET', '/api/messenger/channels', c));
+  const say = (c, ch, text, files) => req('POST', `/api/messenger/channels/${ch}/messages`, c, { text, ...(files ? { files } : {}) });
+  const del = (c, ch, id) => req('DELETE', `/api/messenger/channels/${ch}/messages/${id}`, c);
+  const history = async (c, ch) => J(await req('GET', `/api/messenger/channels/${ch}/messages`, c));
+  const denyOf = async (c) => { const id = (await J(await req('POST', '/api/chats', c))).id, tt = await (await req('POST', `/api/chats/${id}/messages`, c, { content: '/perm' })).text(); return ((/ deny=(.*)$/m.exec([...tt.matchAll(/^data: (\{"t":.*\})$/gm)].map((m) => JSON.parse(m[1]).t).join('')) || [])[1] || '').split(','); };
+
+  // 시험용 계정: 관리자 1(부서 없음) · 시험1팀 2명 · 시험2팀 2명(그중 하나는 아이디가 비서와 같은 "sancho")
+  const adm = cookieOf(await req('POST', '/api/auth/setup', null, { name: '시험관리자', username: 'qa-admin', password: QPW }));
+  const mk = async (username, name, dept) => {
+    await req('POST', '/api/users', adm, { name, username, password: TMP, dept, role: 'user' });
+    const c = cookieOf(await req('POST', '/api/auth/login', null, { username, password: TMP }));
+    await req('POST', '/api/auth/password', c, { current: TMP, next: QPW }); return c;
+  };
+  const U = { adm, A: await mk('qa-a', '시험사용자A', '시험1팀'), B: await mk('qa-b', '시험사용자B', '시험1팀'), C: await mk('qa-c', '시험사용자C', '시험2팀'), S: await mk('sancho', '산초아님', '시험2팀') };
+  check('6편 점검 준비: 시험용 계정 5개(관리자·시험1팀 A·B·시험2팀 C·아이디가 "sancho" 인 S)가 시험 전용 비밀번호로 만들어지고 로그인됨', (await Promise.all(Object.values(U).map((c) => req('GET', '/api/me', c)))).every((r) => r.status === 200));
+  const D1 = (await chans(U.A)).find((c) => c.kind === 'dept').id, D2 = (await chans(U.C)).find((c) => c.kind === 'dept').id;
+  const P1 = (await J(await req('POST', '/api/messenger/channels', adm, { kind: 'project', name: '점검 프로젝트1', members: ['qa-a', 'qa-b'] }))).channel.id;
+  const P2 = (await J(await req('POST', '/api/messenger/channels', adm, { kind: 'project', name: '점검 프로젝트2', members: ['qa-a', 'qa-c'] }))).channel.id;
+  const DM = (await J(await req('POST', '/api/messenger/channels', U.A, { kind: 'dm', with: 'qa-b' }))).channel.id;
+  const CH = { notice: 'notice', D1, D2, P1, P2, DM };
+  const MEMBER = { adm: ['notice', 'P1', 'P2'], A: ['notice', 'D1', 'P1', 'P2', 'DM'], B: ['notice', 'D1', 'P1', 'DM'], C: ['notice', 'D2', 'P2'], S: ['notice', 'D2'] };
+
+  // ① 채널 멤버만 받는다 — 목록·읽기·실시간
+  const st = Object.fromEntries(Object.entries(U).map(([k, c]) => [k, sse(c)]));
+  await until(async () => Object.values(st).every((s) => s.status === 200));
+  await say(adm, 'notice', 'MK-NOTICE'); await say(U.A, D1, 'MK-D1'); await say(U.C, D2, 'MK-D2'); await say(adm, P1, 'MK-P1'); await say(U.A, P2, 'MK-P2'); await say(U.A, DM, 'MK-DM');
+  await sleep(700);
+  const want = (k) => MEMBER[k].map((n) => `MK-${n === 'notice' ? 'NOTICE' : n}`).sort().join();
+  check('6편 ① 실시간: 6개 채널(공지·부서 2·프로젝트 2·1:1)에 보낸 메시지를 5명 각자 자기가 멤버인 채널 것만 정확히 받음 (관리자도 1:1·남의 부서는 못 받음)', Object.keys(U).every((k) => texts(st[k]).sort().join() === want(k)));
+  const matrix = await Promise.all(Object.entries(U).flatMap(([k, c]) => Object.entries(CH).map(async ([n, id]) => ({ k, n, list: (await chans(c)).some((x) => x.id === id), read: (await req('GET', `/api/messenger/channels/${id}/messages`, c)).status }))));
+  check('6편 ① 목록·읽기: 5명 × 6개 채널 모두 — 멤버면 목록에 있고 읽기 200, 아니면 목록에 없고 읽기 404', matrix.every((x) => (MEMBER[x.k].includes(x.n) ? x.list && x.read === 200 : !x.list && x.read === 404)));
+  // ① 첨부: 올리기만 하고 안 보낸 파일·지운 메시지의 파일은 멤버에게도 안 나간다
+  const up = (c, ch, name, body) => fetch(`${B6}/api/messenger/channels/${ch}/files?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { Cookie: c, 'Content-Type': 'application/octet-stream' }, body });
+  const getf = (c, ch, file) => fetch(`${B6}/api/messenger/files/${ch}/${encodeURIComponent(file)}?dl=1`, { headers: { Cookie: c } });
+  const f1 = await J(await up(U.A, P1, '점검첨부.txt', 'SECRET-FILE'));
+  const beforeSend = (await getf(U.B, P1, f1.file)).status;
+  const fm = (await J(await say(U.A, P1, '첨부 보냄', [f1.file]))).message;
+  const sent = [(await getf(U.B, P1, f1.file)).status, (await getf(U.C, P1, f1.file)).status];
+  await del(U.A, P1, fm.id);
+  const afterDel = [(await getf(U.B, P1, f1.file)).status, (await getf(U.A, P1, f1.file)).status];
+  check('6편 ① 첨부: 보낸 메시지의 파일은 멤버만 받음(멤버 200·멤버 아님 404)', sent[0] === 200 && sent[1] === 404);
+  check('6편 ① 첨부: 올리기만 하고 보내지 않은 파일은 다른 멤버에게 안 나감(404)', beforeSend === 404);
+  check('6편 ① 첨부: 메시지를 지우면 그 첨부도 더는 안 나감(멤버·올린 사람 모두 404) — 지운 글의 파일이 주소로 남지 않게', afterDel.every((x) => x === 404));
+
+  // ② 공지는 관리자만
+  const noticeTry = await Promise.all([say(U.A, 'notice', '몰래 공지'), say(U.A, 'notice', '@산초 공지 요약'), up(U.A, 'notice', 'a.txt', 'x'), req('POST', '/api/messenger/channels', U.A, { kind: 'notice' }), req('POST', '/api/messenger/channels', U.A, { kind: 'dept', name: '시험1팀' }),
+    req('PUT', '/api/db/messages/x', U.A, { channelId: 'notice', text: '몰래' }), req('PUT', '/api/db/channels/notice', U.A, { kind: 'project', members: ['qa-a'] })]);
+  check('6편 ② 공지: 일반 사용자는 쓰기·@산초 부르기·첨부(403), 공지·부서 채널 새로 만들기(400), 일반 자료 주소로 메시지·채널 고치기(404)가 모두 막힘', noticeTry.map((r) => r.status).join() === '403,403,403,400,400,404,404'
+    && !(await history(U.A, 'notice')).messages.some((m) => m.text.includes('몰래')));
+  const dA = await denyOf(U.A);
+  check('6편 ② 공지: 비서(두뇌)도 채널·메시지 파일을 고치지 못함(공지를 몰래 쓰거나 채널 종류를 바꾸는 길)', ['Edit', 'Write'].every((t) => ['db/channels.json', 'db/messages.json'].every((f) => dA.includes(`${t}(./${f})`))));
+
+  // ③ 삭제는 쓴 사람과 관리자만
+  const mA = (await J(await say(U.A, P1, 'DEL-A'))).message, mB = (await J(await say(U.B, P1, 'DEL-B'))).message;
+  const r3 = [(await del(U.B, P1, mA.id)).status, (await del(U.C, P1, mA.id)).status, (await del(U.A, P1, mA.id)).status, (await del(adm, P1, mB.id)).status];
+  check('6편 ③ 삭제: 남(B)이 지우면 403, 멤버 아님(C) 404, 쓴 사람(A) 200, 관리자(멤버) 200', r3.join() === '403,404,200,200' && !(await history(U.B, P1)).messages.some((m) => ['DEL-A', 'DEL-B'].includes(m.text)));
+  await say(U.C, D2, '@산초 지금까지 요약해 줘');
+  await until(async () => (await history(U.C, D2)).messages.some((m) => m.bot));
+  const bot = (await history(U.C, D2)).messages.find((m) => m.bot) || {}, sUnread = ((await chans(U.S)).find((c) => c.id === D2) || {}).unread;
+  check('6편 ③ 삭제: 아이디가 "sancho" 인 사람도 남(C)이 부른 산초의 답을 지울 수 없음(403) — 비서의 이름과 겹쳐도 "쓴 사람"이 되지 않음', !!bot.id && (await del(U.S, D2, bot.id)).status === 403 && (await history(U.C, D2)).messages.some((m) => m.id === bot.id));
+  check('6편 ③ 안 읽은 수: 아이디가 "sancho" 인 사람에게도 산초의 답이 "안 읽음"으로 셈(내가 쓴 글로 착각하지 않음)', sUnread === 3);
+  check('6편 ③ 삭제: 산초의 답은 물어본 사람(C)이 지울 수 있음', (await del(U.C, D2, bot.id)).status === 200);
+
+  // ④ 회의실 예약은 어느 길로도 겹치지 않는다
+  const evs = async (c = adm) => J(await req('GET', '/api/db/events', c));
+  const bkFile = () => { try { return JSON.parse(fs.readFileSync(path.join(d6, 'db', 'bookings.json'), 'utf8')); } catch { return []; } };
+  const evFile = () => JSON.parse(fs.readFileSync(path.join(d6, 'db', 'events.json'), 'utf8'));
+  check('6편 ④ 옛 예약 옮기기: 일정 파일에 있던 회의실 예약이 서버를 켤 때 예약 파일(bookings.json)로 옮겨지고, 일정 목록에는 한 번만 그대로 보임',
+    bkFile().some((b) => b.id === 'legacy-bk1') && !evFile().some((e) => e.roomId) && evFile().some((e) => e.id === 'plain-1') && (await evs()).filter((e) => e.id === 'legacy-bk1' && e.roomId === 'room1').length === 1);
+  const b1 = await J(await req('POST', '/api/rooms/book', U.A, { roomId: 'room1', date: '2030-05-07', start: '10:00', end: '11:00', title: '점검 예약' }));
+  const cal1 = await req('PUT', '/api/db/events/fake-bk', U.B, { title: '일정 화면으로 끼어든 예약', kind: '회의', date: '2030-05-07', endDate: '2030-05-07', start: '10:30', end: '11:30', place: '본사 3층 대회의실', roomId: 'room1' });
+  const cal2 = await req('PUT', `/api/db/events/${b1.event ? b1.event.id : 'x'}`, U.B, { ...(b1.event || {}), start: '15:00', end: '16:00', title: '남의 예약을 옮김' });
+  const cal3 = await req('DELETE', `/api/db/events/${b1.event ? b1.event.id : 'x'}`, U.B);
+  const e1 = await evs();
+  check('6편 ④ 예약: 일정 메뉴(일반 자료 주소)로는 회의실 예약을 만들거나(roomId 를 붙여 끼워 넣기) 남의 예약을 옮기거나 지울 수 없음(403) — 예약은 그대로',
+    [cal1.status, cal2.status, cal3.status].join() === '403,403,403' && !e1.some((e) => e.id === 'fake-bk' && e.roomId) && e1.some((e) => e.id === b1.event.id && e.start === '10:00' && e.title === '점검 예약'));
+  check('6편 ④ 예약: 보통 일정은 지금처럼 일정 메뉴로 고치고 지울 수 있음', (await req('PUT', '/api/db/events/plain-1', U.B, { title: '보통 일정(고침)', kind: '회의', date: '2030-05-06', endDate: '2030-05-06', start: '09:00', end: '10:00', place: '' })).status === 200);
+  check('6편 ④ 예약: 비서(두뇌)는 예약 파일(bookings.json)을 고치지 못함 — 비서에게 "회의 시간 옮겨 줘" 해도 회의실 겹침이 생기지 않게', ['Edit', 'Write'].every((t) => dA.includes(`${t}(./db/bookings.json)`)));
+  fs.writeFileSync(path.join(d6, 'db', 'events.json'), JSON.stringify([...evFile(), { id: 'spoof-1', title: '파일에 직접 끼운 예약', kind: '회의', date: '2030-05-07', endDate: '2030-05-07', start: '12:00', end: '13:00', place: '', roomId: 'room1' }]));
+  const spoofed = (await evs()).find((e) => e.id === 'spoof-1') || {}, b2 = await req('POST', '/api/rooms/book', U.B, { roomId: 'room1', date: '2030-05-07', start: '12:00', end: '13:00', title: '진짜 예약' });
+  check('6편 ④ 예약: 일정 파일에 누가(비서·손) 직접 roomId 를 붙여 넣어도 회의실 예약으로 보이지 않고 진짜 예약을 막지도 않음', !!spoofed.id && !spoofed.roomId && b2.status === 200);
+  const over = await Promise.all([['10:00', '11:00'], ['10:30', '11:30'], ['09:30', '10:30'], ['09:00', '12:00']].map(([start, end]) => req('POST', '/api/rooms/book', U.C, { roomId: 'room1', date: '2030-05-07', start, end, title: '겹침' })));
+  const race = await Promise.all([U.A, U.B, U.C].map((c) => req('POST', '/api/rooms/book', c, { roomId: 'room2', date: '2030-05-07', start: '14:00', end: '15:00', title: '동시' })));
+  check('6편 ④ 예약: 회의록 화면으로도 겹치는 4가지는 409, 세 사람이 같은 칸을 동시에 눌러도 한 명만 됨', over.every((r) => r.status === 409) && race.map((r) => r.status).sort().join() === '200,409,409');
+  const bk = bkFile();
+  const clash = bk.some((x, i) => bk.some((y, j) => i < j && x.roomId === y.roomId && x.date === y.date && x.start < y.end && y.start < x.end));
+  check('6편 ④ 예약: 끝에 예약 파일 전체를 다시 봐도 같은 회의실·같은 날 겹치는 예약이 하나도 없음', bk.length >= 4 && !clash);
+  check('6편 ④ 예약 취소: 남(B)은 403, 관리자는 200', (await req('DELETE', `/api/rooms/book/${b1.event.id}`, U.B)).status === 403 && (await req('DELETE', `/api/rooms/book/${b1.event.id}`, adm)).status === 200 && !(await evs()).some((e) => e.id === b1.event.id));
+
+  // ⑤ @산초는 물어본 그 채널만 읽는다
+  fs.appendFileSync(path.join(d6, 'users', 'qa-a', 'memory.md'), '- 2030-01-01 MK-MEMORY-A 개인 기억\n');
+  const n0 = Object.fromEntries(Object.entries(st).map(([k, s]) => [k, s.events.length]));
+  await say(U.A, P1, '@산초 지금까지 정리해 줘');
+  await until(async () => (await history(U.A, P1)).messages.some((m) => m.bot));
+  await sleep(400);
+  const b5 = ((await history(U.A, P1)).messages.find((m) => m.bot) || { text: '' }).text;
+  check('6편 ⑤ @산초: 비서가 받은 글에는 그 채널(프로젝트1) 메시지만 있고, 물어본 사람이 볼 수 있는 다른 채널(부서·프로젝트2·1:1·공지)과 개인 기억은 없음',
+    b5.includes('MK-P1') && !['MK-P2', 'MK-DM', 'MK-D1', 'MK-D2', 'MK-NOTICE', 'MK-MEMORY-A', 'users/qa-a'].some((w) => b5.includes(w)));
+  check('6편 ⑤ @산초: 도구 없이(--tools "") 연결된 앱·명령도 없이, 대화 기록도 디스크에 남기지 않고(--no-session-persistence) 실행됨', b5.includes('tools=[]') && b5.includes('apps=N') && b5.includes('shell=NN') && b5.includes('nopersist=Y'));
+  const botTo = (k) => st[k].events.slice(n0[k]).some((e) => e.type === 'message' && e.data.bot);
+  check('6편 ⑤ @산초: 답은 그 채널 멤버(관리자·A·B)에게만 실시간으로 가고, 멤버가 아닌 C·S 에게는 안 감', ['adm', 'A', 'B'].every(botTo) && !['C', 'S'].some(botTo));
+  check('6편 ⑤ @산초: 멤버가 아닌 사람은 그 채널에서 산초를 부를 수 없음(404)', (await say(U.C, P1, '@산초 몰래 요약')).status === 404);
+
+  // ① 계정이 바뀌어도: 지워진 사람의 열린 연결이, 같은 아이디로 새로 만든 다른 사람의 채널을 받지 않는다
+  const users = JSON.parse(fs.readFileSync(path.join(d6, 'users.json'), 'utf8'));
+  fs.writeFileSync(path.join(d6, 'users.json'), JSON.stringify(users.filter((u) => u.username !== 'qa-b'))); // B 의 계정을 지운 것처럼
+  await req('POST', '/api/users', adm, { name: '새 시험사용자B', username: 'qa-b', password: TMP, dept: '시험2팀', role: 'user' }); // 같은 아이디, 다른 부서
+  await say(U.C, D2, 'MK-AFTER');
+  await sleep(700);
+  check('6편 ① 계정: 지워진 B 의 열린 연결은 같은 아이디로 새로 만든 사람(다른 부서)의 채널 메시지를 받지 않고 닫힘', !texts(st.B).includes('MK-AFTER') && st.B.ended);
+  Object.values(st).forEach((s) => s.ac.abort());
+  s6.kill();
+  await sleep(300);
+  try { fs.rmSync(d6, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* 지우지 못해도 점검과 무관 */ }
 }
 
 // 서버를 켜고, 화면에 찍는 글(로그)을 모두 모아 둔다
@@ -2416,6 +2559,7 @@ srv.ready.then(async () => {
     await runNoClaude();
     await runRestart();
     await runMigrate();
+    await runAudit6();
     runGit();
     // 비밀번호 평문이 서버 로그나 data/ 의 어떤 파일에도 남지 않아야 한다
     check('서버 로그에 비밀번호 평문이 없음', !srv.log.includes(PW));

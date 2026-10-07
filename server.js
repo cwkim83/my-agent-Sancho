@@ -165,7 +165,7 @@ function loadCollection(name) { // 파일이 없으면 빈 목록, 깨져 있으
 }
 // 파일이 바뀌면(우리가 썼든 AI 가 직접 고쳤든) 열려 있는 화면(/api/events)에 "<이름> 이 바뀜"을 알린다
 const streams = new Set();
-const READONLY_DB = new Set(['rooms', 'meetings']); // 회의실·회의록: 읽기는 모두, 고치기는 회의록 화면의 서버 주소로만 (일반 업무 자료 주소의 PUT·DELETE 는 403)
+const READONLY_DB = new Set(['rooms', 'meetings', 'bookings']); // 회의실·회의록: 읽기는 모두, 고치기는 회의록 화면의 서버 주소로만 (일반 업무 자료 주소의 PUT·DELETE 는 403)
 const PRIVATE_DB = new Set(['channels', 'messages']); // 메신저 자료: 일반 업무 자료 주소(/api/db)로는 열리지 않고, 바뀌었다는 알림도 안 보낸다 (채널 멤버만 받는 메신저 전용 연결이 있다)
 const pending = new Map(); // 한 번 쓸 때 이벤트가 여러 번 오므로 50ms 안의 것은 하나로 합친다
 function emitDb(name) { if (PRIVATE_DB.has(name)) return; for (const r of streams) r.write(`event: db\ndata: ${JSON.stringify({ name })}\n\n`); } // 열려 있는 화면에 "<이름> 이 바뀜"
@@ -424,7 +424,7 @@ for (const f of fs.existsSync(ADD_DIR) ? fs.readdirSync(ADD_DIR).sort() : []) {
 }
 const PRIVATE_FILES = ['users.json', 'sessions.json', 'share.json', 'settings.json', '임시비밀번호.txt', 'db/channels.json', 'db/messages.json', '메신저파일/**']; // 비밀번호 해시·로그인 기록·공유 링크·텔레그램 봇 토큰·연습용 임시 비밀번호·메신저 대화와 첨부는 두뇌도 못 보게 막는다 (채널 멤버가 아닌 사람의 비서가 읽는 길을 막는다)
 // 비서가 고치지 못하는 파일 (읽기만 가능): 자기 지침(성격·스킬), 그리고 claude 가 작업 폴더에서 몰래 읽는 지침·설정 파일 이름들
-const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json'];
+const READONLY_FILES = ['.system.md', '.claude/**', 'CLAUDE.md', 'CLAUDE.local.md', '**/CLAUDE.md', '**/CLAUDE.local.md', '.mcp.json', 'db/bookings.json']; // bookings: 회의실 예약 — 겹침 검사를 거치는 회의록 메뉴로만 바뀌게 (6편 점검)
 // 5편 점검: claude 는 작업 폴더(data/)의 CLAUDE.local.md 를 숨은 지침으로, .claude/settings*.json 을 설정(훅·허용 규칙)으로 읽는다 (진짜 claude 로 확인:
 // 숨은 지침을 그대로 따랐고, 훅은 켤 때마다 명령을 돌렸고, 허용 규칙은 data 밖 파일까지 읽게 했다). 비서나 메일 속 지시가 이런 파일을 심으면 권한을 꺼도 남는다.
 // → claude 를 띄우기 직전에 있으면 이름을 바꿔(지우지 않고) 꺼 두고 알림으로 알린다. 꺼 두지 못하면 실행하지 않는다
@@ -515,6 +515,7 @@ function brainArgs({ gate = null, unattended = false, user, noTools = false } = 
     ...(P.홈폴더 ? HOME_SECRETS.flatMap((f) => ['Read', 'Glob', 'Grep'].map((t) => `${t}(~/${f})`)) : []),
     ...(apps ? [...appNames('block'), ...held] : []),
     ...(P.홈폴더 ? ['--add-dir', os.homedir()] : []),
+    ...(noTools ? ['--no-session-persistence'] : []), // 6편 점검: 메신저 답·회의록 정리는 이어 쓸 일이 없으니 기록(~/.claude)에 남기지 않는다
     '--append-system-prompt-file', SYSTEM_FILE,
   ];
 }
@@ -1083,16 +1084,19 @@ function ensureChannels() { // 공지 채널과 (사람들의 부서마다) 부�
   return list;
 }
 // 열려 있는 실시간 연결 중 그 채널 멤버에게만 보낸다. 로그아웃했거나 로그인 기한이 지난 연결은 여기서 닫는다
+// 연결의 주인 = 그 로그인(세션)의 사람(id). 로그아웃·기한 지남·계정이 없어짐이면 닫고 null (6편 점검: 아이디 글자로 찾으면, 지운 계정과 같은 아이디로 만든 새 사람으로 착각했다)
+function streamUser(s, users) {
+  const ss = sessions[s.tokenHash], u = ss && ss.expires >= Date.now() ? users.find((x) => x.id === ss.userId) : null;
+  if (!u) { msgStreams.delete(s); s.res.end(); }
+  return u;
+}
 function pushTo(ch, event, data) {
   const users = readJson(USERS_FILE, []);
-  for (const s of [...msgStreams]) {
-    const ss = sessions[s.tokenHash], u = users.find((x) => x.username === s.username);
-    if (!ss || ss.expires < Date.now() || !u) { msgStreams.delete(s); s.res.end(); continue; }
-    if (isMember(ch, u)) s.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  }
+  for (const s of [...msgStreams]) { const u = streamUser(s, users); if (u && isMember(ch, u)) s.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
 }
 function sweepStreams() { // 가끔 한 번: 끊어야 할 연결을 닫고, 나머지에는 "살아 있음" 신호를 보낸다
-  for (const s of [...msgStreams]) { const ss = sessions[s.tokenHash]; if (!ss || ss.expires < Date.now()) { msgStreams.delete(s); s.res.end(); } else s.res.write(': ping\n\n'); }
+  const users = readJson(USERS_FILE, []);
+  for (const s of [...msgStreams]) if (streamUser(s, users)) s.res.write(': ping\n\n');
 }
 function addMessage(ch, m) { // 저장하고, 그 채널 멤버에게 실시간으로 보낸다
   const items = loadMessages();
@@ -1112,7 +1116,7 @@ function channelView(c, u, msgs, read) { // 화면에 보낼 채널 한 칸 (내
   const other = c.kind === 'dm' ? (c.members || []).find((n) => n !== u.username) : null;
   return {
     id: c.id, kind: c.kind, name: c.kind === 'dm' ? personName(other) : c.name, projectId: c.projectId || null,
-    members: names.map((x) => ({ username: x.username, name: x.name })), unread: mine.filter((m) => m.seq > (read[c.id] || 0) && m.from !== u.username).length,
+    members: names.map((x) => ({ username: x.username, name: x.name })), unread: mine.filter((m) => m.seq > (read[c.id] || 0) && (m.bot || m.from !== u.username)).length,
     last: last ? { text: cleanText(last.text).replace(/\s+/g, ' ').slice(0, 60) || ((last.files || []).length ? '(첨부 파일)' : ''), at: last.at, name: last.name } : null, canWrite: canWrite(c, u),
   };
 }
@@ -1150,14 +1154,15 @@ async function messengerApi(req, res, user, url) {
   if (p === '/api/messenger/stream' && M === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(': 연결됨\n\n');
-    const s = { res, username: user.username, tokenHash: sha(getToken(req)) };
+    const s = { res, tokenHash: sha(getToken(req)) }; // 누구의 연결인지는 로그인(세션)으로 그때그때 확인한다
     msgStreams.add(s); res.on('close', () => msgStreams.delete(s));
     return true;
   }
   const fm = p.match(/^\/api\/messenger\/files\/([a-z0-9]{1,24})\/([^/]+)$/);
   if (fm && M === 'GET') {
     const ch = mine().find((c) => c.id === fm[1]); let name; try { name = decodeURIComponent(fm[2]); } catch { return bad('주소가 올바르지 않습니다.'); }
-    const full = ch && fileIn(chanFileDir(ch.id), path.join(MSG_REAL, ch.id), name);
+    const sent = ch && loadMessages().some((m) => m && m.channelId === ch.id && (m.files || []).some((f) => f && f.file === name)); // 6편 점검
+    const full = sent && fileIn(chanFileDir(ch.id), path.join(MSG_REAL, ch.id), name);
     return full ? (sendFile(res, full, name, url.searchParams, `/api/messenger/files/${ch.id}/${encodeURIComponent(name)}`), true) : done(404, { error: '없는 파일이에요.' });
   }
 
@@ -1230,7 +1235,8 @@ async function messengerApi(req, res, user, url) {
     const items = loadMessages(), i = items.findIndex((m) => m && m.id === mid && m.channelId === ch.id);
     if (i < 0) return done(404, { error: '없는 메시지예요.' });
     const m = items[i];
-    if (!(isAdmin(user) || m.from === user.username || (m.bot && m.askedBy === user.username))) return done(403, { error: '쓴 사람과 관리자만 지울 수 있어요.' });
+    const mine_ = m.bot ? m.askedBy === user.username : m.from === user.username; // 6편 점검: 산초의 답은 from 이 "sancho" 라서, 아이디가 sancho 인 사람이 쓴 사람으로 잡혔다
+    if (!(isAdmin(user) || mine_)) return done(403, { error: '쓴 사람과 관리자만 지울 수 있어요.' });
     items.splice(i, 1); writeJson(dbFile('messages'), items);
     pushTo(ch, 'delete', { channelId: ch.id, id: mid });
     return done(200, { ok: true });
@@ -1269,6 +1275,18 @@ const ROOMS_SEED = [
   { id: 'room2', name: '소회의실', place: '본사 2층', seats: 4, open: '08:00', close: '19:00' },
 ];
 if (!fs.existsSync(dbFile('rooms'))) writeJson(dbFile('rooms'), ROOMS_SEED);
+// 6편 점검: 예약을 일정(events.json)에 roomId 를 붙여 두었더니 일정 메뉴·비서·파일 직접 고치기로 겹치거나 남의 예약이 지워졌다.
+// → 예약은 bookings.json 에 따로 두고(일정 목록에는 서버가 합쳐서 보여 줌), 고치는 길은 회의록 메뉴의 서버 주소 하나뿐. 옛 예약은 켤 때 옮긴다(지우지 않고 옮기기만)
+function migrateBookings() {
+  const evs = loadCollection('events'), old = evs.filter((e) => e && typeof e === 'object' && e.roomId);
+  if (!old.length) return;
+  const bks = loadCollection('bookings'), have = new Set(bks.map((x) => x && x.id));
+  writeJson(dbFile('bookings'), [...bks, ...old.filter((e) => !have.has(e.id))]);
+  writeJson(dbFile('events'), evs.filter((e) => !old.includes(e)));
+  console.log(`회의실 예약 ${old.length}개를 일정 파일에서 예약 파일(data/db/bookings.json)로 옮겼어요.`);
+}
+try { migrateBookings(); } catch (e) { console.error('회의실 예약을 옮기지 못했어요 (파일은 그대로 뒀어요):', e.message); }
+const noRoom = (e) => (e && typeof e === 'object' && !Array.isArray(e) && 'roomId' in e ? (({ roomId, bookedBy, bookedByName, ...rest }) => rest)(e) : e); // 일정 파일에 누가 roomId 를 붙여 넣어도 예약으로 보이지 않게
 const MEET_TRANSCRIPT_MAX = 60_000, MEET_LIST_MAX = 30, MEET_STR_MAX = 300;
 const meetRunning = new Set(); // 지금 정리 중인 회의 id
 const hmMin = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3));
@@ -1278,7 +1296,7 @@ const eventId = (p) => `${p}${crypto.randomBytes(5).toString('hex')}`;
 // POST /api/rooms/book { roomId, date, start, end, title, projectId? } → { event } · DELETE /api/rooms/book/<일정id> (예약한 사람과 관리자만)
 function roomApi(req, res, user, p, b) {
   const M = req.method, done = (status, body) => { send(res, status, body); return true; };
-  let rooms, events; try { rooms = loadCollection('rooms'); events = loadCollection('events'); } catch { return done(500, { error: 'data/db/rooms.json 또는 events.json 이 올바른 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+  let rooms, events; try { rooms = loadCollection('rooms'); events = loadCollection('bookings'); } catch { return done(500, { error: 'data/db/rooms.json 또는 bookings.json 이 올바른 목록이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); } // events: 회의실 예약 목록
   const dm = p.match(/^\/api\/rooms\/book(?:\/([A-Za-z0-9_-]{1,64}))?$/);
   if (!dm) return false;
   if (M === 'POST' && !dm[1]) {
@@ -1296,14 +1314,14 @@ function roomApi(req, res, user, p, b) {
     const clash = events.find((x) => x && x.roomId === room.id && x.date === b.date && (!isHm(x.start) || !isHm(x.end) || (s < hmMin(x.end) && hmMin(x.start) < e))); // 시각이 없는 예약은 하루 종일로 본다
     if (clash) return done(409, { error: `이미 예약돼 있어요: ${clash.start && clash.end ? `${clash.start}~${clash.end} ` : ''}"${String(clash.title || '').slice(0, 30)}"${clash.bookedByName ? ` (${clash.bookedByName})` : ''}` });
     const ev = { id: eventId('rm'), title, kind: '회의', date: b.date, endDate: b.date, start: b.start, end: b.end, place: `${room.place ? `${room.place} ` : ''}${room.name}`, memo: '', projectId, roomId: room.id, bookedBy: user.username, bookedByName: user.name };
-    events.push(ev); writeJson(dbFile('events'), events);
+    events.push(ev); writeJson(dbFile('bookings'), events); emitDb('events'); // 일정 목록을 보는 화면(일정·대시보드·예약표)이 바로 따라 바뀌게
     return done(200, { event: ev });
   }
   if (M === 'DELETE' && dm[1]) {
     const i = events.findIndex((x) => x && x.id === dm[1] && x.roomId); // 회의실 예약만 (보통 일정은 일정 메뉴에서)
     if (i < 0) return done(404, { error: '없는 예약이에요.' });
     if (!(isAdmin(user) || events[i].bookedBy === user.username)) return done(403, { error: '예약한 사람과 관리자만 취소할 수 있어요.' });
-    events.splice(i, 1); writeJson(dbFile('events'), events);
+    events.splice(i, 1); writeJson(dbFile('bookings'), events); emitDb('events');
     return done(200, { ok: true });
   }
   return false;
@@ -1547,6 +1565,11 @@ async function handle(req, res) {
       }
       let items; try { items = loadCollection(name); } catch { return send(res, 500, { error: `data/db/${name}.json 이 올바른 목록(JSON 배열)이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.` }); }
       const at = () => items.findIndex((x) => x && String(x.id) === id);
+      if (name === 'events') { // 회의실 예약(bookings.json)은 일정 목록에 같이 보이지만, 만들기·고치기·취소는 회의록 메뉴의 서버 주소로만 (6편 점검: 겹침·남의 예약 지우기를 막는다)
+        let bks; try { bks = loadCollection('bookings'); } catch { return send(res, 500, { error: 'data/db/bookings.json 이 올바른 목록(JSON 배열)이 아닙니다. 덮어쓰지 않았으니 파일을 확인해 주세요.' }); }
+        if (!id && req.method === 'GET') return send(res, 200, [...items.map(noRoom), ...bks]);
+        if (id && (bks.some((x) => x && String(x.id) === id) || (req.method === 'PUT' && b.roomId))) return send(res, 403, { error: '회의실 예약은 회의록 메뉴의 예약표에서 만들고, 바꾸고, 취소해 주세요.' });
+      }
       // 업무 데이터는 함께 쓰지만, 알림 중 owner(아이디)가 적힌 것(예약 결과 같은 개인 내용)은 그 사람에게만 보인다
       if (!id && req.method === 'GET') return send(res, 200, name === 'notices' ? items.filter((n) => !n || !n.owner || n.owner === user.username) : items);
       // ponytail: 서버 안의 저장끼리는 이제 안 겹친다. 비서(다른 프로그램)가 파일을 쓰는 바로 그 순간과는 잠금이 없어 겹칠 수 있다. 자주 생기면 파일 잠금을 둔다
